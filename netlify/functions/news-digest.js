@@ -1,27 +1,116 @@
 // netlify/functions/news-digest.js
 //
-// On-demand function (not scheduled) — called by the dashboard's NewsPanel.
-// Reads the latest headlines written by the fetch-news scheduled function
-// (Mining.com + Kitco RSS, twice daily) and returns today's top stories in
-// the shape the dashboard expects.
+// Called by the dashboard's NewsPanel on every page load.
+// On each call: fetches fresh RSS from Mining.com + Kitco, upserts into
+// Supabase `news_stories` (so there's a running historical record), then
+// returns today's top stories in the shape the dashboard expects.
 //
-// NOTE: this is real headlines/links/dates only — no AI sentiment scoring,
-// relevance ranking, or "progression" analysis. Those fields are optional
-// in the dashboard's rendering and will simply not show if absent.
+// This means the page always shows the freshest possible headlines, while
+// Supabase keeps accumulating history for later reference. The separate
+// fetch-news.js scheduled function (7am/7pm) still runs as a backup cadence
+// in case the page isn't visited for a while.
 //
 // Required Netlify env vars:
 //   SUPABASE_URL              -> <your Supabase project URL>
-//   SUPABASE_ANON_KEY         -> publishable/anon key (read-only, safe to use here)
+//   SUPABASE_SERVICE_ROLE_KEY -> secret key (needed here because this function writes, not just reads)
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const FEEDS = [
+  { url: 'https://www.mining.com/tag/gold/feed/', source: 'mining.com', topic: 'gold' },
+  { url: 'https://www.mining.com/tag/platinum/feed/', source: 'mining.com', topic: 'platinum' },
+  { url: 'https://www.mining.com/tag/palladium/feed/', source: 'mining.com', topic: 'palladium' },
+  { url: 'https://www.kitco.com/news/category/mining/rss', source: 'kitco.com', topic: 'mining' },
+];
+
+function parseRssItems(xml) {
+  const items = [];
+  const itemBlocks = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
+  for (const block of itemBlocks) {
+    const title = extractTag(block, 'title');
+    const link = extractTag(block, 'link');
+    const pubDate = extractTag(block, 'pubDate');
+    if (title && link) {
+      items.push({
+        title: decodeEntities(stripCdata(title)),
+        url: stripCdata(link).trim(),
+        published_at: pubDate ? new Date(pubDate).toISOString() : null,
+      });
+    }
+  }
+  return items;
+}
+
+function extractTag(block, tag) {
+  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  return m ? m[1].trim() : null;
+}
+
+function stripCdata(str) {
+  return str.replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim();
+}
+
+function decodeEntities(str) {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'");
+}
+
+async function fetchFeed(feed) {
+  const res = await fetch(feed.url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
+  });
+  if (!res.ok) throw new Error(`${feed.source}/${feed.topic} fetch failed: ${res.status}`);
+  const xml = await res.text();
+  const items = parseRssItems(xml);
+  return items.slice(0, 15).map(item => ({ ...item, source: feed.source, topic: feed.topic }));
+}
+
+async function upsertStory(story) {
+  const url = `${SUPABASE_URL}/rest/v1/news_stories`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: 'resolution=ignore-duplicates'
+    },
+    body: JSON.stringify({
+      title: story.title,
+      url: story.url,
+      source: story.source,
+      topic: story.topic,
+      published_at: story.published_at,
+      fetched_at: new Date().toISOString(),
+    })
+  });
+  return res.ok;
+}
+
+async function refreshNewsFromFeeds() {
+  for (const feed of FEEDS) {
+    try {
+      const items = await fetchFeed(feed);
+      for (const item of items) {
+        await upsertStory(item);
+      }
+    } catch (err) {
+      console.error(`Feed refresh failed for ${feed.source}/${feed.topic}: ${err.message}`);
+    }
+  }
+}
 
 function digestDateUTC() {
   return new Date().toISOString().slice(0, 10);
 }
 
 export default async (req) => {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return new Response(JSON.stringify({ ok: false, error: 'Missing Supabase env vars' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -29,12 +118,17 @@ export default async (req) => {
   }
 
   try {
-    // Most recent 30 stories across all topics, newest first
+    await refreshNewsFromFeeds();
+  } catch (err) {
+    console.error('refreshNewsFromFeeds failed entirely: ' + err.message);
+  }
+
+  try {
     const url = `${SUPABASE_URL}/rest/v1/news_stories?select=title,url,source,topic,published_at,fetched_at&order=fetched_at.desc&limit=30`;
     const res = await fetch(url, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+      headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }
     });
-    if (!res.ok) throw new Error(`Supabase fetch failed: ${res.status}`);
+    if (!res.ok) throw new Error(`Supabase read failed: ${res.status}`);
     const rows = await res.json();
 
     if (!rows.length) {
@@ -44,20 +138,11 @@ export default async (req) => {
       });
     }
 
-    // Top 3 most recent as the "Daily Top 3" headline stories; rest go to past stories
     const topStories = rows.slice(0, 3).map((r, i) => ({
-      title: r.title,
-      url: r.url,
-      source: r.source,
-      publishedAt: r.published_at,
-      rank: i + 1,
+      title: r.title, url: r.url, source: r.source, publishedAt: r.published_at, rank: i + 1,
     }));
-
     const pastStories = rows.slice(3).map((r) => ({
-      title: r.title,
-      url: r.url,
-      source: r.source,
-      publishedAt: r.published_at,
+      title: r.title, url: r.url, source: r.source, publishedAt: r.published_at,
       digestDate: (r.fetched_at || '').slice(0, 10),
     }));
 
