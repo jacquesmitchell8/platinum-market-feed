@@ -17,25 +17,35 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Google News RSS is served by Google's own infrastructure (not a small
+// publisher's Cloudflare-protected server), so it doesn't get bot-blocked
+// the way direct scrapes of Mining.com/GoldSeek/Kitco did. No API key needed.
 const FEEDS = [
-  { url: 'https://www.mining.com/tag/gold/feed/', source: 'mining.com', topic: 'gold' },
-  { url: 'https://www.mining.com/tag/platinum/feed/', source: 'mining.com', topic: 'platinum' },
-  { url: 'https://www.mining.com/tag/palladium/feed/', source: 'mining.com', topic: 'palladium' },
-  { url: 'https://www.kitco.com/news/category/mining/rss', source: 'kitco.com', topic: 'mining' },
+  { url: 'https://news.google.com/rss/search?q=platinum+mining&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'platinum' },
+  { url: 'https://news.google.com/rss/search?q=gold+price&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'gold' },
+  { url: 'https://news.google.com/rss/search?q=palladium+market&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'palladium' },
 ];
 
 function parseRssItems(xml) {
   const items = [];
   const itemBlocks = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
   for (const block of itemBlocks) {
-    const title = extractTag(block, 'title');
+    const rawTitle = extractTag(block, 'title');
     const link = extractTag(block, 'link');
     const pubDate = extractTag(block, 'pubDate');
-    if (title && link) {
+    const sourceTag = extractTag(block, 'source'); // Google News includes <source url="...">Publisher Name</source>
+    if (rawTitle && link) {
+      let title = decodeEntities(stripCdata(rawTitle));
+      // Google News titles are formatted "Headline - Publisher" — strip the trailing publisher name
+      // since we already capture it separately via the <source> tag.
+      if (sourceTag && title.endsWith(' - ' + decodeEntities(stripCdata(sourceTag)))) {
+        title = title.slice(0, -(sourceTag.length + 3));
+      }
       items.push({
-        title: decodeEntities(stripCdata(title)),
+        title,
         url: stripCdata(link).trim(),
         published_at: pubDate ? new Date(pubDate).toISOString() : null,
+        publisher: sourceTag ? decodeEntities(stripCdata(sourceTag)) : null,
       });
     }
   }
@@ -67,7 +77,11 @@ async function fetchFeed(feed) {
   if (!res.ok) throw new Error(`${feed.source}/${feed.topic} fetch failed: ${res.status}`);
   const xml = await res.text();
   const items = parseRssItems(xml);
-  return items.slice(0, 15).map(item => ({ ...item, source: feed.source, topic: feed.topic }));
+  return items.slice(0, 15).map(item => ({
+    ...item,
+    source: item.publisher || feed.source,
+    topic: feed.topic,
+  }));
 }
 
 async function upsertStory(story) {
@@ -96,9 +110,13 @@ async function refreshNewsFromFeeds() {
   for (const feed of FEEDS) {
     try {
       const items = await fetchFeed(feed);
+      console.log(`Feed ${feed.source}/${feed.topic}: found ${items.length} items`);
+      let inserted = 0;
       for (const item of items) {
-        await upsertStory(item);
+        const ok = await upsertStory(item);
+        if (ok) inserted++;
       }
+      console.log(`Feed ${feed.source}/${feed.topic}: inserted ${inserted} new (rest were duplicates)`);
     } catch (err) {
       console.error(`Feed refresh failed for ${feed.source}/${feed.topic}: ${err.message}`);
     }

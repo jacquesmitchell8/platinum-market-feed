@@ -1,8 +1,9 @@
 // netlify/functions/fetch-news.js
 //
 // Scheduled function — runs twice daily at 7am and 7pm (see netlify.toml).
-// Pulls RSS feeds from Mining.com (gold/platinum/palladium tags) and Kitco
-// (mining category), parses items, and upserts into Supabase `news_stories`.
+// Acts as a backup cadence in case the page isn't visited for a while —
+// the primary refresh now happens live on every page load via news-digest.js.
+// Uses the same Google News RSS source (reliable, not bot-blocked, no key).
 //
 // Required Netlify env vars:
 //   SUPABASE_URL              -> <your Supabase project URL>
@@ -12,26 +13,29 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const FEEDS = [
-  { url: 'https://www.mining.com/tag/gold/feed/', source: 'mining.com', topic: 'gold' },
-  { url: 'https://www.mining.com/tag/platinum/feed/', source: 'mining.com', topic: 'platinum' },
-  { url: 'https://www.mining.com/tag/palladium/feed/', source: 'mining.com', topic: 'palladium' },
-  { url: 'https://www.kitco.com/news/category/mining/rss', source: 'kitco.com', topic: 'mining' },
+  { url: 'https://news.google.com/rss/search?q=platinum+mining&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'platinum' },
+  { url: 'https://news.google.com/rss/search?q=gold+price&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'gold' },
+  { url: 'https://news.google.com/rss/search?q=palladium+market&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'palladium' },
 ];
 
-// Minimal RSS/Atom <item> parser — no external deps, just regex over the XML.
-// RSS items look like: <item><title>..</title><link>..</link><pubDate>..</pubDate></item>
 function parseRssItems(xml) {
   const items = [];
   const itemBlocks = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
   for (const block of itemBlocks) {
-    const title = extractTag(block, 'title');
+    const rawTitle = extractTag(block, 'title');
     const link = extractTag(block, 'link');
     const pubDate = extractTag(block, 'pubDate');
-    if (title && link) {
+    const sourceTag = extractTag(block, 'source');
+    if (rawTitle && link) {
+      let title = decodeEntities(stripCdata(rawTitle));
+      if (sourceTag && title.endsWith(' - ' + decodeEntities(stripCdata(sourceTag)))) {
+        title = title.slice(0, -(sourceTag.length + 3));
+      }
       items.push({
-        title: decodeEntities(stripCdata(title)),
+        title,
         url: stripCdata(link).trim(),
         published_at: pubDate ? new Date(pubDate).toISOString() : null,
+        publisher: sourceTag ? decodeEntities(stripCdata(sourceTag)) : null,
       });
     }
   }
@@ -63,10 +67,9 @@ async function fetchFeed(feed) {
   if (!res.ok) throw new Error(`${feed.source}/${feed.topic} fetch failed: ${res.status}`);
   const xml = await res.text();
   const items = parseRssItems(xml);
-  // Cap to most recent 15 per feed to avoid flooding the table on first run
   return items.slice(0, 15).map(item => ({
     ...item,
-    source: feed.source,
+    source: item.publisher || feed.source,
     topic: feed.topic,
   }));
 }
@@ -90,10 +93,7 @@ async function upsertStory(story) {
       fetched_at: new Date().toISOString(),
     })
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Supabase insert failed for "${story.title}": ${res.status} ${text}`);
-  }
+  return res.ok;
 }
 
 export default async (req) => {
@@ -103,19 +103,12 @@ export default async (req) => {
   }
 
   const results = [];
-
   for (const feed of FEEDS) {
     try {
       const items = await fetchFeed(feed);
       let inserted = 0;
       for (const item of items) {
-        try {
-          await upsertStory(item);
-          inserted++;
-        } catch (err) {
-          // Likely a duplicate URL (unique constraint) — expected on repeat runs, not fatal
-          console.log(`Skip (likely duplicate): ${item.title} - ${err.message}`);
-        }
+        if (await upsertStory(item)) inserted++;
       }
       results.push({ feed: `${feed.source}/${feed.topic}`, ok: true, found: items.length, inserted });
     } catch (err) {

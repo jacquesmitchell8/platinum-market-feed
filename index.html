@@ -3429,9 +3429,18 @@
             ) : (
               <MoveContextPanel events={showEvents ? eventsInRange : []} timeframe={timeframe} />
             )}
+            {tab === 'perth' && (
+              <div style={{fontSize:11, color:'#92400E', padding:'10px 14px', margin:'0 18px 12px',
+                background:'rgba(217,119,6,0.08)', border:'1px solid rgba(217,119,6,0.2)', borderRadius:6, lineHeight:1.5}}>
+                ⚠ Estimate only — Perth Mint has no public price API. These figures are derived from spot gold/platinum
+                converted to AUD with a synthetic retail spread, not real Perth Mint bid/offer prices.
+                For actual retail pricing, see <a href="https://www.perthmint.com/invest/information-for-investors/metal-prices/"
+                  target="_blank" rel="noopener noreferrer" style={{color:'#92400E', textDecoration:'underline'}}>perthmint.com</a> directly.
+              </div>
+            )}
             <div style={{fontSize:10, color:C.text, padding:'0 18px 12px', lineHeight:1.5}}>
               {tab === 'perth'
-                ? 'Separate charts for gold and platinum 1oz coins (AUD). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
+                ? 'Separate charts for gold and platinum 1oz coins (AUD, estimated). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
                 : tab === 'producers'
                   ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Prices in ZAR · announcements via Google News.'
                   : 'Separate charts for precious metals and cryptocurrency — each with its own price scale so no curve is flattened.'}
