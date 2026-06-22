@@ -5,8 +5,8 @@
 // into Supabase `market_snapshots` (snapshot_key, payload, updated_at, source).
 //
 // Required Netlify env vars (set in Netlify dashboard -> Site configuration -> Environment variables):
-//   SUPABASE_URL              -> https://iguytayhrtbewoluaehm.supabase.co
-//   SUPABASE_SERVICE_ROLE_KEY -> service_role key (NEVER the anon key, NEVER exposed to browser)
+//   SUPABASE_URL              -> https://tjxiaidxcwpvsnwfvdck.supabase.co (market-feed project)
+//   SUPABASE_SERVICE_ROLE_KEY -> secret key (NEVER the anon/publishable key, NEVER exposed to browser)
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -71,7 +71,7 @@ async function upsertSnapshot(snapshotKey, payload, source) {
   }
 }
 
-export default async () => {
+export default async (req) => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars');
     return new Response('Missing env vars', { status: 500 });
@@ -107,8 +107,4 @@ export default async () => {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
   });
-};
-
-export const config = {
-  schedule: '*/5 * * * *'
 };
