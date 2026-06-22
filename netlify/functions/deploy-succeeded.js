@@ -24,7 +24,11 @@ export default {
       return;
     }
 
-    const targets = ['/.netlify/functions/news-digest', '/.netlify/functions/producer-stocks'];
+    const targets = [
+      '/.netlify/functions/news-digest',
+      '/.netlify/functions/producer-stocks',
+      '/.netlify/functions/perth-mint',
+    ];
     for (const path of targets) {
       try {
         const res = await fetch(`${siteUrl}${path}`);
