@@ -5,7 +5,7 @@
 // into Supabase `market_snapshots` (snapshot_key, payload, updated_at, source).
 //
 // Required Netlify env vars (set in Netlify dashboard -> Site configuration -> Environment variables):
-//   SUPABASE_URL              -> https://tjxiaidxcwpvsnwfvdck.supabase.co (market-feed project)
+//   SUPABASE_URL              -> <your Supabase project URL>
 //   SUPABASE_SERVICE_ROLE_KEY -> secret key (NEVER the anon/publishable key, NEVER exposed to browser)
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
