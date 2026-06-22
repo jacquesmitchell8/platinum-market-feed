@@ -6,3 +6,9 @@
 
 [functions."fetch-market-snapshots"]
   schedule = "*/5 * * * *"
+
+[functions."fetch-news"]
+  schedule = "0 9,21 * * *"
+
+[functions."fetch-producers"]
+  schedule = "0 9,21 * * *"
