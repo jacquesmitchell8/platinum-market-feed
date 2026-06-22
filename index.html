@@ -1,10 +1,3631 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>market-feed</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Platinum Metis — Macro Intelligence</title>
+  <meta name="description" content="Live precious metals and crypto intelligence: Gold, Platinum, BTC, ETH, CFX — with historical context, spreads, and macro events." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #ECEEF2;
+      --surface: #FFFFFF;
+      --surface-2: #F7F8FA;
+      --border: #D8DEE6;
+      --border-light: #E8ECF1;
+      --text: #1A2332;
+      --text-secondary: #4A5568;
+      --text-muted: #8B97A8;
+      --platinum: #6B7F96;
+      --platinum-light: #A8B8CC;
+      --platinum-bg: #EDF0F4;
+      --gold: #B8860B;
+      --gold-light: #C9A227;
+      --btc: #E8850C;
+      --eth: #4F6BF6;
+      --cfx: #0077B6;
+      --positive: #047857;
+      --negative: #B91C1C;
+      --shadow-sm: 0 1px 2px rgba(26,35,50,0.04);
+      --shadow: 0 1px 3px rgba(26,35,50,0.06), 0 6px 20px rgba(26,35,50,0.05);
+      --radius: 10px;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-display: 'Instrument Serif', Georgia, serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+    body {
+      background: var(--bg);
+      background-image: linear-gradient(165deg, #F5F6F8 0%, #E8EBF0 45%, #E2E6EC 100%);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── NAV ── */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 56px;
+      border-bottom: 1px solid var(--border-light);
+      position: sticky;
+      top: 0;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .nav-logo-mark {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(145deg, #D4AF37 0%, var(--platinum-light) 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.5px;
+      flex-shrink: 0;
+      box-shadow: var(--shadow-sm);
+    }
+    .nav-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--text);
+    }
+    .nav-sub {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: var(--text-muted);
+      margin-top: 1px;
+      text-transform: uppercase;
+    }
+    .nav-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--positive);
+      box-shadow: 0 0 0 3px rgba(4,120,87,0.15);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .live-dot.offline { background: var(--text-muted); box-shadow: none; animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* ── PRICE TABS ── */
+    .price-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      background: var(--surface-2);
+      border-radius: 8px;
+      border: 1px solid var(--border-light);
+      margin-bottom: 14px;
+      width: fit-content;
+    }
+    .price-tab {
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 500;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: transparent;
+      color: var(--text-muted);
+      font-family: var(--font);
+      transition: all 0.15s;
+    }
+    .price-tab.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: var(--shadow-sm);
+      font-weight: 600;
+    }
+    .timeframe-bar {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .timeframe-btn {
+      padding: 5px 11px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      cursor: pointer;
+      background: var(--surface);
+      color: var(--text-muted);
+      font-family: var(--font);
+    }
+    .timeframe-btn.active {
+      border-color: var(--platinum);
+      color: var(--platinum);
+      background: rgba(107,127,150,0.08);
+      font-weight: 600;
+    }
+    .index-badge {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      padding: 2px 5px;
+      border-radius: 3px;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── TICKER ── */
+    .ticker-wrap {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border-light);
+      overflow: hidden;
+    }
+    .ticker {
+      display: flex;
+      gap: 0;
+      padding: 0 24px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .ticker::-webkit-scrollbar { display: none; }
+    .ticker-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px 10px 0;
+      margin-right: 20px;
+      border-right: 1px solid var(--border-light);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .ticker-item:last-child { border-right: none; }
+    .ticker-sym {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      min-width: 28px;
+    }
+    .ticker-price {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .ticker-chg {
+      font-size: 11px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .ticker-chg.up { color: var(--positive); background: rgba(4,120,87,0.08); }
+    .ticker-chg.down { color: var(--negative); background: rgba(185,28,28,0.08); }
+    .ticker-chg.flat { color: var(--text-muted); background: var(--surface-2); }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 36px 24px 28px;
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+    .hero-eyebrow {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--platinum);
+      margin-bottom: 12px;
+    }
+    .hero-heading {
+      font-family: var(--font-display);
+      font-size: clamp(28px, 5vw, 40px);
+      font-weight: 400;
+      color: var(--text);
+      line-height: 1.15;
+      margin-bottom: 12px;
+    }
+    .hero-heading em {
+      font-style: italic;
+      color: var(--platinum);
+    }
+    .hero-sub {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.65;
+      max-width: 560px;
+    }
+
+    /* ── APP ── */
+    #app { max-width: 1080px; margin: 0 auto; padding: 0 24px 32px; }
+
+    /* ── FOOTER ── */
+    footer {
+      padding: 24px;
+      border-top: 1px solid var(--border-light);
+      background: var(--surface);
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.8;
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+    footer a { color: var(--platinum); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    /* ── SCROLLBAR & RANGE ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      background: var(--border-light);
+      outline: none;
+      border-radius: 2px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      background: var(--platinum);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      background: var(--platinum);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+    }
+
+    #loading {
+      padding: 48px 24px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    @keyframes shimmer {
+      0% { background-position: -200px 0; }
+      100% { background-position: calc(200px + 100%) 0; }
+    }
+    @keyframes news-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .news-search-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 28px 20px;
+      min-height: 88px;
+    }
+    .news-search-icon {
+      font-size: 26px;
+      line-height: 1;
+      animation: news-spin 2.4s linear infinite;
+      filter: grayscale(0.2);
+    }
+    .news-story-card {
+      padding: 12px 14px;
+    }
+    .news-story-card summary {
+      cursor: pointer;
+      list-style: none;
+    }
+    .news-story-card summary::-webkit-details-marker { display: none; }
+    .news-story-card summary::after {
+      content: '▾';
+      float: right;
+      color: var(--text-muted);
+      font-size: 11px;
+      transition: transform 0.15s;
+    }
+    .news-story-card[open] summary::after { transform: rotate(180deg); }
+    .news-bullets {
+      margin: 6px 0 0;
+      padding-left: 16px;
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text-secondary);
+    }
+    .news-bullets li { margin-bottom: 4px; }
+    .news-past-wrap summary {
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--platinum);
+      margin-bottom: 8px;
+    }
+    .factor-drop {
+      border-top: 1px solid var(--border-light);
+    }
+    .factor-drop summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 12px 18px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .factor-drop summary::-webkit-details-marker { display: none; }
+    .factor-drop summary::after {
+      content: '▾';
+      float: right;
+      font-size: 11px;
+      color: var(--text-muted);
+      transition: transform 0.15s;
+    }
+    .factor-drop[open] summary::after { transform: rotate(180deg); }
+    .factor-drop--pt summary { color: var(--platinum); }
+    .factor-drop--cfx summary { color: var(--cfx); }
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface2) 0px, #eef1f5 40px, var(--surface2) 80px);
+      background-size: 200px 100%;
+      animation: shimmer 1.2s ease-in-out infinite;
+      border-radius: 6px;
+      color: transparent !important;
+    }
+    .feed-banner {
+      font-size: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .feed-banner.warn { background: rgba(217,119,6,0.08); border: 1px solid rgba(217,119,6,0.2); color: #92400E; }
+    .feed-banner.err { background: rgba(185,28,28,0.06); border: 1px solid rgba(185,28,28,0.15); color: #B91C1C; }
+    .feed-retry {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 6px 12px; border-radius: 6px; border: 1px solid currentColor;
+      background: transparent; cursor: pointer; color: inherit;
+    }
+  </style>
 </head>
 <body>
-  <p>market-feed: scheduled snapshot service. See Netlify Functions tab for fetch-market-snapshots status and logs.</p>
+
+  <nav>
+    <div class="nav-logo">
+      <div class="nav-logo-mark">Pt</div>
+      <div>
+        <div class="nav-title">Platinum Metis</div>
+        <div class="nav-sub">Macro Intelligence</div>
+      </div>
+    </div>
+    <div class="nav-status" id="nav-status">
+      <span class="live-dot offline" id="live-dot"></span>
+      <span id="nav-status-text">Connecting…</span>
+    </div>
+  </nav>
+
+  <div class="ticker-wrap">
+    <div class="ticker" id="ticker">
+      <div class="ticker-item"><span class="ticker-sym">Gold</span><span class="ticker-price">—</span></div>
+      <div class="ticker-item"><span class="ticker-sym">Platinum</span><span class="ticker-price">—</span></div>
+      <div class="ticker-item"><span class="ticker-sym">Bitcoin</span><span class="ticker-price">—</span></div>
+      <div class="ticker-item"><span class="ticker-sym">Ethereum</span><span class="ticker-price">—</span></div>
+      <div class="ticker-item"><span class="ticker-sym">Conflux</span><span class="ticker-price">—</span></div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div class="hero-eyebrow">Live Markets · Historical Context · Macro Events</div>
+    <h1 class="hero-heading">
+      Physical scarcity.<br/>
+      <em>Structural deficit.</em><br/>
+      Real-time intelligence.
+    </h1>
+    <p class="hero-sub">
+      LBMA precious metals alongside Bitcoin, Ethereum and Conflux Network —
+      live spot prices, platinum–gold spreads, and decades of annual history
+      with geopolitical events and halvings mapped.
+    </p>
+  </div>
+
+  <div id="loading">Loading dashboard…</div>
+  <div id="app"></div>
+
+  <footer>
+    Platinum Metis · <a href="https://ewsol.au">ewsol.au</a> ·
+    Live metals: <a href="https://mintedmetal.com">Minted Metal</a> (LBMA) ·
+    Perth Mint: <a href="https://www.perthmint.com/invest/information-for-investors/metal-prices/">1oz retail API</a> ·
+    Live crypto: <a href="https://www.coingecko.com">CoinGecko</a> ·
+    Charts: <a href="https://finance.yahoo.com">Yahoo Finance</a> / Kraken
+    Historical: LBMA / WPIC (metals annual avg) · CoinGecko approx (crypto year-end) ·
+    CFX = Conflux Network · NOT FINANCIAL ADVICE — indicative data only
+  </footer>
+
+  <!-- Boot watchdog — never leave "Loading dashboard…" forever -->
+  <script>
+    (function () {
+      var el = document.getElementById('loading');
+      if (!el) return;
+      setTimeout(function () {
+        if (el.style.display === 'none') return;
+        el.textContent = 'Initialising charts… (large dashboard, may take a few seconds)';
+      }, 6000);
+      setTimeout(function () {
+        if (el.style.display === 'none') return;
+        el.innerHTML = 'Dashboard scripts are taking longer than expected. '
+          + '<button type="button" class="feed-retry" onclick="location.reload()" '
+          + 'style="margin-left:8px;padding:6px 12px;border-radius:6px;cursor:pointer">Retry</button>';
+      }, 20000);
+    })();
+  </script>
+
+  <!-- Direct CORS-friendly spot feed (Minted Metal + CoinGecko) -->
+  <script>
+    window.PM = window.PM || {};
+    (function (PM) {
+      const MINTED_METAL_URL = 'https://mintedmetal.com/api/prices.json';
+      const CG_SPOT_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,conflux-token&vs_currencies=usd&include_24hr_change=true';
+      const SPOT_LS_KEY = 'pm_metis_spot_v1';
+      let spotInflight = null;
+
+      const FALLBACK_SPOT = {
+        gold: { price: 4236, chg: 0, src: 'fallback' },
+        platinum: { price: 1715, chg: 0, src: 'fallback' },
+        btc: { price: 63900, chg: 0, src: 'fallback' },
+        eth: { price: 1730, chg: 0, src: 'fallback' },
+        cfx: { price: 0.047, chg: 0, src: 'fallback' },
+      };
+
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      async function fetchWithTimeout(url, opts, ms) {
+        const timeout = ms || 12000;
+        return Promise.race([
+          fetch(url, { ...(opts || {}), cache: 'no-store' }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Request timeout')), timeout)
+          ),
+        ]);
+      }
+
+      async function readJson(res) {
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch (_) {
+          throw new Error('Invalid JSON response');
+        }
+      }
+
+      function pctChg(cur, prev) {
+        if (cur == null || prev == null || !prev) return 0;
+        return ((cur - prev) / prev) * 100;
+      }
+
+      function buildSpotFromSources(metalsData, cryptoData) {
+        const spot = {};
+        const metals = metalsData && metalsData.metals;
+        if (metals && metals.gold && metals.gold.price) {
+          spot.gold = { price: metals.gold.price, chg: pctChg(metals.gold.price, metals.gold.previousPrice), src: 'LBMA' };
+        } else {
+          spot.gold = { ...FALLBACK_SPOT.gold, src: 'fallback-LBMA' };
+        }
+        if (metals && metals.platinum && metals.platinum.price) {
+          spot.platinum = { price: metals.platinum.price, chg: pctChg(metals.platinum.price, metals.platinum.previousPrice), src: 'LBMA' };
+        } else {
+          spot.platinum = { ...FALLBACK_SPOT.platinum, src: 'fallback-LBMA' };
+        }
+        if (cryptoData && cryptoData.bitcoin && cryptoData.bitcoin.usd) {
+          spot.btc = { price: cryptoData.bitcoin.usd, chg: cryptoData.bitcoin.usd_24h_change, src: '24h' };
+        }
+        if (cryptoData && cryptoData.ethereum && cryptoData.ethereum.usd) {
+          spot.eth = { price: cryptoData.ethereum.usd, chg: cryptoData.ethereum.usd_24h_change, src: '24h' };
+        }
+        if (cryptoData && cryptoData['conflux-token'] && cryptoData['conflux-token'].usd) {
+          spot.cfx = { price: cryptoData['conflux-token'].usd, chg: cryptoData['conflux-token'].usd_24h_change, src: '24h' };
+        }
+        if (metalsData && metalsData.updatedAt) spot.metalsUpdated = metalsData.updatedAt;
+        return spot;
+      }
+
+      function mergeSpot(primary, fallback) {
+        const out = { ...(fallback || {}) };
+        Object.keys(primary || {}).forEach((k) => {
+          if (primary[k] && primary[k].price != null) out[k] = primary[k];
+        });
+        return out;
+      }
+
+      function loadSpotFromStorage() {
+        try {
+          const raw = localStorage.getItem(SPOT_LS_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (!parsed || !parsed.spot) return null;
+          return {
+            ok: true,
+            stale: true,
+            spot: parsed.spot,
+            audUsd: parsed.audUsd,
+            updatedAt: parsed.updatedAt || parsed.savedAt,
+            cacheNote: 'Browser cache · ' + new Date(parsed.savedAt || Date.now()).toLocaleString(),
+          };
+        } catch (_) { return null; }
+      }
+
+      function saveSpotToStorage(data) {
+        try {
+          localStorage.setItem(SPOT_LS_KEY, JSON.stringify({
+            spot: data.spot,
+            audUsd: data.audUsd,
+            updatedAt: data.updatedAt,
+            savedAt: Date.now(),
+          }));
+        } catch (_) {}
+      }
+
+      async function fetchCryptoSpotBrowser() {
+        const res = await fetchWithTimeout(CG_SPOT_URL, {}, 10000);
+        if (!res.ok) throw new Error('CoinGecko ' + res.status);
+        const j = await readJson(res);
+        if (!j.bitcoin?.usd) throw new Error('CoinGecko empty');
+        return j;
+      }
+
+      async function fetchMetalsSpotBrowser() {
+        const res = await fetchWithTimeout(MINTED_METAL_URL, {}, 10000);
+        if (!res.ok) throw new Error('Minted Metal ' + res.status);
+        const j = await readJson(res);
+        if (!j?.metals?.gold?.price) throw new Error('Minted Metal empty');
+        return j;
+      }
+
+      // ── Supabase fallback (market-feed project) ──
+      // Used only when the direct browser fetches (Minted Metal + CoinGecko) both fail.
+      // Reads the last-known-good snapshot written by the fetch-market-snapshots
+      // scheduled function (runs every 5 min) so the dashboard still shows real,
+      // recent numbers instead of hardcoded placeholders during an outage.
+      const SUPABASE_URL = 'https://tjxiaidxcwpvsnwfvdck.supabase.co';
+      const SUPABASE_ANON_KEY = 'sb_publishable_iT9FkpchECUYsjhBqtQrzg_Q-Y0QxRf';
+
+      // Staleness thresholds (ms) — crypto moves faster than metals, so it goes stale sooner.
+      const STALE_MS_CRYPTO = 5 * 60 * 1000;       // 5 minutes
+      const STALE_MS_METALS = 15 * 60 * 1000;      // 15 minutes
+      const HARD_STALE_MS = 12 * 60 * 60 * 1000;   // 12 hours — flagged regardless of asset type
+
+      async function fetchSupabaseSnapshot() {
+        const url = `${SUPABASE_URL}/rest/v1/market_snapshots?select=snapshot_key,payload,updated_at,source`;
+        const res = await fetchWithTimeout(url, {
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+        }, 8000);
+        if (!res.ok) throw new Error('Supabase fallback ' + res.status);
+        const rows = await readJson(res);
+        if (!Array.isArray(rows) || rows.length === 0) throw new Error('Supabase fallback empty');
+
+        const byKey = {};
+        rows.forEach((r) => { byKey[r.snapshot_key] = r; });
+
+        const isCrypto = { BTC: true, ETH: true, CFX: true };
+        const ageMs = (r) => r ? Date.now() - new Date(r.updated_at).getTime() : Infinity;
+        const isStale = (r) => {
+          if (!r) return true;
+          const limit = isCrypto[r.snapshot_key] ? STALE_MS_CRYPTO : STALE_MS_METALS;
+          return ageMs(r) > limit;
+        };
+        const isHardStale = (r) => !r || ageMs(r) > HARD_STALE_MS;
+
+        const spot = {};
+        if (byKey.XAU) spot.gold = { price: byKey.XAU.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.XAU), hardStale: isHardStale(byKey.XAU), asOf: byKey.XAU.updated_at };
+        if (byKey.XPT) spot.platinum = { price: byKey.XPT.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.XPT), hardStale: isHardStale(byKey.XPT), asOf: byKey.XPT.updated_at };
+        if (byKey.BTC) spot.btc = { price: byKey.BTC.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.BTC), hardStale: isHardStale(byKey.BTC), asOf: byKey.BTC.updated_at };
+        if (byKey.ETH) spot.eth = { price: byKey.ETH.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.ETH), hardStale: isHardStale(byKey.ETH), asOf: byKey.ETH.updated_at };
+        if (byKey.CFX) spot.cfx = { price: byKey.CFX.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.CFX), hardStale: isHardStale(byKey.CFX), asOf: byKey.CFX.updated_at };
+
+        const oldestUpdate = rows.reduce((min, r) => {
+          const t = new Date(r.updated_at).getTime();
+          return t < min ? t : min;
+        }, Date.now());
+
+        return {
+          ok: true,
+          stale: true,
+          hardStale: rows.some(isHardStale),
+          spot,
+          audUsd: 0.65,
+          updatedAt: new Date(oldestUpdate).toISOString(),
+          cacheNote: 'Supabase fallback — live feeds unavailable',
+          sources: { metals: 'supabase-cache', crypto: 'supabase-cache' },
+        };
+      }
+
+      async function fetchSpotDirect() {
+        const cached = loadSpotFromStorage();
+        let metalsData = null;
+        let cryptoData = null;
+
+        try {
+          metalsData = await fetchMetalsSpotBrowser();
+        } catch (_) {}
+
+        try {
+          cryptoData = await fetchCryptoSpotBrowser();
+        } catch (_) {}
+
+        if (!metalsData && !cryptoData) {
+          // Both direct sources failed — try Supabase before falling back to hardcoded values.
+          try {
+            const supaData = await fetchSupabaseSnapshot();
+            saveSpotToStorage(supaData);
+            return supaData;
+          } catch (_) {}
+
+          if (!cached) {
+            return {
+              ok: true,
+              stale: true,
+              hardStale: true,
+              spot: FALLBACK_SPOT,
+              audUsd: 0.65,
+              updatedAt: new Date().toISOString(),
+              cacheNote: 'Using fallback prices (live feeds and Supabase both unavailable)',
+            };
+          }
+        }
+
+        const spot = buildSpotFromSources(metalsData, cryptoData);
+        const mergedSpot = mergeSpot(spot, mergeSpot(cached?.spot || {}, FALLBACK_SPOT));
+
+        let audUsd = cached?.audUsd || 0.65;
+        try {
+          const fxRes = await fetchWithTimeout('https://api.frankfurter.dev/v1/latest?from=AUD&to=USD', {}, 8000);
+          if (fxRes.ok) {
+            const fx = await readJson(fxRes);
+            if (fx.rates?.USD != null) audUsd = fx.rates.USD;
+          }
+        } catch (_) {}
+
+        const partial = !metalsData || !cryptoData;
+        const data = {
+          ok: true,
+          stale: partial,
+          spot: mergedSpot,
+          audUsd,
+          updatedAt: (metalsData && metalsData.updatedAt) || new Date().toISOString(),
+          cacheNote: partial ? 'Partial feed — some prices from cache/fallback' : null,
+          sources: {
+            metals: metalsData ? 'mintedmetal.com' : 'cache/fallback',
+            crypto: cryptoData ? 'coingecko.com' : 'cache/fallback',
+          },
+        };
+        saveSpotToStorage(data);
+        return data;
+      }
+
+      async function fetchMarketSpot() {
+        if (spotInflight) return spotInflight;
+        const hardFallback = () => {
+          const cached = loadSpotFromStorage();
+          if (cached) return cached;
+          return {
+            ok: true,
+            stale: true,
+            spot: FALLBACK_SPOT,
+            audUsd: 0.65,
+            updatedAt: new Date().toISOString(),
+            cacheNote: 'Using fallback prices (live feed unavailable)',
+          };
+        };
+        spotInflight = Promise.race([
+          (async () => {
+            try {
+              return await fetchSpotDirect();
+            } catch (_) {
+              return hardFallback();
+            }
+          })(),
+          new Promise((resolve) => setTimeout(() => resolve(hardFallback()), 8000)),
+        ]).finally(() => { spotInflight = null; });
+        return spotInflight;
+      }
+
+      PM.fetchSpotDirect = fetchSpotDirect;
+      PM.fetchMarketSpot = fetchMarketSpot;
+      PM.fetchWithTimeout = fetchWithTimeout;
+      PM.loadSpotFromStorage = loadSpotFromStorage;
+      PM.saveSpotToStorage = saveSpotToStorage;
+      PM.FALLBACK_SPOT = FALLBACK_SPOT;
+
+      const navTxt = document.getElementById('nav-status-text');
+      if (navTxt) navTxt.textContent = 'Loading feeds…';
+    })(window.PM);
+  </script>
+
+  <!-- Live ticker bootstrap (runs before React) -->
+  <script>
+    (function () {
+      const fmtUsd = (v) => {
+        if (v == null) return '—';
+        if (v >= 10000) return '$' + Math.round(v).toLocaleString();
+        if (v >= 1) return '$' + v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+        return '$' + v.toFixed(4);
+      };
+      const fmtPct = (v) => {
+        if (v == null) return '—';
+        return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+      };
+      const chgClass = (v) => {
+        if (v == null || Math.abs(v) < 0.01) return 'flat';
+        return v >= 0 ? 'up' : 'down';
+      };
+      const timeAgo = (d) => {
+        if (!d) return '';
+        const s = Math.floor((Date.now() - d.getTime()) / 1000);
+        if (s < 60) return s + 's ago';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      };
+      async function refreshTicker() {
+        try {
+          const data = await window.PM.fetchMarketSpot();
+          if (!data || !data.spot) throw new Error('no spot');
+          const g = data.spot.gold;
+          const p = data.spot.platinum;
+          const items = [
+            { sym: 'Gold',     price: g && g.price, chg: g && g.chg },
+            { sym: 'Platinum', price: p && p.price, chg: p && p.chg },
+            { sym: 'Bitcoin',  price: data.spot.btc && data.spot.btc.price, chg: data.spot.btc && data.spot.btc.chg },
+            { sym: 'Ethereum', price: data.spot.eth && data.spot.eth.price, chg: data.spot.eth && data.spot.eth.chg },
+            { sym: 'CFX',      price: data.spot.cfx && data.spot.cfx.price, chg: data.spot.cfx && data.spot.cfx.chg },
+          ];
+          const el = document.getElementById('ticker');
+          if (!el) return;
+          el.innerHTML = items.map(({ sym, price, chg }) =>
+            '<div class="ticker-item"><span class="ticker-sym">' + sym + '</span>' +
+            '<span class="ticker-price">' + fmtUsd(price) + '</span>' +
+            '<span class="ticker-chg ' + chgClass(chg) + '">' + fmtPct(chg) + '</span></div>'
+          ).join('');
+          const dot = document.getElementById('live-dot');
+          const txt = document.getElementById('nav-status-text');
+          const when = new Date(data.updatedAt || Date.now());
+          if (dot) dot.className = data.stale ? 'live-dot offline' : 'live-dot';
+          if (txt) {
+            if (data.hardStale) {
+              txt.textContent = '⚠ Data over 12h old · ' + timeAgo(when);
+              txt.style.color = '#B91C1C';
+            } else {
+              txt.style.color = '';
+              txt.textContent = (data.stale ? 'Cached · ' : 'Live · ') + timeAgo(when);
+            }
+          }
+        } catch (_) {
+          const txt = document.getElementById('nav-status-text');
+          if (txt) txt.textContent = 'Feed offline';
+        }
+      }
+      refreshTicker();
+      setInterval(refreshTicker, 60000);
+    })();
+  </script>
+
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react,env">
+    const { useState, useMemo, useEffect, useCallback, useRef } = React;
+
+    const safeFetch = async (url, options = {}) => {
+      try {
+        const fetchFn = window.PM?.fetchWithTimeout || ((u, o, ms) => Promise.race([
+          fetch(u, o || {}),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Request timeout')), ms || 10000)),
+        ]));
+        const res = await fetchFn(url, options, 10000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        return JSON.parse(text);
+      } catch (e) {
+        return null;
+      }
+    };
+    if (typeof Recharts === 'undefined') {
+      throw new Error('Recharts failed to load — check CDN scripts.');
+    }
+    const {
+      LineChart, Line, ComposedChart, BarChart, Bar, Area,
+      XAxis, YAxis, CartesianGrid, Legend, Cell,
+      Tooltip, ReferenceLine, ReferenceArea, ResponsiveContainer
+    } = Recharts;
+
+    /* ─── THEME ───────────────────────────────────────────────────── */
+    const C = {
+      gold: '#B8860B',
+      plat: '#6B7F96',
+      btc:  '#E8850C',
+      eth:  '#4F6BF6',
+      cfx:  '#0077B6',
+      accent: '#5B6F8A',
+      grid: '#EEF1F5',
+      axis: '#94A3B8',
+      text: '#64748B',
+      textSecondary: '#4A5568',
+      surface: '#FFFFFF',
+      surface2: '#F7F8FA',
+      border: '#E2E8F0',
+      borderLight: '#EEF1F5',
+      textDark: '#1A2332',
+    };
+
+    /* ─── CURVE INDEX LIBRARY ─────────────────────────────────────── */
+    const CURVE_INDEX = {
+      'IDX-001': { id:'IDX-001', code:'LBMA-AU-USD',  label:'Gold — LBMA London Fix',              name:'Gold · LBMA London Fix',              unit:'USD/oz', source:'Minted Metal / LBMA',     family:'spot',   tab:'index', color:C.gold,  cgId:'tether-gold', assets:['gold'], axis:'metals' },
+      'IDX-002': { id:'IDX-002', code:'LBMA-PT-USD',  label:'Platinum — LBMA London Fix',          name:'Platinum · LBMA London Fix',          unit:'USD/oz', source:'Minted Metal / LBMA',     family:'spot',   tab:'index', color:C.plat,  perthMetal:'Platinum', perthField:'mid', assets:['platinum'], axis:'metals' },
+      'IDX-003': { id:'IDX-003', code:'CG-BTC-USD',   label:'Bitcoin — Spot Price',                name:'Bitcoin · Spot',                      unit:'USD',    source:'CoinGecko',               family:'crypto', tab:'index', color:C.btc,   cgId:'bitcoin', assets:['btc'], axis:'crypto' },
+      'IDX-004': { id:'IDX-004', code:'CG-ETH-USD',   label:'Ethereum — Spot Price',               name:'Ethereum · Spot',                     unit:'USD',    source:'CoinGecko',               family:'crypto', tab:'index', color:C.eth,   cgId:'ethereum', assets:['eth'], axis:'crypto' },
+      'IDX-005': { id:'IDX-005', code:'CG-CFX-USD',   label:'Conflux Network — Spot Price',        name:'Conflux Network · Spot',              unit:'USD',    source:'CoinGecko',               family:'crypto', tab:'index', color:C.cfx,   cgId:'conflux-token', assets:['cfx'], axis:'crypto' },
+      'IDX-101': { id:'IDX-101', code:'PM-AU-OZ-OFFER', label:'Perth Mint — 1oz Gold — Sell Price',  name:'Perth Mint · 1oz Gold · Sell (Offer)', unit:'AUD', source:'Perth Mint Retail API', family:'perth', tab:'perth', color:'#C9A227', perthMetal:'Gold',     perthField:'offer', assets:['gold','perth'], axis:'gold' },
+      'IDX-102': { id:'IDX-102', code:'PM-AU-OZ-BID',   label:'Perth Mint — 1oz Gold — Buy Price',   name:'Perth Mint · 1oz Gold · Buy (Bid)',    unit:'AUD', source:'Perth Mint Retail API', family:'perth', tab:'perth', color:'#A8891A', perthMetal:'Gold',     perthField:'bid', assets:['gold','perth'], axis:'gold' },
+      'IDX-103': { id:'IDX-103', code:'PM-PT-OZ-OFFER', label:'Perth Mint — 1oz Platinum — Sell Price', name:'Perth Mint · 1oz Platinum · Sell (Offer)', unit:'AUD', source:'Perth Mint Retail API', family:'perth', tab:'perth', color:C.plat, perthMetal:'Platinum', perthField:'offer', assets:['platinum','perth'], axis:'platinum' },
+      'IDX-104': { id:'IDX-104', code:'PM-PT-OZ-BID',   label:'Perth Mint — 1oz Platinum — Buy Price',    name:'Perth Mint · 1oz Platinum · Buy (Bid)',    unit:'AUD', source:'Perth Mint Retail API', family:'perth', tab:'perth', color:'#8B9CB3', perthMetal:'Platinum', perthField:'bid', assets:['platinum','perth'], axis:'platinum' },
+      'IDX-105': { id:'IDX-105', code:'PM-PT-OZ-OFFER-USD', label:'Perth Mint — 1oz Platinum — Sell (US dollars)', name:'Perth Mint · 1oz Platinum · Sell (USD equiv.)', unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#4A6785', perthMetal:'Platinum', perthField:'offer', usdConv:true, assets:['platinum','perth'], axis:'platinum' },
+      'IDX-106': { id:'IDX-106', code:'PM-AU-OZ-OFFER-USD', label:'Perth Mint — 1oz Gold — Sell (US dollars)',     name:'Perth Mint · 1oz Gold · Sell (USD equiv.)',     unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#9A7B1A', perthMetal:'Gold',     perthField:'offer', usdConv:true, assets:['gold','perth'], axis:'gold' },
+      'IDX-107': { id:'IDX-107', code:'PM-PT-TA', label:'Platinum — Technical structure (S/R · patterns)', name:'Platinum · Technical overlay', unit:'AUD', source:'Computed · Perth Mint sell', family:'ta', tab:'perth', color:'#7C3AED', assets:['platinum','perth'], axis:'platinum-ta', taOverlay:true, taSource:'IDX-103' },
+      'IDX-201': { id:'IDX-201', code:'VAL-JSE',  label:'Valterra Platinum — VAL.JO',           name:'Valterra Platinum · JSE',             unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#1E40AF', yahoo:'VAL.JO', ticker:'VAL.JO', exchange:'JSE', country:'South Africa', production:'~1.7 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-202': { id:'IDX-202', code:'IMP-JSE',  label:'Impala Platinum — IMP.JO',             name:'Impala Platinum · JSE',               unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#B45309', yahoo:'IMP.JO', ticker:'IMP.JO', exchange:'JSE', country:'South Africa', production:'~1.1 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-203': { id:'IDX-203', code:'SSW-JSE',  label:'Sibanye-Stillwater — SSW.JO',          name:'Sibanye-Stillwater · JSE',            unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#047857', yahoo:'SSW.JO', ticker:'SSW.JO', exchange:'JSE', country:'South Africa / USA', production:'~0.9 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-204': { id:'IDX-204', code:'NPH-JSE',  label:'Northam Platinum — NPH.JO',            name:'Northam Platinum · JSE',              unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#6B21A8', yahoo:'NPH.JO', ticker:'NPH.JO', exchange:'JSE', country:'South Africa', production:'~0.5 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+    };
+
+    const TIMEFRAMES = [
+      { id:'24h', label:'24 Hours',  cgDays:1,    perthKey:'oneWeekHistoricData',     hours:24,   maxPts:500 },
+      { id:'1w',  label:'1 Week',    cgDays:7,    perthKey:'oneWeekHistoricData',     maxPts:400 },
+      { id:'1m',  label:'1 Month',   cgDays:30,   perthKey:'twoYearsHistoricData',    days:30,    maxPts:400 },
+      { id:'3m',  label:'3 Months',  cgDays:90,   perthKey:'twoYearsHistoricData',    days:90,    maxPts:500 },
+      { id:'1y',  label:'1 Year',    cgDays:365,  perthKey:'twoYearsHistoricData',    days:365,   maxPts:600 },
+      { id:'3y',  label:'3 Years',   cgDays:1095, perthKey:'threeYearsHistoricData',  days:1095,  maxPts:700 },
+      { id:'5y',  label:'5 Years',   cgDays:null, perthKey:'fiveYearsHistoricData',   maxPts:800 },
+    ];
+
+    /* Market-moving events — shown on timeline when in range */
+    const TIMELINE_EVENTS = [
+      { ts: Date.parse('2024-01-10T00:00:00Z'), s:'BTC ETF', title:'Spot Bitcoin ETF approved by US SEC', detail:'Institutional crypto access opened; Bitcoin rallied while gold held firm as alternative store of value.', assets:['btc','gold','cfx'], c:'#059669', dir:'up' },
+      { ts: Date.parse('2024-04-13T00:00:00Z'), s:'IRAN', title:'Iran drone attack on Israel', detail:'Geopolitical shock bid into gold; crypto sold off initially on risk-off before recovering.', assets:['gold','btc','platinum','cfx'], c:'#D97706', dir:'up' },
+      { ts: Date.parse('2024-07-00T00:00:00Z'), s:'—', title:'', detail:'', assets:[], c:'#000' }, // skip invalid
+      { ts: Date.parse('2024-08-05T00:00:00Z'), s:'YEN', title:'Yen carry-trade unwind / global selloff', detail:'Sharp cross-asset deleveraging; Bitcoin −15%, gold initially firm then corrected.', assets:['btc','eth','gold','cfx'], c:'#DC2626', dir:'down' },
+      { ts: Date.parse('2024-11-06T00:00:00Z'), s:'ELECTION', title:'US election — Trump victory', detail:'Dollar and yields whipsawed; gold volatile on tariff/inflation expectations; platinum muted.', assets:['gold','platinum','btc','cfx'], c:'#D97706', dir:'mixed' },
+      { ts: Date.parse('2024-12-17T00:00:00Z'), s:'BTC $100K', title:'Bitcoin crosses $100,000', detail:'Crypto risk-on peak; platinum lagged as industrial/auto demand concerns persisted.', assets:['btc','cfx'], c:'#059669', dir:'up' },
+      { ts: Date.parse('2025-01-20T00:00:00Z'), s:'INAUG', title:'Trump inauguration — tariff agenda', detail:'Gold bid on hedge demand; AUD volatility affected Perth Mint coin prices in local currency.', assets:['gold','platinum','perth'], c:'#D97706', dir:'up' },
+      { ts: Date.parse('2025-04-02T00:00:00Z'), s:'TARIFFS', title:'US Liberation Day tariff announcement', detail:'Growth fears pressured platinum (auto catalysts); gold held better as tariff/inflation hedge.', assets:['platinum','gold'], c:'#DC2626', dir:'down' },
+      { ts: Date.parse('2025-06-10T00:00:00Z'), s:'ESKOM', title:'South Africa Stage 6 load-shedding', detail:'~72% of global platinum mine supply disrupted; supply-side support for platinum despite weak demand.', assets:['platinum','perth'], c:'#B91C1C', dir:'up' },
+      { ts: Date.parse('2025-08-12T00:00:00Z'), s:'CFX eSpace', title:'Conflux eSpace TVM upgrade momentum', detail:'Higher throughput on Conflux eSpace lifted on-chain activity; CFX rallied with Layer-1 rotation into Chinese-ecosystem chains.', assets:['cfx'], c:'#0077B6', dir:'up' },
+      { ts: Date.parse('2025-10-15T00:00:00Z'), s:'RATE CUT', title:'Fed begins easing cycle', detail:'Lower real yields typically support gold; crypto rallied on liquidity expectations.', assets:['gold','btc','eth','cfx'], c:'#059669', dir:'up' },
+      { ts: Date.parse('2025-11-20T00:00:00Z'), s:'ALT SEASON', title:'Alt-L1 rotation — BTC dominance slips', detail:'Capital rotated from Bitcoin into smaller L1s; Conflux benefited from Asia-facing blockchain narrative and low-float momentum.', assets:['cfx','eth'], c:'#0077B6', dir:'up' },
+      { ts: Date.parse('2025-12-08T00:00:00Z'), s:'GZ PT', title:'Guangzhou platinum yuan futures launch', detail:'Structural Chinese demand signal; investment interest in platinum rose despite WPIC surplus in other segments.', assets:['platinum'], c:'#059669', dir:'up' },
+      { ts: Date.parse('2026-01-15T00:00:00Z'), s:'ETF UNWIND', title:'Platinum ETF holdings decline', detail:'Investment segment reversed 2024–25 hoarding; price fell despite ongoing WPIC supply deficit.', assets:['platinum','perth'], c:'#DC2626', dir:'down' },
+      { ts: Date.parse('2026-02-10T00:00:00Z'), s:'CFX BRIDGE', title:'Conflux cross-chain bridge volume spike', detail:'Bridged stablecoin inflows to Conflux eSpace increased; CFX fee burn and staking demand supported spot.', assets:['cfx'], c:'#0077B6', dir:'up' },
+      { ts: Date.parse('2026-02-28T00:00:00Z'), s:'IRAN WAR', title:'Operation Epic Fury — US/Israel strike Iran', detail:'Major geopolitical escalation; gold spiked, oil surged, crypto mixed; safe-haven flows into physical bullion.', assets:['gold','platinum','btc','perth','cfx'], c:'#EA580C', dir:'up' },
+      { ts: Date.parse('2026-03-15T00:00:00Z'), s:'WPIC', title:'WPIC Q1 2026 — stock cover under 3 months', detail:'Above-ground stocks at critical levels; physical premium at Perth Mint widened vs LBMA spot.', assets:['platinum','perth'], c:'#6B7F96', dir:'up' },
+      { ts: Date.parse('2026-04-08T00:00:00Z'), s:'CFX LIST', title:'CFX exchange liquidity expansion', detail:'Broader CEX spot listings and market-maker programs tightened spreads; improved price discovery for Conflux.', assets:['cfx'], c:'#0077B6', dir:'up' },
+    ].filter(e => e.title);
+
+    const maxPtsFor = tf => tf.maxPts || 400;
+
+    const TIMELINE_CACHE = new Map();
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const CG_GAP_MS = 450;
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    function cacheFresh(key) {
+      const hit = TIMELINE_CACHE.get(key);
+      if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
+      return null;
+    }
+
+    function cacheStale(key) {
+      return TIMELINE_CACHE.get(key)?.data ?? null;
+    }
+
+    function cacheSet(key, data) {
+      TIMELINE_CACHE.set(key, { ts: Date.now(), data });
+    }
+
+    const DEFAULT_CURVES = {
+      index: ['IDX-001','IDX-002','IDX-003','IDX-004','IDX-005'],
+      perth: ['IDX-103','IDX-104','IDX-101','IDX-102','IDX-107'],
+      producers: ['IDX-201','IDX-202','IDX-203','IDX-204'],
+    };
+
+    const STORAGE_KEY = 'pm_metis_perth_snapshots';
+
+    /* ─── DATA ────────────────────────────────────────────────────── */
+    const DATA = [
+      {y:1971,g:41,p:120,b:null,e:null,c:null},
+      {y:1972,g:58,p:125,b:null,e:null,c:null},
+      {y:1973,g:97,p:163,b:null,e:null,c:null},
+      {y:1974,g:159,p:178,b:null,e:null,c:null},
+      {y:1975,g:161,p:162,b:null,e:null,c:null},
+      {y:1976,g:125,p:162,b:null,e:null,c:null},
+      {y:1977,g:148,p:193,b:null,e:null,c:null},
+      {y:1978,g:193,p:302,b:null,e:null,c:null},
+      {y:1979,g:306,p:467,b:null,e:null,c:null},
+      {y:1980,g:615,p:677,b:null,e:null,c:null},
+      {y:1981,g:460,p:490,b:null,e:null,c:null},
+      {y:1982,g:376,p:327,b:null,e:null,c:null},
+      {y:1983,g:424,p:430,b:null,e:null,c:null},
+      {y:1984,g:360,p:357,b:null,e:null,c:null},
+      {y:1985,g:317,p:291,b:null,e:null,c:null},
+      {y:1986,g:368,p:450,b:null,e:null,c:null},
+      {y:1987,g:447,p:550,b:null,e:null,c:null},
+      {y:1988,g:437,p:534,b:null,e:null,c:null},
+      {y:1989,g:381,p:492,b:null,e:null,c:null},
+      {y:1990,g:384,p:471,b:null,e:null,c:null},
+      {y:1991,g:362,p:370,b:null,e:null,c:null},
+      {y:1992,g:344,p:359,b:null,e:null,c:null},
+      {y:1993,g:360,p:370,b:null,e:null,c:null},
+      {y:1994,g:384,p:405,b:null,e:null,c:null},
+      {y:1995,g:384,p:424,b:null,e:null,c:null},
+      {y:1996,g:388,p:397,b:null,e:null,c:null},
+      {y:1997,g:331,p:396,b:null,e:null,c:null},
+      {y:1998,g:294,p:372,b:null,e:null,c:null},
+      {y:1999,g:279,p:371,b:null,e:null,c:null},
+      {y:2000,g:279,p:544,b:null,e:null,c:null},
+      {y:2001,g:271,p:529,b:null,e:null,c:null},
+      {y:2002,g:310,p:540,b:null,e:null,c:null},
+      {y:2003,g:363,p:691,b:null,e:null,c:null},
+      {y:2004,g:410,p:846,b:null,e:null,c:null},
+      {y:2005,g:445,p:897,b:null,e:null,c:null},
+      {y:2006,g:604,p:1143,b:null,e:null,c:null},
+      {y:2007,g:695,p:1304,b:null,e:null,c:null},
+      {y:2008,g:872,p:1576,b:null,e:null,c:null},
+      {y:2009,g:972,p:1206,b:0.1,e:null,c:null},
+      {y:2010,g:1225,p:1611,b:0.3,e:null,c:null},
+      {y:2011,g:1572,p:1722,b:4,e:null,c:null},
+      {y:2012,g:1669,p:1552,b:13,e:null,c:null},
+      {y:2013,g:1411,p:1487,b:732,e:null,c:null},
+      {y:2014,g:1266,p:1385,b:316,e:null,c:null},
+      {y:2015,g:1160,p:1053,b:430,e:0.93,c:null},
+      {y:2016,g:1251,p:983,b:963,e:8,c:null},
+      {y:2017,g:1257,p:947,b:14156,e:756,c:null},
+      {y:2018,g:1268,p:880,b:3742,e:133,c:null},
+      {y:2019,g:1393,p:864,b:7179,e:129,c:null},
+      {y:2020,g:1770,p:883,b:28990,e:737,c:0.08},
+      {y:2021,g:1799,p:1089,b:47345,e:3682,c:1.45},
+      {y:2022,g:1800,p:982,b:16601,e:1197,c:0.23},
+      {y:2023,g:1941,p:997,b:42285,e:2281,c:0.28},
+      {y:2024,g:2386,p:956,b:93429,e:3337,c:0.21},
+      {y:2025,g:3200,p:1789,b:97000,e:3200,c:0.20},
+      {y:2026,g:4325,p:1880,b:103000,e:2500,c:0.15},
+    ];
+
+    const GEO = [
+      {y:1971,s:"NIXON",r:1,c:"#D97706",t:"Nixon Shock — dollar depegged from gold"},
+      {y:1980,s:"USSR",r:1,c:"#D97706",t:"Soviet invasion of Afghanistan + Iran hostage crisis"},
+      {y:1990,s:"GW-I",r:1,c:"#D97706",t:"Gulf War I — Iraq invades Kuwait"},
+      {y:2001,s:"9/11",r:1,c:"#D97706",t:"September 11 attacks"},
+      {y:2003,s:"GW-II",r:2,c:"#D97706",t:"Gulf War II — US-led invasion of Iraq"},
+      {y:2022,s:"RU-UA",r:2,c:"#D97706",t:"Russia-Ukraine War — sanctions accelerate de-dollarisation"},
+      {y:2026,s:"IRAN",r:1,c:"#EA580C",t:"US-Israel Operation Epic Fury on Iran — Feb 2026"},
+    ];
+    const FIN = [
+      {y:1987,s:"B-MON",r:2,c:"#DC2626",t:"Black Monday — Dow −22% in a single day"},
+      {y:1997,s:"AFC",r:2,c:"#DC2626",t:"Asian Financial Crisis"},
+      {y:2007,s:"SUB",r:1,c:"#DC2626",t:"Subprime crisis — Bear Stearns collapse"},
+      {y:2008,s:"GFC",r:2,c:"#B91C1C",t:"GFC — Lehman collapse. Pt peak $2,270 → trough $774"},
+      {y:2020,s:"COV",r:2,c:"#DC2626",t:"COVID-19 crash then historic monetary expansion"},
+    ];
+    const HAL = [
+      {y:2012,s:"½1",r:1,c:"#B8860B",t:"BTC Halving #1 — 50→25 BTC"},
+      {y:2016,s:"½2",r:1,c:"#B8860B",t:"BTC Halving #2 — 25→12.5 BTC"},
+      {y:2020,s:"½3",r:1,c:"#B8860B",t:"BTC Halving #3 — 12.5→6.25 BTC"},
+      {y:2024,s:"½4",r:1,c:"#B8860B",t:"BTC Halving #4 — 6.25→3.125 BTC"},
+    ];
+    const CEV = [
+      {y:2013,s:"MTG↑",r:2,c:"#059669",t:"BTC ATH $1,242 / Mt.Gox era"},
+      {y:2014,s:"MTG↓",r:2,c:"#DC2626",t:"Mt.Gox collapses — BTC −84%"},
+      {y:2017,s:"ATH",r:2,c:"#059669",t:"BTC ATH $19,783 then −83% crash"},
+      {y:2021,s:"ATH",r:2,c:"#059669",t:"BTC ATH $68,789 / ETH ATH $4,891"},
+      {y:2022,s:"FTX",r:2,c:"#DC2626",t:"Luna/Terra collapse + FTX implosion"},
+      {y:2024,s:"ETF+",r:2,c:"#059669",t:"Spot BTC ETF approved / BTC ATH $108k"},
+    ];
+    const PRESETS = [
+      {l:"All",  s:1971, e:2026},
+      {l:"2000+",s:2000, e:2026},
+      {l:"2009+",s:2009, e:2026},
+      {l:"2015+",s:2015, e:2026},
+      {l:"2020+",s:2020, e:2026},
+    ];
+
+    /* ─── PLATINUM FUNDAMENTALS (WPIC, koz) ───────────────────────── */
+    const platinumSupplyDemand = [
+      { year: 2022, mineSupply: 5740, recycling: 1500, totalSupply: 7240, totalDemand: 7770, balance: -530 },
+      { year: 2023, mineSupply: 5550, recycling: 1500, totalSupply: 7050, totalDemand: 8050, balance: -1000 },
+      { year: 2024, mineSupply: 5530, recycling: 1490, totalSupply: 7020, totalDemand: 7950, balance: -930 },
+      { year: 2025, mineSupply: 5553, recycling: 1664, totalSupply: 7217, totalDemand: 7909, balance: -1082 },
+      { year: 2026, mineSupply: 5622, recycling: 1782, totalSupply: 7404, totalDemand: 7674, balance: -297 },
+    ];
+
+    const platinumDemandBySegment = [
+      { year: 2022, automotive: 3020, jewellery: 2200, industrial: 1980, investment: 570 },
+      { year: 2023, automotive: 3110, jewellery: 2030, industrial: 2240, investment: 670 },
+      { year: 2024, automotive: 3070, jewellery: 1970, industrial: 1820, investment: 1090 },
+      { year: 2025, automotive: 3033, jewellery: 1834, industrial: 1948, investment: 1094 },
+      { year: 2026, automotive: 2943, jewellery: 1614, industrial: 2124, investment: 709 },
+    ];
+
+    const platinumSupplyConcentration = [
+      { region: 'South Africa', share: 0.72 },
+      { region: 'Russia', share: 0.10 },
+      { region: 'Zimbabwe', share: 0.08 },
+      { region: 'North America', share: 0.06 },
+      { region: 'Other', share: 0.04 },
+    ];
+
+    const platinumHydrogenDemand = [
+      { year: 2024, hydrogenDemand: 60 },
+      { year: 2025, hydrogenDemand: 95 },
+      { year: 2026, hydrogenDemand: 140 },
+      { year: 2028, hydrogenDemand: 400 },
+      { year: 2030, hydrogenDemand: 900 },
+    ];
+
+    const platinumStockCover = [
+      { year: 2022, monthsCover: 7.2 },
+      { year: 2023, monthsCover: 5.8 },
+      { year: 2024, monthsCover: 4.5 },
+      { year: 2025, monthsCover: 4.1 },
+      { year: 2026, monthsCover: 2.9 },
+    ];
+
+    const SD_MERGED = platinumSupplyDemand.map(row => {
+      const price = DATA.find(d => d.y === row.year)?.p;
+      const cover = platinumStockCover.find(s => s.year === row.year)?.monthsCover;
+      const prevPrice = DATA.find(d => d.y === row.year - 1)?.p;
+      const priceChg = price && prevPrice ? ((price - prevPrice) / prevPrice) * 100 : null;
+      return { ...row, price, monthsCover: cover, priceChg };
+    });
+
+    const SEG_COLORS = {
+      automotive: '#6B7F96',
+      jewellery: '#B8860B',
+      industrial: '#5B6F8A',
+      investment: '#DC2626',
+    };
+
+    /* ─── FORMATTERS ──────────────────────────────────────────────── */
+    const fmtUsd = (v, dec) => {
+      if (v == null || isNaN(v)) return '—';
+      if (v >= 1000000) return `$${(v/1e6).toFixed(2)}M`;
+      if (v >= 10000)   return `$${Math.round(v).toLocaleString()}`;
+      if (v >= 1000)    return `$${v.toLocaleString(undefined, {maximumFractionDigits:0})}`;
+      if (v >= 1)       return `$${v.toFixed(dec ?? 2)}`;
+      if (v >= 0.01)    return `$${v.toFixed(4)}`;
+      return `$${v.toFixed(6)}`;
+    };
+
+    const fmtPct = (v) => {
+      if (v == null || isNaN(v)) return '—';
+      const sign = v >= 0 ? '+' : '';
+      return `${sign}${v.toFixed(2)}%`;
+    };
+
+    const fmtKoz = v => {
+      if (v == null) return '—';
+      const sign = v >= 0 ? '+' : '';
+      return `${sign}${v.toLocaleString()} koz`;
+    };
+
+    const fmtCrypto = v => {
+      if (v >= 10000) return `$${(v/1000).toFixed(0)}k`;
+      if (v >= 1000)  return `$${(v/1000).toFixed(1)}k`;
+      if (v >= 1)     return `$${v.toFixed(0)}`;
+      if (v >= 0.01)  return `$${v.toFixed(2)}`;
+      return `$${v.toFixed(4)}`;
+    };
+
+    const chgClass = (v) => {
+      if (v == null || isNaN(v) || Math.abs(v) < 0.01) return 'flat';
+      return v >= 0 ? 'up' : 'down';
+    };
+
+    const timeAgo = (d) => {
+      if (!d) return '';
+      const s = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s/60)}m ago`;
+      return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    };
+
+    const PERTH_API_CACHE_KEY = 'pm_metis_perth_api_cache';
+
+    function loadPerthApiCache() {
+      try {
+        const raw = localStorage.getItem(PERTH_API_CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed?.data?.result?.length ? parsed.data : null;
+      } catch (_) { return null; }
+    }
+
+    function savePerthApiCache(data) {
+      try {
+        localStorage.setItem(PERTH_API_CACHE_KEY, JSON.stringify({ data, savedAt: Date.now() }));
+      } catch (_) {}
+    }
+
+    const pmFetch = (url, opts, ms) =>
+      (window.PM && window.PM.fetchWithTimeout
+        ? window.PM.fetchWithTimeout(url, opts, ms)
+        : fetch(url, opts));
+
+    async function fetchPerthMint() {
+      const url = '/.netlify/functions/perth-mint';
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const r = await pmFetch(url, {}, 12000);
+          if (!r.ok) continue;
+          const text = await r.text();
+          const j = JSON.parse(text);
+          const hasHistory = j?.result?.some(
+            (m) => m.oneWeekHistoricData?.length || m.twoYearsHistoricData?.length
+          );
+          if (hasHistory) {
+            savePerthApiCache(j);
+            return j;
+          }
+        } catch (_) {}
+        if (attempt < 1) await new Promise((res) => setTimeout(res, 400));
+      }
+      const cached = loadPerthApiCache();
+      if (cached) return cached;
+      throw new Error('Perth Mint feed unavailable');
+    }
+
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v7:';
+
+    const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
+      gold: { price: 4236, chg: 0, src: 'fallback' },
+      platinum: { price: 1715, chg: 0, src: 'fallback' },
+      btc: { price: 63900, chg: 0, src: 'fallback' },
+      eth: { price: 1730, chg: 0, src: 'fallback' },
+      cfx: { price: 0.047, chg: 0, src: 'fallback' },
+    };
+
+    const loadSpotFromStorage = () => (window.PM && window.PM.loadSpotFromStorage ? window.PM.loadSpotFromStorage() : null);
+    const saveSpotToStorage = (data) => { if (window.PM && window.PM.saveSpotToStorage) window.PM.saveSpotToStorage(data); };
+
+    async function fetchMarketSpot() {
+      if (window.PM && window.PM.fetchMarketSpot) return window.PM.fetchMarketSpot();
+      const cached = loadSpotFromStorage();
+      if (cached) return cached;
+      return {
+        ok: true,
+        stale: true,
+        spot: FALLBACK_SPOT_CLIENT,
+        audUsd: 0.65,
+        updatedAt: new Date().toISOString(),
+        cacheNote: 'Using fallback prices (live feed unavailable)',
+      };
+    }
+
+    const CG_TIMELINE_IDS = {
+      'IDX-001': 'tether-gold',
+      'IDX-002': 'gram-platinum',
+      'IDX-003': 'bitcoin',
+      'IDX-004': 'ethereum',
+      'IDX-005': 'conflux-token',
+    };
+    const INDEX_METAL_IDS = new Set(['IDX-001', 'IDX-002']);
+    const INDEX_CRYPTO_IDS = new Set(['IDX-003', 'IDX-004', 'IDX-005']);
+    const CHART_INFLIGHT = new Map();
+
+    function derivePlatinumFromGold(goldPts) {
+      const ratios = DATA.filter((d) => d.g && d.p).map((d) => ({ y: d.y, r: d.p / d.g }));
+      return goldPts.map((pt) => {
+        const y = new Date(pt.ts).getUTCFullYear();
+        let r = 0.4;
+        const exact = ratios.find((x) => x.y === y);
+        if (exact) r = exact.r;
+        else {
+          const prior = ratios.filter((x) => x.y <= y).pop();
+          if (prior) r = prior.r;
+        }
+        return { ts: pt.ts, price: pt.price * r };
+      });
+    }
+
+    async function fetchMetalProxy(symbol, days) {
+      const dStr = days == null ? '1095' : String(days);
+      const urls = [
+        `/.netlify/functions/crypto-feed?type=metal&symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(dStr)}`,
+        `/.netlify/functions/metals-chart?symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(dStr)}`,
+      ];
+      for (const url of urls) {
+        try {
+          const res = await pmFetch(url, {}, 15000);
+          const j = await res.json();
+          if (j.ok && j.prices?.length) {
+            return j.prices.map(([ts, price]) => ({ ts, price }));
+          }
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    const CG_FETCH_STAGGER = { 'IDX-003': 0, 'IDX-004': 500, 'IDX-005': 1000 };
+
+    function filterByTimeframe(pts, tf) {
+      if (!pts?.length) return [];
+      if (tf.hours) return pts.filter((p) => Date.now() - p.ts <= tf.hours * 3600000);
+      if (tf.days) return pts.filter((p) => Date.now() - p.ts <= tf.days * 86400000);
+      return pts;
+    }
+
+    async function fetchCgChartBrowser(coinId, days) {
+      const dStr = days == null ? 'max' : String(days);
+      const interval = days != null && days >= 2 && days <= 30 ? '&interval=hourly' : '';
+      const url = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinId)}/market_chart?vs_currency=usd&days=${dStr}${interval}`;
+      const res = await pmFetch(url, {}, 12000);
+      if (!res.ok) throw new Error('CoinGecko chart ' + res.status);
+      const text = await res.text();
+      const j = JSON.parse(text);
+      if (!j.prices?.length) throw new Error('CoinGecko chart empty');
+      return j.prices.map(([ts, price]) => ({ ts, price }));
+    }
+
+    async function fetchMetalChart(indexId, days, goldPtsForFallback) {
+      const yahooSym = indexId === 'IDX-002' ? 'PL=F' : indexId === 'IDX-001' ? 'GC=F' : null;
+
+      if (yahooSym) {
+        const proxy = await fetchMetalProxy(yahooSym, days);
+        if (proxy?.length) return proxy;
+      }
+
+      if (indexId === 'IDX-001') {
+        try {
+          const cgPts = await fetchCgChartBrowser('tether-gold', days);
+          if (cgPts?.length) return cgPts;
+        } catch (_) {}
+      }
+
+      if (indexId === 'IDX-002' && goldPtsForFallback?.length) {
+        return derivePlatinumFromGold(goldPtsForFallback);
+      }
+
+      throw new Error('Metal chart unavailable for ' + indexId);
+    }
+
+    async function fetchChartSeriesInner(coinId, days) {
+      try {
+        return await fetchCgChartBrowser(coinId, days);
+      } catch (_) {}
+      const dStr = days == null ? 'max' : String(days);
+      const url = `/.netlify/functions/crypto-feed?type=chart&id=${encodeURIComponent(coinId)}&days=${encodeURIComponent(dStr)}`;
+      const res = await pmFetch(url, {}, 15000);
+      if (!res.ok) throw new Error('Chart proxy ' + res.status);
+      const text = await res.text();
+      const j = JSON.parse(text);
+      if (j.error && !j.prices?.length) throw new Error(j.error);
+      if (!j.prices?.length) throw new Error('Empty chart');
+      return j.prices.map(([ts, price]) => ({ ts, price }));
+    }
+
+    async function fetchChartSeries(coinId, days) {
+      const key = `${coinId}:${days == null ? 'max' : days}`;
+      if (CHART_INFLIGHT.has(key)) return CHART_INFLIGHT.get(key);
+      const p = fetchChartSeriesInner(coinId, days).finally(() => CHART_INFLIGHT.delete(key));
+      CHART_INFLIGHT.set(key, p);
+      return p;
+    }
+
+    async function fetchNetlifyTimeline(tab, timeframeId, curveIds) {
+      const curves = curveIds.join(',');
+      const res = await fetch(
+        `/.netlify/functions/market-data?type=timeline&tab=${encodeURIComponent(tab)}&timeframe=${encodeURIComponent(timeframeId)}&curves=${encodeURIComponent(curves)}`,
+        { cache: 'no-store' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (data.ok && data.rows?.length) return data;
+      throw new Error(data.error || 'Timeline unavailable');
+    }
+
+    function rowsToSeriesMap(rows, curveIds) {
+      const seriesMap = {};
+      for (const id of curveIds) {
+        const pts = rows.filter((r) => r[id] != null).map((r) => ({ ts: r.ts, price: r[id] }));
+        if (pts.length) seriesMap[id] = pts;
+      }
+      return seriesMap;
+    }
+
+    async function fetchIndexTimelineSplit(timeframeId, curveIds) {
+      const tf = TIMEFRAMES.find(t => t.id === timeframeId) || TIMEFRAMES[1];
+      const seriesMap = {};
+      const failures = [];
+      const warns = [];
+      const metalIds = curveIds.filter((id) => INDEX_METAL_IDS.has(id));
+      const cryptoIds = curveIds.filter((id) => INDEX_CRYPTO_IDS.has(id));
+      const cryptoTasks = [];
+
+      let goldPts = null;
+      if (metalIds.includes('IDX-001')) {
+        try {
+          goldPts = await fetchMetalChart('IDX-001', tf.cgDays);
+          goldPts = filterByTimeframe(goldPts, tf);
+          if (goldPts.length) seriesMap['IDX-001'] = downsample(goldPts, maxPtsFor(tf));
+        } catch (_) {
+          failures.push('IDX-001');
+        }
+      }
+
+      if (metalIds.includes('IDX-002')) {
+        try {
+          let pts = await fetchMetalChart('IDX-002', tf.cgDays, goldPts);
+          pts = filterByTimeframe(pts, tf);
+          if (pts.length) seriesMap['IDX-002'] = downsample(pts, maxPtsFor(tf));
+          else if (goldPts?.length) {
+            seriesMap['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(tf));
+            warns.push('Platinum derived from gold × Pt/Au ratio');
+          }
+        } catch (_) {
+          if (goldPts?.length) {
+            seriesMap['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(tf));
+            warns.push('Platinum derived from gold × Pt/Au ratio');
+          } else {
+            failures.push('IDX-002');
+          }
+        }
+      }
+
+      for (const id of metalIds.filter((mid) => mid !== 'IDX-001' && mid !== 'IDX-002')) {
+        try {
+          let pts = await fetchMetalChart(id, tf.cgDays);
+          pts = filterByTimeframe(pts, tf);
+          if (pts.length) seriesMap[id] = downsample(pts, maxPtsFor(tf));
+        } catch (_) {
+          failures.push(id);
+        }
+      }
+
+      for (const id of cryptoIds) {
+        cryptoTasks.push((async () => {
+          const coinId = CG_TIMELINE_IDS[id];
+          if (!coinId) return;
+          await sleep(CG_FETCH_STAGGER[id] || 0);
+          try {
+            let pts = await fetchChartSeries(coinId, tf.cgDays);
+            pts = filterByTimeframe(pts, tf);
+            if (pts.length) seriesMap[id] = downsample(pts, maxPtsFor(tf));
+          } catch (_) {
+            failures.push(id);
+          }
+        })());
+      }
+      if (cryptoTasks.length) await Promise.all(cryptoTasks);
+
+      const rows = mergeSeries(seriesMap, timeframeId);
+      if (!rows.length) throw new Error('Index timeline unavailable');
+      const warnParts = [...warns];
+      if (failures.length) warnParts.push(`Some curves unavailable (${failures.join(', ')})`);
+      return {
+        ok: true,
+        stale: false,
+        rows,
+        warn: warnParts.length ? warnParts.join(' · ') : null,
+        source: 'coingecko-yahoo',
+      };
+    }
+
+    function saveTimelineToStorage(lsKey, data) {
+      try {
+        localStorage.setItem(lsKey, JSON.stringify({
+          rows: data.rows,
+          producerMeta: data.producerMeta || null,
+          savedAt: Date.now(),
+        }));
+      } catch (_) {}
+    }
+
+    async function fetchPerthTimelineDirect(timeframeId, curveIds, audUsd) {
+      const tf = TIMEFRAMES.find(t => t.id === timeframeId) || TIMEFRAMES[1];
+      const pm = await fetchPerthMint();
+      const seriesMap = {};
+      const failures = [];
+      const ids = [...curveIds];
+      if (ids.includes('IDX-107') && !ids.includes('IDX-103')) ids.push('IDX-103');
+
+      for (const id of ids) {
+        const meta = CURVE_INDEX[id];
+        if (!meta?.perthMetal || meta.taOverlay) continue;
+        try {
+          const metal = pm.result?.find(m => m.metal === meta.perthMetal);
+          const raw = filterPerthHistory(metal?.[tf.perthKey] || [], tf);
+          if (!raw.length) throw new Error('empty');
+          seriesMap[id] = downsample(
+            perthToSeries(raw, meta.perthField, audUsd, meta.usdConv),
+            maxPtsFor(tf)
+          );
+        } catch (_) {
+          failures.push(id);
+        }
+      }
+
+      const rows = mergeSeries(seriesMap, timeframeId);
+      if (!rows.length) throw new Error('Perth timeline unavailable');
+      return {
+        ok: true,
+        stale: false,
+        rows,
+        warn: failures.length ? `Some Perth curves unavailable (${failures.join(', ')})` : null,
+        source: 'perth-direct',
+      };
+    }
+
+    async function fetchMarketTimeline(tab, timeframeId, curveIds) {
+      const curves = curveIds.join(',');
+      const lsKey = TIMELINE_LS_PREFIX + tab + ':' + timeframeId + ':' + curves;
+
+      if (tab === 'index') {
+        try {
+          const split = await fetchIndexTimelineSplit(timeframeId, curveIds);
+          saveTimelineToStorage(lsKey, split);
+          return split;
+        } catch (_) {}
+        try {
+          const data = await fetchNetlifyTimeline(tab, timeframeId, curveIds);
+          saveTimelineToStorage(lsKey, data);
+          return data;
+        } catch (_) {}
+      }
+
+      if (tab === 'perth') {
+        try {
+          const audUsd = await fetchAudUsd();
+          const direct = await fetchPerthTimelineDirect(timeframeId, curveIds, audUsd);
+          saveTimelineToStorage(lsKey, direct);
+          return direct;
+        } catch (_) {}
+        try {
+          const data = await fetchNetlifyTimeline(tab, timeframeId, curveIds);
+          saveTimelineToStorage(lsKey, data);
+          return data;
+        } catch (_) {}
+      }
+
+      if (tab === 'producers') {
+        try {
+          const data = await fetchProducerStocks(timeframeId);
+          saveTimelineToStorage(lsKey, data);
+          return data;
+        } catch (_) {}
+        try {
+          const data = await fetchNetlifyTimeline(tab, timeframeId, curveIds);
+          saveTimelineToStorage(lsKey, data);
+          return data;
+        } catch (_) {}
+      }
+
+      try {
+        const raw = localStorage.getItem(lsKey);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          if (cached.rows?.length) {
+            return {
+              ok: true,
+              stale: true,
+              rows: cached.rows,
+              producerMeta: cached.producerMeta || null,
+              warn: 'Browser cached timeline',
+            };
+          }
+        }
+      } catch (_) {}
+
+      throw new Error('Timeline unavailable — no cached data yet');
+    }
+
+    async function fetchAudUsd() {
+      const urls = [
+        '/.netlify/functions/fx-rate',
+        'https://api.frankfurter.dev/v1/latest?from=AUD&to=USD',
+      ];
+      for (const url of urls) {
+        try {
+          const r = await pmFetch(url, {}, 8000);
+          if (!r.ok) continue;
+          const j = await r.json();
+          if (j.rate != null) return j.rate;
+          if (j.rates?.USD != null) return j.rates.USD;
+        } catch (_) {}
+      }
+      return 0.65;
+    }
+
+    async function fetchProducerStocks(timeframeId) {
+      const urls = [`/.netlify/functions/producer-stocks?timeframe=${encodeURIComponent(timeframeId)}`];
+      for (const url of urls) {
+        try {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = await r.json();
+          if (data.ok) return data;
+          throw new Error(data.error || 'Producer feed failed');
+        } catch (e) {
+          if (url === urls[urls.length - 1]) throw e;
+        }
+      }
+      throw new Error('Producer feed unavailable');
+    }
+
+    function fmtZar(price) {
+      if (price == null) return '—';
+      return `R${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    function persistPerthSnapshot(pmData) {
+      try {
+        if (!pmData?.result) return;
+        const store = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        const ts = Date.now();
+        pmData.result.forEach(m => {
+          const latest = m.oneWeekHistoricData?.[m.oneWeekHistoricData.length - 1];
+          if (!latest) return;
+          store.push({ ts, metal: m.metal, offer: latest.offer, bid: latest.bid, mid: latest.mid, currency: m.currency });
+        });
+        const trimmed = store.slice(-2000);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+      } catch (_) {}
+    }
+
+    function filterPerthHistory(rows, tf) {
+      if (!rows?.length) return [];
+      const now = Date.now();
+      if (tf.hours) return rows.filter(r => now - new Date(r.dateTime).getTime() <= tf.hours * 3600000);
+      if (tf.days) return rows.filter(r => now - new Date(r.dateTime).getTime() <= tf.days * 86400000);
+      return rows;
+    }
+
+    function downsample(rows, maxPts) {
+      if (rows.length <= maxPts) return rows;
+      const step = Math.ceil(rows.length / maxPts);
+      return rows.filter((_, i) => i % step === 0 || i === rows.length - 1);
+    }
+
+    async function fetchCgChart(cgId, days) {
+      return fetchChartSeries(cgId, days);
+    }
+
+    function fmtTs(ts, tfId) {
+      const d = new Date(ts);
+      if (tfId === '24h' || tfId === '1w')
+        return d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+      if (tfId === '1m' || tfId === '3m')
+        return d.toLocaleDateString([], { month:'short', day:'numeric' });
+      return d.toLocaleDateString([], { year:'numeric', month:'short', day:'numeric' });
+    }
+
+    function eventXLabel(ts, rows) {
+      if (!rows?.length) return null;
+      let best = rows[0];
+      let bestD = Math.abs(rows[0].ts - ts);
+      for (let i = 1; i < rows.length; i++) {
+        const d = Math.abs(rows[i].ts - ts);
+        if (d < bestD) { bestD = d; best = rows[i]; }
+      }
+      const span = rows[rows.length - 1].ts - rows[0].ts;
+      const tol = Math.max(span * 0.02, 7 * 86400000);
+      return bestD <= tol ? best.label : null;
+    }
+
+    function eventsForCurves(events, curveIds) {
+      const assets = new Set();
+      curveIds.forEach(id => (CURVE_INDEX[id]?.assets || []).forEach(a => assets.add(a)));
+      return events.filter(e => e.assets.some(a => assets.has(a)));
+    }
+
+    /* ─── PLATINUM COIN · TECHNICAL ANALYSIS ──────────────────────── */
+    function extractPtSeries(rows, key = 'IDX-103') {
+      return rows.filter(r => r[key] != null).map(r => ({ ts: r.ts, label: r.label, v: r[key] }));
+    }
+
+    function findPivots(series, wing) {
+      const w = Math.max(2, wing);
+      const pivots = [];
+      for (let i = w; i < series.length - w; i++) {
+        const slice = series.slice(i - w, i + w + 1).map(p => p.v);
+        const hi = Math.max(...slice);
+        const lo = Math.min(...slice);
+        if (series[i].v >= hi * 0.998) pivots.push({ ...series[i], i, kind: 'high' });
+        if (series[i].v <= lo * 1.002) pivots.push({ ...series[i], i, kind: 'low' });
+      }
+      return pivots;
+    }
+
+    function clusterLevels(pivots, kind, tolPct = 0.018) {
+      const pts = pivots.filter(p => p.kind === kind);
+      const clusters = [];
+      for (const p of pts) {
+        let hit = clusters.find(c => Math.abs(c.price - p.v) / c.price < tolPct);
+        if (hit) {
+          hit.count++;
+          hit.price = (hit.price * (hit.count - 1) + p.v) / hit.count;
+          hit.touches.push(p);
+        } else {
+          clusters.push({ price: p.v, count: 1, touches: [p], kind });
+        }
+      }
+      return clusters.sort((a, b) => b.count - a.count || b.price - a.price);
+    }
+
+    function pickSupportResistance(series, pivots) {
+      const last = series[series.length - 1].v;
+      const highs = clusterLevels(pivots, 'high');
+      const lows = clusterLevels(pivots, 'low');
+      let resistance = highs.filter(c => c.price >= last * 0.97).slice(0, 2).map(c => Math.round(c.price));
+      let support = lows.filter(c => c.price <= last * 1.03).sort((a, b) => b.price - a.price).slice(0, 2).map(c => Math.round(c.price));
+      if (!resistance.length && highs.length) resistance = [Math.round(highs[0].price)];
+      if (!support.length && lows.length) support = [Math.round(lows[lows.length - 1].price)];
+      const uniq = (arr) => [...new Set(arr)].sort((a, b) => a - b);
+      return { support: uniq(support), resistance: uniq(resistance).reverse() };
+    }
+
+    function dedupeMarkers(markers, minGap = 4) {
+      const out = [];
+      for (const m of markers) {
+        const near = out.find(o => o.type === m.type && Math.abs(o.i - m.i) < minGap);
+        if (!near) out.push(m);
+      }
+      return out;
+    }
+
+    function detectBreakouts(series, support, resistance) {
+      const cross = 0.0035;
+      const markers = [];
+      for (let i = 1; i < series.length; i++) {
+        const prev = series[i - 1].v;
+        const curr = series[i].v;
+        for (const r of resistance) {
+          if (prev <= r * (1 - cross) && curr >= r * (1 + cross)) {
+            markers.push({ ...series[i], i, type: 'breakout', level: r });
+          }
+        }
+        for (const s of support) {
+          if (prev >= s * (1 + cross) && curr <= s * (1 - cross)) {
+            markers.push({ ...series[i], i, type: 'breakdown', level: s });
+          }
+        }
+      }
+      return dedupeMarkers(markers);
+    }
+
+    function detectInvertedCup(series) {
+      const len = series.length;
+      const span = Math.max(18, Math.floor(len * 0.22));
+      if (len < span + 6) return null;
+      let best = null;
+      let bestScore = 0;
+      for (let start = 0; start <= len - span; start += Math.max(2, Math.floor(span / 8))) {
+        const win = series.slice(start, start + span);
+        const t1 = Math.floor(span / 3);
+        const t2 = Math.floor((2 * span) / 3);
+        const left = win.slice(0, t1);
+        const mid = win.slice(t1, t2);
+        const right = win.slice(t2);
+        const leftHi = Math.max(...left.map(p => p.v));
+        const rightHi = Math.max(...right.map(p => p.v));
+        const bottom = Math.min(...mid.map(p => p.v));
+        const rim = (leftHi + rightHi) / 2;
+        if (rim <= bottom * 1.025) continue;
+        const rimDiff = Math.abs(leftHi - rightHi) / rim;
+        const depth = (rim - bottom) / rim;
+        if (rimDiff > 0.045 || depth < 0.035 || depth > 0.22) continue;
+        const score = depth * 10 - rimDiff * 5;
+        if (score > bestScore) {
+          bestScore = score;
+          const leftPt = left.find(p => p.v === leftHi) || left[left.length - 1];
+          const botPt = mid.find(p => p.v === bottom) || mid[Math.floor(mid.length / 2)];
+          const rightPt = right.find(p => p.v === rightHi) || right[right.length - 1];
+          best = {
+            startLabel: win[0].label,
+            endLabel: win[win.length - 1].label,
+            neckline: Math.round(rim),
+            leftPt, botPt, rightPt,
+            depthPct: (depth * 100).toFixed(1),
+          };
+        }
+      }
+      return best;
+    }
+
+    function analyzePlatinumTa(rows, priceKey = 'IDX-103') {
+      const series = extractPtSeries(rows, priceKey);
+      if (series.length < 12) {
+        return { series: [], support: [], resistance: [], markers: [], invertedCup: null, chartRows: [] };
+      }
+      const wing = Math.max(2, Math.floor(series.length / 35));
+      const pivots = findPivots(series, wing);
+      const { support, resistance } = pickSupportResistance(series, pivots);
+      const breakMarkers = detectBreakouts(series, support, resistance);
+      const invertedCup = detectInvertedCup(series);
+      const markerByLabel = {};
+      breakMarkers.forEach(m => { markerByLabel[m.label] = m.type; });
+      if (invertedCup) {
+        markerByLabel[invertedCup.leftPt.label] = 'inv_left';
+        markerByLabel[invertedCup.botPt.label] = 'inv_bottom';
+        markerByLabel[invertedCup.rightPt.label] = 'inv_right';
+      }
+      const chartRows = series.map(p => ({
+        ...p,
+        price: p.v,
+        taMarker: markerByLabel[p.label] || null,
+      }));
+      const last = series[series.length - 1].v;
+      const nearestRes = resistance.find(r => r >= last) || resistance[0];
+      const nearestSup = [...support].reverse().find(s => s <= last) || support[0];
+      let bias = 'neutral';
+      if (nearestRes && last > nearestRes * 1.002) bias = 'bullish';
+      else if (nearestSup && last < nearestSup * 0.998) bias = 'bearish';
+      else if (invertedCup && last < invertedCup.neckline * 0.995) bias = 'bearish';
+      return {
+        series, support, resistance, markers: breakMarkers, invertedCup, chartRows, bias, last,
+        nearestRes, nearestSup,
+      };
+    }
+
+    const TA_MARKER_DOT = (props) => {
+      const { cx, cy, payload } = props;
+      if (!payload?.taMarker || cx == null || cy == null) return null;
+      if (payload.taMarker === 'breakout') {
+        return <polygon points={`${cx},${cy - 7} ${cx - 6},${cy + 5} ${cx + 6},${cy + 5}`}
+          fill="#047857" stroke="#fff" strokeWidth={1}/>;
+      }
+      if (payload.taMarker === 'breakdown') {
+        return <polygon points={`${cx},${cy + 7} ${cx - 6},${cy - 5} ${cx + 6},${cy - 5}`}
+          fill="#B91C1C" stroke="#fff" strokeWidth={1}/>;
+      }
+      const fill = payload.taMarker.startsWith('inv') ? '#7C3AED' : C.plat;
+      return <circle cx={cx} cy={cy} r={4} fill={fill} stroke="#fff" strokeWidth={1.5}/>;
+    };
+
+    function PlatinumTaChart({ rows, timeframe }) {
+      const ta = useMemo(() => analyzePlatinumTa(rows, 'IDX-103'), [rows]);
+      if (!ta.chartRows.length) return null;
+      const fmtY = v => `$${Math.round(v).toLocaleString()}`;
+
+      const biasColor = { bullish: '#047857', bearish: '#B91C1C', neutral: C.text };
+      const tfLabel = TIMEFRAMES.find(t => t.id === timeframe)?.label || '';
+
+      return (
+        <div style={{marginBottom:8, borderTop:`1px solid ${C.borderLight}`, paddingTop:8}}>
+          <div style={{...panelHdr, paddingTop:10}}>
+            <span>Platinum 1oz · Technical structure · {tfLabel}</span>
+            <span style={{fontWeight:500, textTransform:'capitalize', letterSpacing:0,
+              color: biasColor[ta.bias] || C.text}}>{ta.bias} bias</span>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <ComposedChart data={ta.chartRows} margin={{top:24, right:16, left:8, bottom:4}}>
+              <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+              <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={44} {...axP} />
+              <YAxis {...axP} width={62} domain={['auto', 'auto']} tickFormatter={fmtY}/>
+              <Tooltip content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const d = payload[0].payload;
+                return (
+                  <div style={tipStyle}>
+                    <div style={{color:C.textDark, marginBottom:4, fontWeight:600}}>{d.label}</div>
+                    <div style={{color:C.plat}}>Sell · {fmtY(d.price)}</div>
+                    {d.taMarker && (
+                      <div style={{marginTop:6, fontSize:11, color:'#7C3AED', fontWeight:600}}>
+                        {d.taMarker === 'breakout' && '▲ Resistance breakout'}
+                        {d.taMarker === 'breakdown' && '▼ Support breakdown'}
+                        {d.taMarker === 'inv_left' && 'Inverted cup · left rim'}
+                        {d.taMarker === 'inv_bottom' && 'Inverted cup · base'}
+                        {d.taMarker === 'inv_right' && 'Inverted cup · right rim'}
+                      </div>
+                    )}
+                  </div>
+                );
+              }} cursor={{stroke:C.border}}/>
+              {ta.invertedCup && (
+                <ReferenceArea x1={ta.invertedCup.startLabel} x2={ta.invertedCup.endLabel}
+                  fill="rgba(124,58,237,0.06)" stroke="rgba(124,58,237,0.25)" strokeDasharray="4 4"/>
+              )}
+              {ta.support.map((lvl, i) => (
+                <ReferenceLine key={`sup-${i}`} y={lvl} stroke="#047857" strokeDasharray="6 4" strokeWidth={1.5}
+                  label={{ value: `Support ${fmtY(lvl)}`, position: 'insideTopLeft', fill: '#047857', fontSize: 9 }}/>
+              ))}
+              {ta.resistance.map((lvl, i) => (
+                <ReferenceLine key={`res-${i}`} y={lvl} stroke="#B91C1C" strokeDasharray="6 4" strokeWidth={1.5}
+                  label={{ value: `Resistance ${fmtY(lvl)}`, position: 'insideBottomLeft', fill: '#B91C1C', fontSize: 9 }}/>
+              ))}
+              {ta.invertedCup && (
+                <ReferenceLine y={ta.invertedCup.neckline} stroke="#7C3AED" strokeDasharray="3 3" strokeWidth={1.5}
+                  label={{ value: `Neckline ${fmtY(ta.invertedCup.neckline)}`, position: 'insideTopRight', fill: '#7C3AED', fontSize: 9 }}/>
+              )}
+              <Line type="monotone" dataKey="price" name="IDX-103"
+                stroke={C.plat} strokeWidth={2} dot={TA_MARKER_DOT} activeDot={{ r: 5, strokeWidth: 0, fill: C.plat }}/>
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div style={{padding:'0 18px 14px', display:'grid', gap:10}}>
+            <div style={{display:'flex', flexWrap:'wrap', gap:14, fontSize:11, color:C.text}}>
+              <span><span style={{color:'#047857', fontWeight:600}}>—</span> Support</span>
+              <span><span style={{color:'#B91C1C', fontWeight:600}}>—</span> Resistance</span>
+              <span><span style={{color:'#047857'}}>▲</span> Breakout</span>
+              <span><span style={{color:'#B91C1C'}}>▼</span> Breakdown</span>
+              <span><span style={{color:'#7C3AED'}}>◆</span> Inverted cup</span>
+            </div>
+            {ta.invertedCup && (
+              <div style={{fontSize:12, color:C.textSecondary, lineHeight:1.55,
+                padding:'10px 12px', background:C.surface2, borderRadius:8, border:`1px solid ${C.borderLight}`}}>
+                <span style={{fontWeight:600, color:'#7C3AED'}}>Inverted cup &amp; handle · </span>
+                {ta.invertedCup.depthPct}% depth · neckline {fmtY(ta.invertedCup.neckline)}.
+                {ta.last < ta.invertedCup.neckline
+                  ? ' Price below neckline — bearish continuation risk until reclaim.'
+                  : ' Price at/above neckline — watch for failed breakdown or breakout confirmation.'}
+              </div>
+            )}
+            <div style={{fontSize:11, color:C.text, lineHeight:1.55}}>
+              IDX-107 · computed from Perth Mint platinum sell (IDX-103). Pivot-based S/R, cross detection for breaks,
+              and heuristic inverted-cup scan — not financial advice.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function mergeSeries(seriesMap, tfId) {
+      const tsSet = new Set();
+      Object.values(seriesMap).forEach(pts => pts.forEach(p => tsSet.add(p.ts)));
+      const sorted = [...tsSet].sort((a, b) => a - b);
+      return sorted.map(ts => {
+        const row = { ts, label: fmtTs(ts, tfId) };
+        Object.entries(seriesMap).forEach(([id, pts]) => {
+          const hit = pts.find(p => p.ts === ts);
+          if (hit) row[id] = hit.price;
+          else {
+            const prior = [...pts].filter(p => p.ts <= ts).pop();
+            if (prior) row[id] = prior.price;
+          }
+        });
+        return row;
+      });
+    }
+
+    const TIMELINE_FETCH_TIMEOUT_MS = 25000;
+
+    function fetchMarketTimelineWithTimeout(tab, timeframeId, curveIds) {
+      return Promise.race([
+        fetchMarketTimeline(tab, timeframeId, curveIds),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeline fetch timeout')), TIMELINE_FETCH_TIMEOUT_MS)
+        ),
+      ]);
+    }
+
+    function perthToSeries(metalRows, field, audUsd, usdConv) {
+      return metalRows.map(r => ({
+        ts: new Date(r.dateTime).getTime(),
+        price: usdConv ? r[field] * audUsd : r[field],
+      }));
+    }
+
+    function getEventsInRange(rows, activeIds) {
+      if (!rows?.length) return [];
+      const min = rows[0].ts;
+      const max = rows[rows.length - 1].ts;
+      const assetSet = new Set();
+      activeIds.forEach(id => (CURVE_INDEX[id]?.assets || []).forEach(a => assetSet.add(a)));
+      return TIMELINE_EVENTS
+        .filter(e => e.ts >= min && e.ts <= max && e.assets.some(a => assetSet.has(a)))
+        .sort((a, b) => a.ts - b.ts);
+    }
+
+    const mkTsLbl = (txt, col) => (props) => {
+      if (!props?.viewBox) return null;
+      return (
+        <text x={props.viewBox.x + 4} y={16} fill={col} fontSize={9}
+          fontFamily="Inter,sans-serif" fontWeight="600">{txt}</text>
+      );
+    };
+
+    /* ─── LIVE PRICES ───────────────────────────────────────────── */
+    function useLivePrices() {
+      const bootCached = loadSpotFromStorage();
+      const [live, setLive] = useState(bootCached?.spot || FALLBACK_SPOT_CLIENT);
+      const [perth, setPerth] = useState(null);
+      const [audUsd, setAudUsd] = useState(bootCached?.audUsd ?? 0.65);
+      const [error, setError] = useState(null);
+      const [feedWarn, setFeedWarn] = useState(bootCached ? (bootCached.cacheNote || 'Showing cached prices') : null);
+      const [perthError, setPerthError] = useState(null);
+      const [updated, setUpdated] = useState(bootCached ? new Date(bootCached.updatedAt || Date.now()) : null);
+      const [spotLoading, setSpotLoading] = useState(false);
+
+      const applySpotData = useCallback((data) => {
+        const next = data.spot || FALLBACK_SPOT_CLIENT;
+        setLive(next);
+        setAudUsd(data.audUsd ?? 0.65);
+        setUpdated(new Date(data.updatedAt || Date.now()));
+        setFeedWarn(data.stale ? (data.cacheNote || 'Showing cached prices') : null);
+        setError(null);
+        updateTicker(next);
+
+        if (data.perth?.result) {
+          setPerth(data.perth);
+          persistPerthSnapshot(data.perth);
+          setPerthError(null);
+          const pt = data.perth.result.find(m => m.metal === 'Platinum');
+          const au = data.perth.result.find(m => m.metal === 'Gold');
+          const ptLast = pt?.oneWeekHistoricData?.slice(-1)[0];
+          const auLast = au?.oneWeekHistoricData?.slice(-1)[0];
+          if (ptLast && auLast) {
+            updateTickerPerth({ ptOffer: ptLast.offer, ptBid: ptLast.bid, auOffer: auLast.offer, fx: data.audUsd });
+          }
+        } else if (data.perth === null && !data.stale) {
+          setPerthError('Perth Mint unavailable — coin tab may use cached data');
+        }
+
+        updateNavStatus(!data.stale, new Date(data.updatedAt || Date.now()));
+      }, []);
+
+      const fetchAll = useCallback(async () => {
+        setSpotLoading(true);
+        try {
+          const [spotData, perthData, audFromFx] = await Promise.all([
+            fetchMarketSpot(),
+            fetchPerthMint().catch(() => null),
+            fetchAudUsd().catch(() => null),
+          ]);
+          applySpotData({
+            ...spotData,
+            audUsd: audFromFx ?? spotData.audUsd ?? 0.65,
+            perth: perthData,
+          });
+        } catch (e) {
+          const cached = loadSpotFromStorage();
+          if (cached) {
+            applySpotData(cached);
+            setFeedWarn('Live feed failed — showing browser cache');
+          } else {
+            applySpotData({
+              ok: true,
+              stale: true,
+              spot: FALLBACK_SPOT_CLIENT,
+              audUsd: 0.65,
+              cacheNote: 'Using cached data (live feed unavailable)',
+            });
+            setError(e.message);
+            updateNavStatus(false);
+          }
+        } finally {
+          setSpotLoading(false);
+        }
+      }, [applySpotData]);
+
+      useEffect(() => {
+        fetchAll();
+        const id = setInterval(fetchAll, 60000);
+        return () => clearInterval(id);
+      }, [fetchAll]);
+
+      useEffect(() => {
+        if (live) updateTicker(live);
+      }, [live]);
+
+      return { live, perth, audUsd, error, feedWarn, perthError, updated, spotLoading, refreshSpot: fetchAll };
+    }
+
+    function useTimeline(tab, timeframeId, activeIds) {
+      const [rows, setRows] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [err, setErr] = useState(null);
+      const [warn, setWarn] = useState(null);
+      const [producerMeta, setProducerMeta] = useState(null);
+      const hasData = useRef(false);
+
+      useEffect(() => {
+        let cancelled = false;
+        const mergedKey = `merged:${tab}:${timeframeId}:${[...activeIds].sort().join(',')}`;
+        const cachedRows = cacheFresh(mergedKey) || cacheStale(mergedKey);
+
+        if (cachedRows?.length) {
+          setRows(cachedRows);
+          hasData.current = true;
+          setLoading(false);
+        }
+
+        async function load() {
+          if (!hasData.current) setLoading(true);
+          setErr(null);
+
+          try {
+            const data = await fetchMarketTimelineWithTimeout(tab, timeframeId, activeIds);
+            if (cancelled) return;
+            if (data.rows?.length) {
+              setRows(data.rows);
+              cacheSet(mergedKey, data.rows);
+              hasData.current = true;
+              if (tab === 'producers' && data.producerMeta) {
+                setProducerMeta(data.producerMeta);
+              } else if (tab !== 'producers') {
+                setProducerMeta(null);
+              }
+              if (data.stale) {
+                setWarn(data.warn || `Cached snapshot · ${new Date(data.updatedAt || Date.now()).toLocaleString()}`);
+              } else if (data.warn) {
+                setWarn(data.warn);
+              } else {
+                setWarn(null);
+              }
+            } else {
+              throw new Error('No timeline rows returned');
+            }
+          } catch (e) {
+            if (cancelled) return;
+            const staleMerged = cacheStale(mergedKey);
+            if (staleMerged?.length) {
+              setRows(staleMerged);
+              hasData.current = true;
+              setWarn('Showing last loaded timeline · ' + (e.message || 'fetch failed'));
+            } else if (!hasData.current) {
+              setErr(e.message || 'Timeline unavailable — try again shortly');
+            } else {
+              setWarn('Refresh failed — showing last loaded timeline.');
+            }
+          } finally {
+            if (!cancelled) setLoading(false);
+          }
+        }
+        load();
+        return () => { cancelled = true; };
+      }, [tab, timeframeId, activeIds.join(',')]);
+
+      return { rows, loading, err, warn, producerMeta };
+    }
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { error: null }; }
+      static getDerivedStateFromError(error) { return { error }; }
+      render() {
+        if (this.state.error) {
+          return (
+            <div style={{padding:24, margin:'0 24px 24px', background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:10}}>
+              <div style={{fontSize:14, fontWeight:600, color:'#B91C1C', marginBottom:8}}>Chart section error</div>
+              <div style={{fontSize:12, color:'#7F1D1D', marginBottom:12}}>{this.state.error.message}</div>
+              <button onClick={() => this.setState({ error: null })} style={{
+                padding:'8px 14px', fontSize:12, border:'1px solid #FECACA', borderRadius:6,
+                background:'#fff', cursor:'pointer', fontFamily:'Inter,sans-serif'}}>Reload chart</button>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    function chartValueRange(rows, curveIds) {
+      const vals = [];
+      rows.forEach((r) => {
+        curveIds.forEach((id) => {
+          if (r[id] != null && !isNaN(r[id])) vals.push(r[id]);
+        });
+      });
+      if (!vals.length) return null;
+      return { min: Math.min(...vals), max: Math.max(...vals) };
+    }
+
+    function yDomainForChart(rows, curveIds, logScale) {
+      const range = chartValueRange(rows, curveIds);
+      if (!range) return logScale ? [0.001, 'auto'] : ['auto', 'auto'];
+      const { min, max } = range;
+      if (logScale) {
+        return [Math.max(min * 0.85, 0.00001), max * 1.1];
+      }
+      const pad = Math.max((max - min) * 0.06, max * 0.02);
+      return [Math.max(0, min - pad), max + pad];
+    }
+
+    function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale }) {
+      if (!curveIds.length || !rows.length) return null;
+
+      const chartRows = useMemo(() => {
+        const withData = rows.filter((r) =>
+          curveIds.some((id) => r[id] != null && !isNaN(r[id]))
+        );
+        return withData.length ? withData : rows;
+      }, [rows, curveIds]);
+
+      const yDomain = yDomainForChart(chartRows, curveIds, logScale);
+      const hasValues = chartRows.some((r) =>
+        curveIds.some((id) => r[id] != null && !isNaN(r[id]))
+      );
+      if (!hasValues) {
+        return (
+          <div style={{marginBottom:8}}>
+            <div style={{...panelHdr, paddingTop:10}}><span>{title}</span></div>
+            <div style={{padding:24, textAlign:'center', color:C.text, fontSize:12}}>
+              No data for selected period — try a longer timeframe or refresh.
+            </div>
+          </div>
+        );
+      }
+
+      const fmtY = v => {
+        if (unit === 'AUD') return `$${Math.round(v).toLocaleString()}`;
+        if (unit === 'ZAR') return fmtZar(v);
+        if (v < 10) return `$${v.toFixed(4)}`;
+        return fmtUsd(v);
+      };
+
+      return (
+        <div style={{marginBottom:8}}>
+          <div style={{...panelHdr, paddingTop:10}}>
+            <span>{title}</span>
+            {logScale && <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>· log scale</span>}
+          </div>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={chartRows} margin={{top:20, right:16, left:8, bottom:4}}>
+              <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+              <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={44} {...axP} />
+              <YAxis {...axP} width={62} scale={logScale ? 'log' : 'linear'}
+                domain={yDomain}
+                allowDataOverflow={logScale}
+                tickFormatter={fmtY}/>
+              <Tooltip content={<TimelineTip/>} cursor={{stroke:C.border}}/>
+              <Legend wrapperStyle={{fontSize:11, paddingTop:6}}
+                formatter={id => CURVE_INDEX[id]?.label || id}/>
+              {showEvents && events.map(e => {
+                const xl = eventXLabel(e.ts, chartRows);
+                if (!xl) return null;
+                return (
+                  <ReferenceLine key={`${e.ts}-${title}`} x={xl} stroke={e.c}
+                    strokeDasharray="4 3" strokeWidth={1.5} label={mkTsLbl(e.s, e.c)}/>
+                );
+              })}
+              {curveIds.map(id => (
+                <Line key={id} type="monotone" dataKey={id} name={id}
+                  stroke={CURVE_INDEX[id].color} strokeWidth={2} dot={false}
+                  connectNulls activeDot={{r:4, strokeWidth:0, fill:CURVE_INDEX[id].color}}/>
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function TimelineCharts({ tab, timeframe, rows, activeCurves, showEvents, eventsInRange }) {
+      if (!rows.length) return null;
+
+      if (tab === 'index') {
+        const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
+        const cryptoMajorIds = activeCurves.filter(id =>
+          CURVE_INDEX[id]?.axis === 'crypto' && id !== 'IDX-005');
+        const cfxIds = activeCurves.filter(id => id === 'IDX-005');
+        return (
+          <>
+            <SingleTimelineChart
+              title="Precious metals · USD per troy ounce"
+              unit="USD" rows={rows} curveIds={metalIds} timeframe={timeframe}
+              showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}/>
+            {cryptoMajorIds.length > 0 && (
+              <SingleTimelineChart
+                title="Bitcoin · Ethereum · USD spot"
+                unit="USD" rows={rows} curveIds={cryptoMajorIds} timeframe={timeframe}
+                showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+            )}
+            {cfxIds.length > 0 && (
+              <SingleTimelineChart
+                title="Conflux (CFX) · USD spot"
+                unit="USD" rows={rows} curveIds={cfxIds} timeframe={timeframe}
+                showEvents={showEvents} events={eventsForCurves(eventsInRange, cfxIds)}/>
+            )}
+          </>
+        );
+      }
+
+      if (tab === 'producers') {
+        const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
+        return (
+          <SingleTimelineChart
+            title="Top platinum producers · JSE share price (ZAR)"
+            unit="ZAR" rows={rows} curveIds={producerIds} timeframe={timeframe}
+            showEvents={showEvents} events={eventsForCurves(eventsInRange, producerIds)}/>
+        );
+      }
+
+      const goldIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'gold');
+      const platIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'platinum');
+      const showTa = activeCurves.includes('IDX-107');
+      return (
+        <>
+          <SingleTimelineChart
+            title="Perth Mint · Gold 1oz coins · AUD"
+            unit="AUD" rows={rows} curveIds={goldIds} timeframe={timeframe}
+            showEvents={showEvents} events={eventsForCurves(eventsInRange, goldIds)}/>
+          <SingleTimelineChart
+            title="Perth Mint · Platinum 1oz coins · AUD"
+            unit="AUD" rows={rows} curveIds={platIds} timeframe={timeframe}
+            showEvents={showEvents} events={eventsForCurves(eventsInRange, platIds)}/>
+          {showTa && (
+            <PlatinumTaChart rows={rows} timeframe={timeframe}/>
+          )}
+        </>
+      );
+    }
+
+    function updateNavStatus(ok, time) {
+      const dot = document.getElementById('live-dot');
+      const txt = document.getElementById('nav-status-text');
+      if (!dot || !txt) return;
+      if (!time) {
+        dot.className = 'live-dot offline';
+        txt.textContent = 'Feed offline';
+        return;
+      }
+      dot.className = ok ? 'live-dot' : 'live-dot offline';
+      txt.textContent = ok
+        ? `Live · ${timeAgo(time)}`
+        : `Cached · ${timeAgo(time)}`;
+    }
+
+    function updateTicker(live) {
+      const el = document.getElementById('ticker');
+      if (!el || !live) return;
+      const mode = el.dataset.mode || 'index';
+      if (mode === 'perth') return;
+      const items = [
+        { sym:'Gold',     ...live.gold,     color: C.gold },
+        { sym:'Platinum', ...live.platinum, color: C.plat },
+        { sym:'Bitcoin',  ...live.btc,      color: C.btc },
+        { sym:'Ethereum', ...live.eth,      color: C.eth },
+        { sym:'Conflux',  ...live.cfx,      color: C.cfx },
+      ];
+      el.innerHTML = items.map(({sym, price, chg}) => `
+        <div class="ticker-item">
+          <span class="ticker-sym">${sym}</span>
+          <span class="ticker-price">${fmtUsd(price, sym==='Conflux'?4:0)}</span>
+          <span class="ticker-chg ${chgClass(chg)}">${fmtPct(chg)}</span>
+        </div>
+      `).join('');
+    }
+
+    function updateTickerPerth({ ptOffer, ptBid, auOffer, fx }) {
+      const el = document.getElementById('ticker');
+      if (!el || el.dataset.mode !== 'perth') return;
+      const aud = v => v == null ? '—' : '$' + Math.round(v).toLocaleString() + ' AUD';
+      const items = [
+        { sym:'Platinum Sell', price: aud(ptOffer), chg: null },
+        { sym:'Platinum Buy',  price: aud(ptBid), chg: null },
+        { sym:'Gold Sell',     price: aud(auOffer), chg: null },
+        { sym:'AUD/USD',       price: fx ? fx.toFixed(4) : '—', chg: null },
+      ];
+      el.innerHTML = items.map(({sym, price}) => `
+        <div class="ticker-item">
+          <span class="ticker-sym">${sym}</span>
+          <span class="ticker-price">${price}</span>
+        </div>
+      `).join('');
+    }
+
+    /* ─── UI COMPONENTS ───────────────────────────────────────────── */
+    const cardStyle = {
+      background: C.surface,
+      borderRadius: 10,
+      border: `1px solid ${C.border}`,
+      boxShadow: '0 1px 3px rgba(26,35,50,0.04), 0 4px 16px rgba(26,35,50,0.04)',
+    };
+
+    const PriceCard = ({ label, sub, price, chg, color, loading, indexId, unit }) => (
+      <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 180px', minWidth:165}}>
+        <div style={{marginBottom:8}}>
+          <div style={{fontSize:12, fontWeight:600, color:C.textDark, lineHeight:1.35}}>{label}</div>
+          {indexId && <div style={{fontSize:9, color:C.text, marginTop:3, letterSpacing:'0.04em'}}>{indexId}</div>}
+        </div>
+        <div style={{fontSize:22, fontWeight:600, color, fontVariantNumeric:'tabular-nums',
+          marginBottom:4, opacity: loading ? 0.4 : 1}}>
+          {loading ? <span className="skeleton" style={{display:'inline-block', minWidth:100, height:28}}>&nbsp;</span>
+            : (unit === 'AUD' ? `$${Math.round(price||0).toLocaleString()} AUD` : fmtUsd(price, label?.includes('Conflux')?4:0))}
+        </div>
+        <div style={{display:'flex', alignItems:'center', gap:8}}>
+          {!loading && chg != null && (
+            <span style={{
+              fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums',
+              color: chg >= 0 ? '#047857' : '#B91C1C',
+              background: chg >= 0 ? 'rgba(4,120,87,0.08)' : 'rgba(185,28,28,0.08)',
+              padding:'2px 7px', borderRadius:4,
+            }}>{fmtPct(chg)}</span>
+          )}
+          {sub && <span style={{fontSize:11, color:C.text}}>{sub}</span>}
+        </div>
+      </div>
+    );
+
+    const CurveIndexLibrary = ({ tab }) => {
+      const entries = Object.values(CURVE_INDEX).filter(c => c.tab === tab || (tab === 'all'));
+      return (
+        <div style={{...cardStyle, marginTop:14, overflow:'hidden'}}>
+          <div style={{...panelHdr, borderBottom:`1px solid ${C.border}`, paddingBottom:10}}>
+            <span>Curve Index Library</span>
+          </div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%', borderCollapse:'collapse', fontSize:11}}>
+              <thead>
+                <tr style={{background:C.surface2, color:C.text, textAlign:'left'}}>
+                  <th style={{padding:'8px 14px'}}>Reference</th>
+                  <th style={{padding:'8px 14px'}}>Series name (English)</th>
+                  <th style={{padding:'8px 14px'}}>Code</th>
+                  <th style={{padding:'8px 14px'}}>Unit</th>
+                  <th style={{padding:'8px 14px'}}>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(c => (
+                  <tr key={c.id} style={{borderTop:`1px solid ${C.borderLight}`}}>
+                    <td style={{padding:'8px 14px', fontWeight:600, color:c.color, fontSize:10}}>{c.id}</td>
+                    <td style={{padding:'8px 14px', color:C.textDark, fontWeight:500}}>{c.label}</td>
+                    <td style={{padding:'8px 14px', fontFamily:'monospace', fontSize:10, color:C.text}}>{c.code}</td>
+                    <td style={{padding:'8px 14px', color:C.text}}>{c.unit}</td>
+                    <td style={{padding:'8px 14px', color:C.text}}>{c.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    };
+
+    const TimelineTip = ({ active, payload }) => {
+      if (!active || !payload?.length) return null;
+      const d = payload[0].payload;
+      const nearEvent = TIMELINE_EVENTS.find(e => Math.abs(e.ts - d.ts) < 86400000 * 2);
+      return (
+        <div style={tipStyle}>
+          <div style={{color:C.textDark, marginBottom:6, fontSize:12, fontWeight:600}}>{d.label}</div>
+          {payload.filter(p => p.value != null).map(p => {
+            const meta = CURVE_INDEX[p.dataKey];
+            if (!meta) return null;
+            const val = meta.unit === 'AUD'
+              ? `$${Math.round(p.value).toLocaleString()} AUD`
+              : meta.unit === 'ZAR'
+                ? fmtZar(p.value)
+                : fmtUsd(p.value);
+            return (
+              <div key={p.dataKey} style={{color:meta.color, marginBottom:2}}>
+                {meta.label} · {val}
+              </div>
+            );
+          })}
+          {nearEvent && (
+            <div style={{marginTop:8, paddingTop:8, borderTop:`1px solid ${C.borderLight}`, fontSize:11, color:C.text}}>
+              <span style={{color:nearEvent.c, fontWeight:600}}>{nearEvent.title}</span>
+              <div style={{marginTop:2, lineHeight:1.45}}>{nearEvent.detail}</div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const EventFactorList = ({ events }) => {
+      const dirLabel = { up:'↑ upward pressure', down:'↓ downward pressure', mixed:'↕ mixed / volatile' };
+      if (!events.length) {
+        return (
+          <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', fontStyle:'italic'}}>
+            No mapped events in this window — try a longer timeframe.
+          </div>
+        );
+      }
+      return (
+        <div style={{display:'flex', flexDirection:'column', gap:8, padding:'0 18px 14px'}}>
+          {events.map(e => (
+            <div key={e.ts} style={{display:'flex', gap:10, alignItems:'flex-start'}}>
+              <div style={{width:3, alignSelf:'stretch', background:e.c, borderRadius:2, flexShrink:0}}/>
+              <div>
+                <div style={{fontSize:12, fontWeight:600, color:C.textDark}}>
+                  {new Date(e.ts).toLocaleDateString([], { year:'numeric', month:'short', day:'numeric' })}
+                  {' · '}{e.title}
+                  <span style={{fontSize:10, fontWeight:500, color:e.c, marginLeft:6}}>{dirLabel[e.dir] || ''}</span>
+                </div>
+                <div style={{fontSize:11, color:C.text, lineHeight:1.5, marginTop:2}}>{e.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    const MoveContextPanel = ({ events, timeframe }) => {
+      const tfLabel = TIMEFRAMES.find(t => t.id === timeframe)?.label || '';
+      const ptEvents = events.filter(e => e.assets.includes('platinum') || e.assets.includes('perth'));
+      const cfxEvents = events.filter(e => e.assets.includes('cfx'));
+
+      if (!events.length) {
+        return (
+          <div style={{fontSize:11, color:C.text, padding:'12px 18px', fontStyle:'italic', borderTop:`1px solid ${C.borderLight}`}}>
+            No mapped market events in this window — zoom to 1 month or longer for macro catalysts.
+          </div>
+        );
+      }
+
+      return (
+        <div>
+          <details className="factor-drop factor-drop--pt">
+            <summary>
+              Platinum price factors · {tfLabel}
+              <span style={{fontWeight:500, textTransform:'none', letterSpacing:0, marginLeft:6, color:C.text}}>
+                ({ptEvents.length})
+              </span>
+            </summary>
+            <EventFactorList events={ptEvents} />
+          </details>
+          <details className="factor-drop factor-drop--cfx">
+            <summary>
+              CFX · Conflux price factors · {tfLabel}
+              <span style={{fontWeight:500, textTransform:'none', letterSpacing:0, marginLeft:6, color:C.text}}>
+                ({cfxEvents.length})
+              </span>
+            </summary>
+            <EventFactorList events={cfxEvents} />
+          </details>
+        </div>
+      );
+    };
+
+    const SpreadPanel = ({ live }) => {
+      if (!live?.gold?.price || !live?.platinum?.price) return null;
+      const ratio = live.platinum.price / live.gold.price;
+      const discount = (1 - ratio) * 100;
+      const ptOzPerBtc = live.btc?.price ? live.btc.price / live.platinum.price : null;
+      const cfxPerOzPt = live.cfx?.price ? live.platinum.price / live.cfx.price : null;
+
+      return (
+        <div style={{...cardStyle, padding:'20px 24px', marginBottom:16}}>
+          <div style={{fontSize:11, fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase',
+            color:C.text, marginBottom:16}}>Platinum Spreads · Live</div>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:20}}>
+            <div>
+              <div style={{fontSize:24, fontWeight:600, color:C.plat, fontVariantNumeric:'tabular-nums'}}>
+                {(ratio * 100).toFixed(1)}%
+              </div>
+              <div style={{fontSize:12, color:C.textDark, marginTop:4}}>Pt / Au ratio</div>
+              <div style={{fontSize:11, color:C.text, marginTop:2}}>
+                Platinum trading at {discount.toFixed(0)}% discount to gold
+              </div>
+            </div>
+            {ptOzPerBtc != null && (
+              <div>
+                <div style={{fontSize:24, fontWeight:600, color:C.btc, fontVariantNumeric:'tabular-nums'}}>
+                  {ptOzPerBtc.toFixed(1)} oz
+                </div>
+                <div style={{fontSize:12, color:C.textDark, marginTop:4}}>Platinum per BTC</div>
+                <div style={{fontSize:11, color:C.text, marginTop:2}}>Troy ounces of Pt at spot</div>
+              </div>
+            )}
+            {cfxPerOzPt != null && (
+              <div>
+                <div style={{fontSize:24, fontWeight:600, color:C.cfx, fontVariantNumeric:'tabular-nums'}}>
+                  {cfxPerOzPt.toLocaleString(undefined,{maximumFractionDigits:0})}
+                </div>
+                <div style={{fontSize:12, color:C.textDark, marginTop:4}}>CFX per oz Pt</div>
+                <div style={{fontSize:11, color:C.text, marginTop:2}}>Conflux tokens at spot</div>
+              </div>
+            )}
+            <div>
+              <div style={{fontSize:24, fontWeight:600, color:'#047857', fontVariantNumeric:'tabular-nums'}}>
+                4th yr
+              </div>
+              <div style={{fontSize:12, color:C.textDark, marginTop:4}}>Market deficit</div>
+              <div style={{fontSize:11, color:C.text, marginTop:2}}>WPIC forecast · AGS &lt;3 mo cover</div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const mkLbl = (txt, row, col) => (props) => {
+      if (!props?.viewBox) return null;
+      return (
+        <text x={props.viewBox.x + 3} y={row === 1 ? 18 : 38}
+          fill={col} fontSize={8} fontFamily="Inter,sans-serif" fontWeight="600" opacity={0.85}>{txt}</text>
+      );
+    };
+
+    const tipStyle = {
+      background:'#fff', border:`1px solid ${C.border}`, padding:'10px 14px',
+      borderRadius:8, fontSize:12, fontFamily:'Inter,sans-serif',
+      boxShadow:'0 4px 20px rgba(26,35,50,0.1)',
+    };
+
+    const MetalTip = ({ active, payload }) => {
+      if (!active || !payload?.length) return null;
+      const d = payload[0].payload;
+      return (
+        <div style={tipStyle}>
+          <div style={{color:C.text, marginBottom:4, fontSize:11, fontWeight:600}}>{d.y}</div>
+          <div style={{color:C.gold}}>Gold · ${d.g?.toLocaleString()}/oz</div>
+          <div style={{color:C.plat}}>Platinum · ${d.p?.toLocaleString()}/oz</div>
+        </div>
+      );
+    };
+
+    const CryptoTip = ({ active, payload }) => {
+      if (!active || !payload?.length) return null;
+      const d = payload[0].payload;
+      return (
+        <div style={tipStyle}>
+          <div style={{color:C.text, marginBottom:4, fontSize:11, fontWeight:600}}>{d.y}</div>
+          {d.b != null && <div style={{color:C.btc}}>BTC · ${d.b.toLocaleString()}</div>}
+          {d.e != null && <div style={{color:C.eth}}>ETH · ${d.e.toLocaleString()}</div>}
+          {d.c != null && <div style={{color:C.cfx}}>CFX · ${d.c.toFixed(4)}</div>}
+        </div>
+      );
+    };
+
+    const Btn = ({ active, color, onClick, children }) => (
+      <button onClick={onClick} style={{
+        padding:'6px 12px', fontSize:11, fontWeight:500, cursor:'pointer', borderRadius:6,
+        fontFamily:'Inter,sans-serif', letterSpacing:'0.02em',
+        border:`1px solid ${active ? color : C.border}`,
+        background: active ? `${color}12` : C.surface,
+        color: active ? color : C.text,
+        transition:'all 0.15s', whiteSpace:'normal', textAlign:'left', maxWidth:220,
+      }}>{children}</button>
+    );
+
+    const axP = {
+      stroke: C.grid,
+      tick: { fill: C.text, fontSize:10, fontFamily:'Inter,sans-serif' },
+      tickLine: false,
+      axisLine: { stroke: C.border },
+    };
+
+    const panelHdr = {
+      fontSize:11, fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase',
+      color:C.text, padding:'14px 18px 6px',
+      display:'flex', gap:16, flexWrap:'wrap', alignItems:'center',
+    };
+
+    const FundTip = ({ active, payload, label }) => {
+      if (!active || !payload?.length) return null;
+      const d = payload[0].payload;
+      return (
+        <div style={tipStyle}>
+          <div style={{color:C.textDark, marginBottom:6, fontSize:12, fontWeight:600}}>{d.year ?? d.region}</div>
+          {label === 'balance' && (
+            <>
+              <div style={{color:'#DC2626'}}>Balance · {fmtKoz(d.balance)}</div>
+              <div style={{color:C.plat}}>Pt price · ${d.price?.toLocaleString()}/oz</div>
+              {d.priceChg != null && <div style={{color:C.text}}>YoY price · {fmtPct(d.priceChg)}</div>}
+              <div style={{color:C.text}}>Demand · {d.totalDemand?.toLocaleString()} koz</div>
+              <div style={{color:C.text}}>Supply · {d.totalSupply?.toLocaleString()} koz</div>
+            </>
+          )}
+          {label === 'cover' && (
+            <>
+              <div style={{color:C.plat}}>Stock cover · {d.monthsCover} months</div>
+              <div style={{color:C.plat}}>Pt price · ${d.price?.toLocaleString()}/oz</div>
+              <div style={{color:'#DC2626'}}>Balance · {fmtKoz(d.balance)}</div>
+            </>
+          )}
+          {label === 'demand' && (
+            <>
+              {Object.entries(SEG_COLORS).map(([k, col]) => (
+                <div key={k} style={{color:col}}>{k.charAt(0).toUpperCase()+k.slice(1)} · {d[k]?.toLocaleString()} koz</div>
+              ))}
+            </>
+          )}
+          {label === 'supply' && (
+            <div style={{color:C.plat}}>{d.region} · {(d.share * 100).toFixed(0)}%</div>
+          )}
+          {label === 'h2' && (
+            <div style={{color:'#059669'}}>H₂ / PEM demand · {d.hydrogenDemand} koz</div>
+          )}
+        </div>
+      );
+    };
+
+    /* ─── COMMODITY NEWS · TOP 3 + PROGRESSION ───────────────────── */
+    const NEWS_CACHE_KEY = 'pm_metis_news_history';
+    const NEWS_LAST_DATE_KEY = 'pm_metis_news_last_date';
+
+    function digestDateLocal() {
+      return new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    }
+
+    function todayUtc() {
+      return digestDateLocal();
+    }
+
+    function loadLocalNewsHistory() {
+      try {
+        return JSON.parse(localStorage.getItem(NEWS_CACHE_KEY) || '[]');
+      } catch { return []; }
+    }
+
+    function storyKey(story) {
+      const u = (story.url || '').split('?')[0].toLowerCase();
+      const t = (story.headline || story.title || '').toLowerCase().replace(/\W+/g, ' ').trim();
+      return u || t;
+    }
+
+    function mergePastStories(digest, localHist) {
+      const seen = new Set((digest.stories || []).map(storyKey));
+      const merged = [...(digest.pastStories || [])];
+      for (const day of localHist) {
+        if (day.date === digest.date) continue;
+        for (const s of day.stories || []) {
+          const k = storyKey(s);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          merged.push({ ...s, digestDate: day.date });
+        }
+      }
+      return merged.slice(0, 50);
+    }
+
+    function saveLocalNewsDigest(digest) {
+      const hist = loadLocalNewsHistory().filter((d) => d.date !== digest.date);
+      hist.unshift({
+        date: digest.date,
+        stories: digest.stories,
+        pastStories: digest.pastStories,
+        progression: digest.progression,
+        fetchedAt: Date.now(),
+      });
+      localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify(hist.slice(0, 60)));
+    }
+
+    function NewsStoryCard({ story, rank }) {
+      return (
+        <details className="news-story-card" style={{...cardStyle, marginBottom: 0}}>
+          <summary>
+            <div style={{display:'flex', gap:10, alignItems:'flex-start'}}>
+              {rank != null && (
+                <span style={{
+                  width:22, height:22, borderRadius:6, flexShrink:0,
+                  background:C.plat, color:'#fff', fontSize:11, fontWeight:700,
+                  display:'inline-flex', alignItems:'center', justifyContent:'center',
+                }}>{rank}</span>
+              )}
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark, lineHeight:1.4, paddingRight:16}}>
+                  {story.headline || story.title}
+                </div>
+                <ul className="news-bullets">
+                  {(story.bullets || []).slice(0, 2).map((b, i) => (
+                    <li key={i}>{b}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </summary>
+          <div style={{padding:'8px 0 4px 32px', fontSize:11, color:C.text}}>
+            {story.source}
+            {story.relevanceScore != null && ` · relevance ${story.relevanceScore}`}
+            {story.platinumImpact != null && (
+              <span style={{
+                marginLeft:8, fontWeight:600,
+                color: story.platinumImpact > 0 ? '#047857' : story.platinumImpact < 0 ? '#B91C1C' : C.text,
+              }}>Pt {story.platinumImpact > 0 ? '+' : ''}{story.platinumImpact}</span>
+            )}
+            {story.publishedAt && (
+              <span style={{marginLeft:8}}>
+                · {new Date(story.publishedAt).toLocaleDateString([], { month:'short', day:'numeric' })}
+              </span>
+            )}
+            {story.digestDate && !story.publishedAt && (
+              <span style={{marginLeft:8}}>· digest {story.digestDate}</span>
+            )}
+          </div>
+          {story.body && (
+            <div style={{padding:'0 0 8px 32px', fontSize:12, color:C.textSecondary, lineHeight:1.6}}>
+              {story.body}
+            </div>
+          )}
+          {story.themeLabels?.length > 0 && (
+            <div style={{padding:'0 0 10px 32px', display:'flex', flexWrap:'wrap', gap:5}}>
+              {story.themeLabels.map((lbl) => (
+                <span key={lbl} style={{
+                  fontSize:10, padding:'2px 7px', borderRadius:4,
+                  background: C.surface2, color: C.plat, fontWeight:500,
+                }}>{lbl}</span>
+              ))}
+            </div>
+          )}
+          <div style={{paddingLeft:32, paddingBottom:8}}>
+            <a href={story.url} target="_blank" rel="noopener noreferrer"
+              style={{fontSize:11, fontWeight:600, color:C.plat, textDecoration:'none'}}>
+              Read source →
+            </a>
+          </div>
+        </details>
+      );
+    }
+
+    function NewsPanel() {
+      const [digest, setDigest] = useState(null);
+      const [pastStories, setPastStories] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [localDays, setLocalDays] = useState(0);
+
+      const fetchDigest = useCallback(async (force) => {
+        setLoading(true);
+        setError(null);
+        const today = digestDateLocal();
+        const localHist = loadLocalNewsHistory();
+        const cached = localHist[0];
+        const isNewDay = !cached || cached.date !== today;
+        const mustFetch = force || isNewDay;
+
+        if (!mustFetch && cached?.date === today) {
+          setDigest({ ...cached, persistNote: `Today's digest · ${today}`, fromCache: true });
+          setPastStories(mergePastStories(cached, localHist));
+          setLocalDays(localHist.length);
+          setLoading(false);
+          return;
+        }
+
+        const url = `/.netlify/functions/news-digest?force=1&t=${Date.now()}`;
+        let data = null;
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          const json = await res.json().catch(() => ({}));
+          if (!json.ok) throw new Error(json.error || `HTTP ${res.status}`);
+          data = json;
+        } catch (e) {
+          if (cached) {
+            setDigest({ ...cached, persistNote: `Fetch failed — showing ${cached.date} digest`, fromCache: true });
+            setPastStories(mergePastStories(cached, localHist));
+            setLocalDays(localHist.length);
+            setLoading(false);
+            return;
+          }
+          throw e;
+        }
+        setDigest(data);
+        saveLocalNewsDigest(data);
+        localStorage.setItem(NEWS_LAST_DATE_KEY, data.date || today);
+        setPastStories(mergePastStories(data, loadLocalNewsHistory()));
+        setLocalDays(loadLocalNewsHistory().length);
+      }, []);
+
+      useEffect(() => {
+        fetchDigest(false).catch((e) => {
+          const localHist = loadLocalNewsHistory();
+          const fallback = localHist[0];
+          if (fallback) {
+            setDigest({ ...fallback, persistNote: 'Offline — showing last saved digest', persisted: false });
+            setPastStories(mergePastStories(fallback, localHist));
+            setLocalDays(localHist.length);
+          } else {
+            setError(e.message);
+          }
+        }).finally(() => setLoading(false));
+      }, [fetchDigest]);
+
+      const dirColor = {
+        bullish: '#047857',
+        bearish: '#B91C1C',
+        neutral: C.text,
+        mixed: '#B8860B',
+      };
+
+      const trendIcon = { strengthening: '↑', fading: '↓', stable: '→' };
+
+      return (
+        <div style={{marginBottom:24}}>
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap', marginBottom:10}}>
+            <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>
+              Platinum News · Daily Top 3
+              {digest?.date && (
+                <span style={{fontWeight:500, color:C.plat, marginLeft:8, fontSize:11}}>
+                  {digest.date}{digest.date !== digestDateLocal() ? ' · stale — refreshing' : ''}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => fetchDigest(true).catch((e) => setError(e.message)).finally(() => setLoading(false))}
+              disabled={loading}
+              style={{
+                fontSize:10, fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
+                padding:'6px 12px', borderRadius:6, border:`1px solid ${C.border}`,
+                background:C.surface, color:C.textDark, cursor: loading ? 'wait' : 'pointer',
+              }}
+            >{loading ? 'Searching…' : 'Refresh'}</button>
+          </div>
+
+          {error && (
+            <div style={{...cardStyle, padding:12, marginBottom:10, color:'#B91C1C', fontSize:12}}>
+              News unavailable: {error}
+            </div>
+          )}
+
+          {loading && !digest?.stories?.length && (
+            <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
+              <span className="news-search-icon" title="Searching">⛏</span>
+              <div>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Searching for news…</div>
+                <div style={{fontSize:11, color:C.text, marginTop:4}}>Scanning mining & PGM feeds — may take a minute</div>
+              </div>
+            </div>
+          )}
+
+          {digest?.progression && (
+            <details style={{...cardStyle, padding:'12px 14px', marginBottom:10,
+              background:'linear-gradient(135deg, #F8FAFC 0%, #EDF1F6 100%)'}}>
+              <summary style={{cursor:'pointer', fontSize:11, fontWeight:600, color:C.plat, letterSpacing:'0.06em', textTransform:'uppercase'}}>
+                Move progression · {digest.progression.direction}
+                <span style={{marginLeft:8, fontWeight:500, color:C.textDark, textTransform:'none', letterSpacing:0}}>
+                  ({digest.progression.bullishScore > 0 ? '+' : ''}{digest.progression.bullishScore})
+                </span>
+              </summary>
+              <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.6, margin:'10px 0 8px'}}>
+                {digest.progression.summary}
+              </p>
+              {digest.progression.themeTrends?.length > 0 && (
+                <div style={{display:'flex', flexWrap:'wrap', gap:6}}>
+                  {digest.progression.themeTrends.slice(0, 5).map((t) => (
+                    <span key={t.id} style={{
+                      fontSize:10, padding:'3px 8px', borderRadius:5,
+                      background: C.surface, border:`1px solid ${C.borderLight}`,
+                      color: t.trend === 'strengthening' ? '#047857' : t.trend === 'fading' ? '#B91C1C' : C.text,
+                    }}>
+                      {trendIcon[t.trend]} {t.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </details>
+          )}
+
+          <div style={{display:'grid', gap:8}}>
+            {(digest?.stories || []).map((story) => (
+              <NewsStoryCard key={story.url || story.title} story={story} rank={story.rank} />
+            ))}
+          </div>
+
+          {pastStories.length > 0 && (
+            <details className="news-past-wrap" style={{marginTop:14}}>
+              <summary>Past stories · {pastStories.length} archived (no repeats)</summary>
+              <div style={{display:'grid', gap:6, marginTop:8}}>
+                {pastStories.map((story) => (
+                  <NewsStoryCard key={(story.digestDate || '') + storyKey(story)} story={story} />
+                ))}
+              </div>
+            </details>
+          )}
+
+          <div style={{fontSize:10, color:C.text, marginTop:8}}>
+            Refreshes once per UTC day · Mining.com · Google News PGM queries
+            {digest?.persistNote && ` · ${digest.persistNote}`}
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── FUNDAMENTALS · S&D vs PRICE ─────────────────────────────── */
+    function FundamentalsPanel() {
+      const [view, setView] = useState('balance');
+
+      const paradoxRows = [
+        { year: 2023, deficit: -1000, priceMove: '+1.5%', note: 'Deficit widens — price barely moves (stocks absorb)' },
+        { year: 2024, deficit: -930,  priceMove: '−4.1%', note: 'Still in deficit — price falls on ETF/investment unwind' },
+        { year: 2025, deficit: -1082, priceMove: '+87%', note: 'Record deficit — price catches up as cover tightens' },
+        { year: 2026, deficit: -297,  priceMove: 'est.', note: 'Deficit narrows on demand drop — but AGS cover &lt;3 mo' },
+      ];
+
+      return (
+        <div style={{marginBottom:28}}>
+          <div style={{fontSize:13, fontWeight:600, color:C.textDark, marginBottom:6, letterSpacing:'0.02em'}}>
+            Platinum Fundamentals · Supply, Demand & the Price Paradox
+          </div>
+          <p style={{fontSize:13, color:C.textSecondary, lineHeight:1.65, maxWidth:720, marginBottom:16}}>
+            Four consecutive WPIC deficits — yet platinum has traded below gold and moved inconsistently with balance.
+            The charts below show <em>why</em>: inventories buffer shortfalls, investment flows dominate the margin,
+            and price often lags until above-ground stock cover compresses.
+          </p>
+
+          <div style={{...cardStyle, padding:'20px 22px', marginBottom:14,
+            background:'linear-gradient(135deg, #FAFBFC 0%, #F0F3F7 100%)'}}>
+            <div style={{fontSize:11, fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase',
+              color:C.plat, marginBottom:12}}>Why deficits don&apos;t always lift price</div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:14}}>
+              {[
+                ['Stock buffers', 'AGS cover fell from 7.2 mo (2022) → 2.9 mo (2026). Deficits draw down warehouses before spot reprices.'],
+                ['Investment swings', 'ETF/bar demand swung 570 → 1,094 → 709 koz. This marginal buyer moves price more than auto/industrial.'],
+                ['Recycling floor', '~1,500–1,780 koz/yr secondary supply cushions mine shortfalls — balance ≠ mine output.'],
+                ['SA concentration', '72% of mine supply from South Africa — load-shedding & logistics distort timing vs WPIC balance.'],
+              ].map(([title, body]) => (
+                <div key={title}>
+                  <div style={{fontSize:12, fontWeight:600, color:C.textDark, marginBottom:4}}>{title}</div>
+                  <div style={{fontSize:11, color:C.text, lineHeight:1.55}}>{body}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{...cardStyle, overflow:'hidden', marginBottom:14}}>
+            <div style={{...panelHdr, borderBottom:`1px solid ${C.border}`, paddingBottom:10}}>
+              <span>The paradox in numbers</span>
+            </div>
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+                <thead>
+                  <tr style={{background:C.surface2, color:C.text, textAlign:'left'}}>
+                    <th style={{padding:'10px 16px', fontWeight:600}}>Year</th>
+                    <th style={{padding:'10px 16px', fontWeight:600}}>Market balance</th>
+                    <th style={{padding:'10px 16px', fontWeight:600}}>Pt price YoY</th>
+                    <th style={{padding:'10px 16px', fontWeight:600}}>Stock cover</th>
+                    <th style={{padding:'10px 16px', fontWeight:600}}>Insight</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paradoxRows.map(row => {
+                    const cover = platinumStockCover.find(s => s.year === row.year)?.monthsCover;
+                    return (
+                      <tr key={row.year} style={{borderTop:`1px solid ${C.borderLight}`}}>
+                        <td style={{padding:'10px 16px', fontWeight:600, color:C.textDark}}>{row.year}</td>
+                        <td style={{padding:'10px 16px', color:'#DC2626', fontVariantNumeric:'tabular-nums'}}>{fmtKoz(row.deficit)}</td>
+                        <td style={{padding:'10px 16px', color:C.plat, fontVariantNumeric:'tabular-nums'}}>{row.priceMove}</td>
+                        <td style={{padding:'10px 16px', color: cover <= 3 ? '#B91C1C' : C.textDark, fontWeight: cover <= 3 ? 600 : 400}}>
+                          {cover} mo{cover <= 3 ? ' ⚠' : ''}
+                        </td>
+                        <td style={{padding:'10px 16px', color:C.text, fontSize:11}} dangerouslySetInnerHTML={{__html: row.note}} />
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={{...cardStyle, display:'flex', gap:8, flexWrap:'wrap', marginBottom:14,
+            alignItems:'center', padding:'12px 16px'}}>
+            <span style={{fontSize:10, fontWeight:600, color:C.text, letterSpacing:'0.08em', textTransform:'uppercase'}}>View</span>
+            <Btn active={view==='balance'} color="#DC2626" onClick={() => setView('balance')}>Balance vs price</Btn>
+            <Btn active={view==='cover'} color={C.plat} onClick={() => setView('cover')}>Stock cover</Btn>
+            <Btn active={view==='demand'} color={C.gold} onClick={() => setView('demand')}>Demand segments</Btn>
+            <Btn active={view==='supply'} color={C.accent} onClick={() => setView('supply')}>Mine concentration</Btn>
+            <Btn active={view==='h2'} color="#059669" onClick={() => setView('h2')}>H₂ / PEM demand</Btn>
+          </div>
+
+          {view === 'balance' && (
+            <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
+              <div style={panelHdr}>
+                <span>Market balance vs platinum price · 2022–2026</span>
+                <span style={{color:'#DC2626', fontWeight:500, textTransform:'none', letterSpacing:0}}>— Deficit (koz)</span>
+                <span style={{color:C.plat, fontWeight:500, textTransform:'none', letterSpacing:0}}>— Pt USD/oz</span>
+              </div>
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={SD_MERGED} margin={{top:20, right:48, bottom:4, left:8}}>
+                  <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                  <XAxis dataKey="year" {...axP} />
+                  <YAxis yAxisId="left" {...axP} tickFormatter={v => `${v}`} width={48}
+                    label={{ value:'koz', angle:-90, position:'insideLeft', fill:C.text, fontSize:10 }}/>
+                  <YAxis yAxisId="right" orientation="right" {...axP} tickFormatter={v => `$${v}`} width={52}/>
+                  <Tooltip content={<FundTip label="balance"/>} cursor={{fill:'rgba(107,127,150,0.06)'}}/>
+                  <ReferenceLine yAxisId="left" y={0} stroke={C.border} strokeWidth={1.5}/>
+                  <Bar yAxisId="left" dataKey="balance" radius={[4,4,0,0]}>
+                    {SD_MERGED.map((e,i) => (
+                      <Cell key={i} fill={e.balance < 0 ? '#DC2626' : '#059669'} fillOpacity={0.75}/>
+                    ))}
+                  </Bar>
+                  <Line yAxisId="right" type="monotone" dataKey="price" stroke={C.plat}
+                    strokeWidth={2.5} dot={{r:4, fill:C.plat, strokeWidth:0}}/>
+                </ComposedChart>
+              </ResponsiveContainer>
+              <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
+                2024: −930 koz deficit but annual avg price <em>fell</em> — investment hoarding (+520 koz YoY) reversed in H2.
+                Price tracks the marginal buyer, not headline industrial demand.
+              </div>
+            </div>
+          )}
+
+          {view === 'cover' && (
+            <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
+              <div style={panelHdr}>
+                <span>Above-ground stock cover · months of demand</span>
+                <span style={{color:'#B91C1C', fontWeight:500, textTransform:'none', letterSpacing:0}}>— 3 mo threshold</span>
+              </div>
+              <ResponsiveContainer width="100%" height={280}>
+                <ComposedChart data={SD_MERGED} margin={{top:20, right:48, bottom:4, left:8}}>
+                  <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                  <XAxis dataKey="year" {...axP} />
+                  <YAxis yAxisId="left" {...axP} domain={[0, 8]} tickFormatter={v => `${v}mo`} width={44}/>
+                  <YAxis yAxisId="right" orientation="right" {...axP} tickFormatter={v => `$${v}`} width={52}/>
+                  <Tooltip content={<FundTip label="cover"/>} cursor={{stroke:C.border}}/>
+                  <ReferenceLine yAxisId="left" y={3} stroke="#B91C1C" strokeDasharray="6 4" strokeWidth={1.5}
+                    label={{ value:'Squeeze zone', fill:'#B91C1C', fontSize:10, position:'insideTopRight' }}/>
+                  <Area yAxisId="left" type="monotone" dataKey="monthsCover" stroke={C.plat}
+                    fill="rgba(107,127,150,0.15)" strokeWidth={2}/>
+                  <Line yAxisId="right" type="monotone" dataKey="price" stroke={C.gold}
+                    strokeWidth={2} dot={{r:3, fill:C.gold}} strokeDasharray="5 3"/>
+                </ComposedChart>
+              </ResponsiveContainer>
+              <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
+                WPIC: cover approaching &lt;3 months by end-2026 — historically when physical tightness translates to spot repricing,
+                even if prior years&apos; deficits were absorbed silently.
+              </div>
+            </div>
+          )}
+
+          {view === 'demand' && (
+            <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
+              <div style={panelHdr}>
+                <span>Demand by segment · koz</span>
+              </div>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={platinumDemandBySegment} margin={{top:10, right:16, bottom:4, left:8}}>
+                  <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                  <XAxis dataKey="year" {...axP} />
+                  <YAxis {...axP} tickFormatter={v => `${(v/1000).toFixed(1)}k`} width={44}/>
+                  <Tooltip content={<FundTip label="demand"/>} cursor={{fill:'rgba(107,127,150,0.06)'}}/>
+                  <Legend wrapperStyle={{fontSize:11, paddingTop:8}}/>
+                  {Object.entries(SEG_COLORS).map(([key, color]) => (
+                    <Bar key={key} dataKey={key} stackId="d" fill={color} fillOpacity={0.85}/>
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+              <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
+                Automotive (~38–40%) is stable but not the price driver. Investment collapsed 2026 forecast (−385 koz) post-ETF unwind —
+                explaining why a narrowing deficit doesn&apos;t mean a soft market.
+              </div>
+            </div>
+          )}
+
+          {view === 'supply' && (
+            <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
+              <div style={panelHdr}>
+                <span>Mine supply concentration · 2026 est.</span>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={platinumSupplyConcentration} layout="vertical"
+                  margin={{top:10, right:24, bottom:4, left:8}}>
+                  <CartesianGrid strokeDasharray="3 6" stroke={C.grid} horizontal={false}/>
+                  <XAxis type="number" {...axP} tickFormatter={v => `${(v*100).toFixed(0)}%`} domain={[0, 0.8]}/>
+                  <YAxis type="category" dataKey="region" {...axP} width={100}/>
+                  <Tooltip content={<FundTip label="supply"/>} cursor={{fill:'rgba(107,127,150,0.06)'}}/>
+                  <Bar dataKey="share" fill={C.plat} radius={[0,4,4,0]} barSize={18}>
+                    {platinumSupplyConcentration.map((_, i) => (
+                      <Cell key={i} fill={i === 0 ? '#B91C1C' : C.plat} fillOpacity={i === 0 ? 0.85 : 0.65}/>
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
+                72% South African concentration means Eskom load-shedding and export logistics can delay supply response —
+                S&amp;D balance is a global annual figure; price discovers on daily physical availability.
+              </div>
+            </div>
+          )}
+
+          {view === 'h2' && (
+            <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
+              <div style={panelHdr}>
+                <span>Hydrogen / PEM platinum demand trajectory · koz</span>
+                <span style={{color:'#059669', fontWeight:500, textTransform:'none', letterSpacing:0}}>— Structural long-term</span>
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={platinumHydrogenDemand} margin={{top:20, right:16, bottom:4, left:8}}>
+                  <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                  <XAxis dataKey="year" {...axP} />
+                  <YAxis {...axP} tickFormatter={v => `${v}`} width={44}/>
+                  <Tooltip content={<FundTip label="h2"/>} cursor={{stroke:C.border}}/>
+                  <Line type="monotone" dataKey="hydrogenDemand" stroke="#059669"
+                    strokeWidth={2.5} dot={{r:4, fill:'#059669'}}/>
+                </LineChart>
+              </ResponsiveContainer>
+              <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
+                PEM electrolyser &amp; FCEV demand is tiny today (~140 koz 2026) but WPIC projects ~900 koz by 2030 —
+                a new structural bid that doesn&apos;t appear in spot price until installed capacity scales.
+              </div>
+            </div>
+          )}
+
+          <div style={{fontSize:10, color:C.text, letterSpacing:'0.02em'}}>
+            Source: WPIC Platinum Quarterly · Q1 2026 forecast where noted · annual avg prices from LBMA/WPIC historical series
+          </div>
+        </div>
+      );
+    }
+
+    const ProducerPriceCard = ({ quote, meta }) => {
+      const q = quote || {};
+      const m = meta || CURVE_INDEX[q.id];
+      const chg = q.changePct;
+      return (
+        <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 200px', minWidth:190}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8, marginBottom:6}}>
+            <div>
+              <div style={{fontSize:12, fontWeight:600, color:C.textDark, lineHeight:1.35}}>{m?.label || q.company}</div>
+              <div style={{fontSize:9, color:C.text, marginTop:3, letterSpacing:'0.04em'}}>{q.id || m?.id}</div>
+            </div>
+            <span style={{fontSize:10, fontWeight:600, padding:'2px 8px', borderRadius:4,
+              background:C.surface2, color:C.textDark, whiteSpace:'nowrap'}}>{q.country || m?.country}</span>
+          </div>
+          <div style={{fontSize:11, color:C.plat, fontWeight:600, marginBottom:8}}>
+            {q.ticker || m?.ticker} · {q.exchange || m?.exchange || 'JSE'}
+          </div>
+          <div style={{fontSize:22, fontWeight:600, color: m?.color || C.plat, fontVariantNumeric:'tabular-nums', marginBottom:4}}>
+            {q.priceZar != null ? fmtZar(q.priceZar) : '···'}
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+            {chg != null && (
+              <span style={{
+                fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums',
+                color: chg >= 0 ? '#047857' : '#B91C1C',
+                background: chg >= 0 ? 'rgba(4,120,87,0.08)' : 'rgba(185,28,28,0.08)',
+                padding:'2px 7px', borderRadius:4,
+              }}>{fmtPct(chg)}</span>
+            )}
+            <span style={{fontSize:11, color:C.text}}>{q.production || m?.production}</span>
+          </div>
+        </div>
+      );
+    };
+
+    const ProducerAnnouncements = ({ announcements, quotes }) => {
+      if (!announcements?.length) {
+        return (
+          <div style={{padding:'14px 18px', borderTop:`1px solid ${C.borderLight}`, fontSize:12, color:C.text, fontStyle:'italic'}}>
+            No recent producer announcements loaded — deploy Netlify functions for live news feed.
+          </div>
+        );
+      }
+      const colorById = Object.fromEntries(
+        (quotes || []).map(q => [q.id, CURVE_INDEX[q.id]?.color || C.plat])
+      );
+      return (
+        <div style={{padding:'14px 18px', borderTop:`1px solid ${C.borderLight}`}}>
+          <div style={{fontSize:11, fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase',
+            color:C.text, marginBottom:12}}>Stock announcements · Top 4 producers</div>
+          <div style={{display:'grid', gap:10}}>
+            {announcements.map((a, i) => (
+              <a key={`${a.url}-${i}`} href={a.url} target="_blank" rel="noopener noreferrer"
+                style={{textDecoration:'none', color:'inherit', display:'flex', gap:12, alignItems:'flex-start'}}>
+                <div style={{width:3, alignSelf:'stretch', background: colorById[a.producerId] || C.plat, borderRadius:2, flexShrink:0}}/>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:11, fontWeight:600, color: colorById[a.producerId] || C.plat, marginBottom:3}}>
+                    {a.ticker} · {a.country}
+                  </div>
+                  <div style={{fontSize:13, fontWeight:500, color:C.textDark, lineHeight:1.45, marginBottom:4}}>{a.title}</div>
+                  {a.publishedAt && (
+                    <div style={{fontSize:10, color:C.text}}>
+                      {new Date(a.publishedAt).toLocaleDateString([], { year:'numeric', month:'short', day:'numeric' })}
+                    </div>
+                  )}
+                </div>
+              </a>
+            ))}
+          </div>
+          <div style={{fontSize:10, color:C.text, marginTop:12}}>
+            Source: Google News (company + production / results queries) · JSE prices via Yahoo Finance
+          </div>
+        </div>
+      );
+    };
+
+    /* ─── LIVE DASHBOARD ──────────────────────────────────────────── */
+    function LiveDashboard() {
+      const { live, perth, audUsd, error, feedWarn, perthError, updated, spotLoading, refreshSpot } = useLivePrices();
+      const [tab, setTab] = useState('index');
+      const [timeframe, setTimeframe] = useState('3y');
+      const [activeCurves, setActiveCurves] = useState(DEFAULT_CURVES.index);
+
+      useEffect(() => {
+        const el = document.getElementById('ticker');
+        if (el) el.dataset.mode = tab;
+        setActiveCurves(DEFAULT_CURVES[tab]);
+      }, [tab]);
+
+      const { rows, loading: chartLoading, err: chartErr, warn: chartWarn, producerMeta } = useTimeline(tab, timeframe, activeCurves);
+
+      useEffect(() => {
+        if (tab === 'index' && live) updateTicker(live);
+        if (tab === 'perth' && perth?.result) {
+          const pt = perth.result.find(m => m.metal === 'Platinum');
+          const au = perth.result.find(m => m.metal === 'Gold');
+          const ptLast = pt?.oneWeekHistoricData?.slice(-1)[0];
+          const auLast = au?.oneWeekHistoricData?.slice(-1)[0];
+          if (ptLast) updateTickerPerth({ ptOffer: ptLast.offer, ptBid: ptLast.bid, auOffer: auLast?.offer, fx: audUsd });
+        }
+        if (tab === 'producers' && producerMeta?.quotes?.length) {
+          const el = document.getElementById('ticker');
+          if (!el) return;
+          el.innerHTML = producerMeta.quotes.map(q => `
+            <div class="ticker-item">
+              <span class="ticker-sym">${q.ticker}</span>
+              <span class="ticker-price">${fmtZar(q.priceZar)}</span>
+              <span class="ticker-chg ${chgClass(q.changePct)}">${fmtPct(q.changePct)}</span>
+            </div>
+          `).join('');
+        }
+      }, [tab, live, perth, audUsd, producerMeta]);
+
+      const eventsInRange = useMemo(() => getEventsInRange(rows, activeCurves), [rows, activeCurves]);
+      const [showEvents, setShowEvents] = useState(true);
+      const loading = tab === 'producers' ? chartLoading : spotLoading;
+
+      const ptMetal = perth?.result?.find(m => m.metal === 'Platinum');
+      const auMetal = perth?.result?.find(m => m.metal === 'Gold');
+      const ptLast = ptMetal?.oneWeekHistoricData?.slice(-1)[0];
+      const auLast = auMetal?.oneWeekHistoricData?.slice(-1)[0];
+      const ptPrem = ptLast && live?.platinum?.price && audUsd
+        ? ((ptLast.offer * audUsd / live.platinum.price) - 1) * 100 : null;
+
+      const tabCurves = Object.values(CURVE_INDEX).filter(c => c.tab === tab);
+      const togCurve = id => setActiveCurves(prev =>
+        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      );
+
+      return (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:13, fontWeight:600, color:C.textDark, marginBottom:12}}>Live Prices & Timelines</div>
+
+          {(feedWarn || error) && (
+            <div className={`feed-banner ${error ? 'err' : 'warn'}`}>
+              <span>{error || feedWarn}</span>
+              <button type="button" className="feed-retry" onClick={() => refreshSpot()}>Retry live feed</button>
+            </div>
+          )}
+
+          <div className="price-tabs">
+            <button className={`price-tab ${tab==='index'?'active':''}`} onClick={() => setTab('index')}>
+              Index · Spot
+            </button>
+            <button className={`price-tab ${tab==='perth'?'active':''}`} onClick={() => setTab('perth')}>
+              Perth Mint · 1oz Coins
+            </button>
+            <button className={`price-tab ${tab==='producers'?'active':''}`} onClick={() => setTab('producers')}>
+              Platinum Producers
+            </button>
+          </div>
+
+          {tab === 'index' ? (
+            <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
+              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label} sub="LBMA London fix" color={C.gold}
+                price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="LBMA London fix" color={C.plat}
+                price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
+              <PriceCard indexId="IDX-003" label={CURVE_INDEX['IDX-003'].label} sub="24 hour change" color={C.btc}
+                price={live?.btc?.price} chg={live?.btc?.chg} loading={loading} />
+              <PriceCard indexId="IDX-004" label={CURVE_INDEX['IDX-004'].label} sub="24 hour change" color={C.eth}
+                price={live?.eth?.price} chg={live?.eth?.chg} loading={loading} />
+              <PriceCard indexId="IDX-005" label={CURVE_INDEX['IDX-005'].label} sub="24 hour change" color={C.cfx}
+                price={live?.cfx?.price} chg={live?.cfx?.chg} loading={loading} />
+            </div>
+          ) : tab === 'perth' ? (
+            <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
+              <PriceCard indexId="IDX-103" label={CURVE_INDEX['IDX-103'].label} sub="Perth Mint retail offer" color={C.plat} unit="AUD"
+                price={ptLast?.offer} loading={!ptLast} />
+              <PriceCard indexId="IDX-104" label={CURVE_INDEX['IDX-104'].label} sub="Perth Mint retail bid" color="#8B9CB3" unit="AUD"
+                price={ptLast?.bid} loading={!ptLast} />
+              <PriceCard indexId="IDX-101" label={CURVE_INDEX['IDX-101'].label} sub="Perth Mint retail offer" color="#C9A227" unit="AUD"
+                price={auLast?.offer} loading={!auLast} />
+              <PriceCard indexId="IDX-102" label={CURVE_INDEX['IDX-102'].label} sub="Perth Mint retail bid" color="#A8891A" unit="AUD"
+                price={auLast?.bid} loading={!auLast} />
+              {ptPrem != null && (
+                <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 180px', minWidth:165}}>
+                  <div style={{fontSize:12, fontWeight:600, color:C.textDark, marginBottom:8}}>Platinum coin premium over spot</div>
+                  <div style={{fontSize:22, fontWeight:600, color:'#047857', fontVariantNumeric:'tabular-nums'}}>+{ptPrem.toFixed(1)}%</div>
+                  <div style={{fontSize:11, color:C.text, marginTop:4}}>Perth Mint sell price vs LBMA spot (USD)</div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <p style={{fontSize:13, color:C.textSecondary, lineHeight:1.65, maxWidth:820, marginBottom:14}}>
+                Top four global platinum mine producers by output — all JSE-listed, with primary production in the
+                South Africa Bushveld (Sibanye-Stillwater also operates US PGM assets in Montana).
+              </p>
+              <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
+                {['IDX-201','IDX-202','IDX-203','IDX-204'].map(id => {
+                  const quote = producerMeta?.quotes?.find(q => q.id === id);
+                  return (
+                    <ProducerPriceCard key={id} quote={quote} meta={CURVE_INDEX[id]} />
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {tab === 'index' && <SpreadPanel live={live} />}
+
+          <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:8}}>Chart period</div>
+          <div className="price-tabs" style={{marginBottom:16}}>
+            {TIMEFRAMES.map(tf => (
+              <button key={tf.id} type="button"
+                className={`price-tab ${timeframe===tf.id?'active':''}`}
+                onClick={() => setTimeframe(tf.id)}>{tf.label}</button>
+            ))}
+          </div>
+
+          <div style={{...cardStyle, display:'flex', gap:6, flexWrap:'wrap', marginBottom:10,
+            alignItems:'center', padding:'10px 14px'}}>
+            <span style={{fontSize:10, fontWeight:600, color:C.text, letterSpacing:'0.08em', textTransform:'uppercase'}}>Show curves</span>
+            {tabCurves.map(c => (
+              <Btn key={c.id} active={activeCurves.includes(c.id)} color={c.color}
+                onClick={() => togCurve(c.id)}>{c.label}</Btn>
+            ))}
+            <div style={{width:1, background:C.border, height:20, margin:'0 4px'}}/>
+            <Btn active={showEvents} color="#D97706" onClick={() => setShowEvents(v => !v)}>
+              {showEvents ? 'Market events on' : 'Market events off'}
+            </Btn>
+          </div>
+
+          <div style={{...cardStyle, marginBottom:14, paddingBottom:0}}>
+            <div style={panelHdr}>
+              <span>{
+                tab === 'index' ? 'Index price timeline'
+                  : tab === 'producers' ? 'Platinum producer share prices · JSE'
+                    : 'Perth Mint 1oz coin timeline'
+              } · {TIMEFRAMES.find(t=>t.id===timeframe)?.label}</span>
+              {rows.length > 0 && <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>{rows.length} data points</span>}
+            </div>
+            {chartLoading && !rows.length ? (
+              <div style={{padding:40, textAlign:'center', color:C.text, fontSize:13}}>Loading timeline…</div>
+            ) : chartErr && !rows.length ? (
+              <div style={{padding:20, color:'#B91C1C', fontSize:12}}>
+                Timeline unavailable: {chartErr}
+                {' — metals via Netlify/Yahoo; crypto via Binance; Perth direct from mint API.'}
+              </div>
+            ) : rows.length === 0 ? (
+              <div style={{padding:20, color:C.text, fontSize:12}}>No data for selected range.</div>
+            ) : (
+              <>
+                {chartWarn && (
+                  <div style={{margin:'0 16px 8px', padding:'8px 12px', fontSize:11, color:'#92400E',
+                    background:'rgba(217,119,6,0.08)', borderRadius:6, border:'1px solid rgba(217,119,6,0.2)'}}>
+                    {chartWarn}
+                  </div>
+                )}
+                {chartLoading && (
+                  <div style={{padding:'4px 18px 8px', fontSize:11, color:C.text}}>Updating {TIMEFRAMES.find(t=>t.id===timeframe)?.label}…</div>
+                )}
+                <ErrorBoundary key={`${tab}-${timeframe}`}>
+                  <TimelineCharts tab={tab} timeframe={timeframe} rows={rows}
+                    activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}/>
+                </ErrorBoundary>
+              </>
+            )}
+            {tab === 'producers' ? (
+              <ProducerAnnouncements announcements={producerMeta?.announcements} quotes={producerMeta?.quotes} />
+            ) : (
+              <MoveContextPanel events={showEvents ? eventsInRange : []} timeframe={timeframe} />
+            )}
+            <div style={{fontSize:10, color:C.text, padding:'0 18px 12px', lineHeight:1.5}}>
+              {tab === 'perth'
+                ? 'Separate charts for gold and platinum 1oz coins (AUD). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
+                : tab === 'producers'
+                  ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Prices in ZAR · announcements via Google News.'
+                  : 'Separate charts for precious metals and cryptocurrency — each with its own price scale so no curve is flattened.'}
+            </div>
+          </div>
+
+          <CurveIndexLibrary tab={tab} />
+
+          {(error || perthError) && (
+            <div style={{fontSize:12, color:'#B91C1C', marginBottom:12, padding:'8px 12px',
+              background:'rgba(185,28,28,0.06)', borderRadius:6, border:'1px solid rgba(185,28,28,0.15)'}}>
+              {error && `Spot feed: ${error}. `}{perthError && `Perth Mint: ${perthError}.`}
+            </div>
+          )}
+          {updated && (
+            <div style={{fontSize:11, color:C.text, marginBottom:16}}>
+              Last refresh · {updated.toLocaleTimeString()} ({timeAgo(updated)})
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ─── CHARTS ──────────────────────────────────────────────────── */
+    function AssetHistory() {
+      const [sy, setSy] = useState(2009);
+      const [ey, setEy] = useState(2026);
+      const [vis, setVis] = useState({g:true,p:true,b:true,e:true,c:true});
+      const [ev,  setEv]  = useState({geo:true,fin:true,hal:true,cev:false});
+      const [lg,  setLg]  = useState(true);
+
+      const sliced = useMemo(() => DATA.filter(d => d.y >= sy && d.y <= ey), [sy, ey]);
+      const inR = y => y >= sy && y <= ey;
+      const tog = (fn, k) => fn(o => ({...o, [k]: !o[k]}));
+
+      const xInt = () => {
+        const span = ey - sy;
+        if (span <= 7)  return 1;
+        if (span <= 14) return 2;
+        if (span <= 25) return 4;
+        return 8;
+      };
+
+      const refLines = (panel) => [
+        ...(ev.geo ? GEO : []),
+        ...(ev.fin ? FIN : []),
+        ...(panel === 'crypto' && ev.hal ? HAL : []),
+        ...(panel === 'crypto' && ev.cev ? CEV : []),
+      ].filter(e => inR(e.y)).map(e => (
+        <ReferenceLine key={`${panel}-${e.y}-${e.s}`} x={e.y} stroke={e.c}
+          strokeDasharray="4 3" strokeWidth={1.5} label={mkLbl(e.s, e.r, e.c)} />
+      ));
+
+      const cm = { top:50, right:16, bottom:4, left:8 };
+
+      return (
+        <div>
+          <div style={{fontSize:13, fontWeight:600, color:C.textDark, marginBottom:16,
+            letterSpacing:'0.02em'}}>Historical Analysis · 1971–2026</div>
+
+          <div style={{...cardStyle, display:'flex', gap:8, flexWrap:'wrap', marginBottom:14,
+            alignItems:'center', padding:'12px 16px'}}>
+            <span style={{fontSize:10, fontWeight:600, color:C.text, letterSpacing:'0.08em', textTransform:'uppercase'}}>Assets</span>
+            <Btn active={vis.g} color={C.gold} onClick={() => tog(setVis,'g')}>Gold</Btn>
+            <Btn active={vis.p} color={C.plat} onClick={() => tog(setVis,'p')}>Platinum</Btn>
+            <Btn active={vis.b} color={C.btc} onClick={() => tog(setVis,'b')}>BTC</Btn>
+            <Btn active={vis.e} color={C.eth} onClick={() => tog(setVis,'e')}>ETH</Btn>
+            <Btn active={vis.c} color={C.cfx} onClick={() => tog(setVis,'c')}>CFX</Btn>
+            <div style={{width:1, background:C.border, height:20, margin:'0 4px'}}/>
+            <span style={{fontSize:10, fontWeight:600, color:C.text, letterSpacing:'0.08em', textTransform:'uppercase'}}>Events</span>
+            <Btn active={ev.geo} color="#D97706" onClick={() => tog(setEv,'geo')}>Geopolitical</Btn>
+            <Btn active={ev.fin} color="#DC2626" onClick={() => tog(setEv,'fin')}>Financial</Btn>
+            <Btn active={ev.hal} color={C.gold} onClick={() => tog(setEv,'hal')}>Halvings</Btn>
+            <Btn active={ev.cev} color="#059669" onClick={() => tog(setEv,'cev')}>Crypto</Btn>
+            <div style={{width:1, background:C.border, height:20, margin:'0 4px'}}/>
+            <Btn active={lg} color={C.accent} onClick={() => setLg(l => !l)}>{lg ? 'Log scale' : 'Linear'}</Btn>
+          </div>
+
+          <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
+            <div style={panelHdr}>
+              <span>Gold & Platinum · USD/oz</span>
+              {vis.g && <span style={{color:C.gold, fontWeight:500, textTransform:'none', letterSpacing:0}}>— Gold</span>}
+              {vis.p && <span style={{color:C.plat, fontWeight:500, textTransform:'none', letterSpacing:0}}>— Platinum</span>}
+            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={sliced} margin={cm}>
+                <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                <XAxis dataKey="y" {...axP} interval={xInt()}/>
+                <YAxis {...axP} tickFormatter={v => `$${v}`} width={52}/>
+                <Tooltip content={<MetalTip/>} cursor={{stroke:C.border, strokeWidth:1}}/>
+                {refLines('metals')}
+                {vis.g && <Line type="monotone" dataKey="g" stroke={C.gold} strokeWidth={2.5}
+                  dot={false} activeDot={{r:4, fill:C.gold, strokeWidth:0}}/>}
+                {vis.p && <Line type="monotone" dataKey="p" stroke={C.plat} strokeWidth={2.5}
+                  dot={false} activeDot={{r:4, fill:C.plat, strokeWidth:0}}/>}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
+            <div style={panelHdr}>
+              <span>BTC · ETH · CFX · USD {lg ? '(log)' : '(linear)'}</span>
+              {vis.b && <span style={{color:C.btc, fontWeight:500, textTransform:'none', letterSpacing:0}}>— BTC</span>}
+              {vis.e && <span style={{color:C.eth, fontWeight:500, textTransform:'none', letterSpacing:0}}>— ETH</span>}
+              {vis.c && <span style={{color:C.cfx, fontWeight:500, textTransform:'none', letterSpacing:0}}>— CFX</span>}
+            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={sliced} margin={cm}>
+                <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                <XAxis dataKey="y" {...axP} interval={xInt()}/>
+                <YAxis {...axP} scale={lg ? 'log' : 'linear'} domain={lg ? [0.05, 'auto'] : ['auto','auto']}
+                  allowDataOverflow tickFormatter={fmtCrypto} width={56}/>
+                <Tooltip content={<CryptoTip/>} cursor={{stroke:C.border, strokeWidth:1}}/>
+                {refLines('crypto')}
+                {vis.b && <Line type="monotone" dataKey="b" stroke={C.btc} strokeWidth={2.5}
+                  dot={false} connectNulls={false} activeDot={{r:4, fill:C.btc, strokeWidth:0}}/>}
+                {vis.e && <Line type="monotone" dataKey="e" stroke={C.eth} strokeWidth={2.5}
+                  dot={false} connectNulls={false} activeDot={{r:4, fill:C.eth, strokeWidth:0}}/>}
+                {vis.c && <Line type="monotone" dataKey="c" stroke={C.cfx} strokeWidth={2}
+                  dot={false} connectNulls={false} activeDot={{r:4, fill:C.cfx, strokeWidth:0}}/>}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div style={{...cardStyle, padding:'16px 20px', marginBottom:14}}>
+            <div style={{fontSize:11, fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase',
+              color:C.text, marginBottom:12}}>Time Range · {sy} – {ey}</div>
+            <div style={{display:'flex', gap:8, flexWrap:'wrap', marginBottom:14}}>
+              {PRESETS.map(({l,s,e}) => (
+                <Btn key={l} active={sy===s && ey===e} color={C.accent}
+                  onClick={() => { setSy(s); setEy(e); }}>{l}</Btn>
+              ))}
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:12, marginBottom:10}}>
+              <span style={{fontSize:11, fontWeight:500, color:C.text, width:36}}>From</span>
+              <input type="range" min={1971} max={ey-1} value={sy}
+                onChange={e => setSy(+e.target.value)} style={{flex:1, cursor:'pointer'}}/>
+              <span style={{fontSize:13, fontWeight:600, color:C.textDark, minWidth:40, textAlign:'right',
+                fontVariantNumeric:'tabular-nums'}}>{sy}</span>
+            </div>
+            <div style={{display:'flex', alignItems:'center', gap:12}}>
+              <span style={{fontSize:11, fontWeight:500, color:C.text, width:36}}>To</span>
+              <input type="range" min={sy+1} max={2026} value={ey}
+                onChange={e => setEy(+e.target.value)} style={{flex:1, cursor:'pointer'}}/>
+              <span style={{fontSize:13, fontWeight:600, color:C.textDark, minWidth:40, textAlign:'right',
+                fontVariantNumeric:'tabular-nums'}}>{ey}</span>
+            </div>
+          </div>
+
+          <div style={{display:'flex', gap:20, flexWrap:'wrap', fontSize:11, color:C.text, lineHeight:2}}>
+            {[['#D97706','Geopolitical'],['#DC2626','Financial crisis'],
+              [C.gold,'BTC halving'],['#059669','Crypto milestone'],['#EA580C','Current (2026)']
+            ].map(([c,l]) => (
+              <div key={l} style={{display:'flex', alignItems:'center', gap:8}}>
+                <div style={{width:16, height:2, background:c, borderRadius:1}}/>
+                <span>{l}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <>
+          <ErrorBoundary>
+            <LiveDashboard />
+          </ErrorBoundary>
+          <ErrorBoundary>
+            <NewsPanel />
+          </ErrorBoundary>
+          <FundamentalsPanel />
+          <AssetHistory />
+        </>
+      );
+    }
+
+    function bootDashboard() {
+      const loadingEl = document.getElementById('loading');
+      try {
+        if (loadingEl) loadingEl.style.display = 'none';
+        ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+      } catch (err) {
+        if (loadingEl) {
+          loadingEl.style.display = 'block';
+          loadingEl.style.color = '#B91C1C';
+          loadingEl.textContent = 'Dashboard failed to load: ' + err.message;
+        }
+        console.error(err);
+      }
+    }
+    bootDashboard();
+  </script>
+
 </body>
 </html>
