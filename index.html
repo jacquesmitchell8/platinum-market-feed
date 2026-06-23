@@ -1283,6 +1283,14 @@
     // show one flat point stretched across the whole axis while our own daily
     // tracking (metals-history.js) is still thin in its first days/weeks.
     function annualBackdropPoints(metalKey, days) {
+      // Annual data only makes sense as a backdrop for multi-year views —
+      // one point per year stretched across a 1-year-or-shorter window looks
+      // like a flat line and is actively misleading (exactly what happened
+      // before this fix). For 1y and under, skip the backdrop entirely and
+      // rely solely on our own accumulated daily history, even if that's
+      // currently thin — a short, honest, real curve beats a long, fake-looking
+      // flat one.
+      if (days != null && days <= 365) return [];
       const cutoffYear = days == null ? 1971 : new Date(Date.now() - days * 86400000).getFullYear();
       return DATA
         .filter((d) => d[metalKey] != null && d.y >= cutoffYear)
@@ -1339,6 +1347,9 @@
     // BTC/ETH/CFX only have real values from their respective launch years
     // onward (earlier rows are null), which the filter below handles.
     function annualCryptoBackdropPoints(cryptoKey, days) {
+      // Same reasoning as annualBackdropPoints — annual data is only a sane
+      // backdrop for multi-year views.
+      if (days != null && days <= 365) return [];
       const cutoffYear = days == null ? 1971 : new Date(Date.now() - days * 86400000).getFullYear();
       return DATA
         .filter((d) => d[cryptoKey] != null && d.y >= cutoffYear)
