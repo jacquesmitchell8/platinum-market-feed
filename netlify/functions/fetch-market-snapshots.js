@@ -5,7 +5,7 @@
 // into Supabase `market_snapshots` (snapshot_key, payload, updated_at, source).
 //
 // Required Netlify env vars (set in Netlify dashboard -> Site configuration -> Environment variables):
-//   SUPABASE_URL              -> <your Supabase project URL>
+//   SUPABASE_URL              -> https://tjxiaidxcwpvsnwfvdck.supabase.co (market-feed project)
 //   SUPABASE_SERVICE_ROLE_KEY -> secret key (NEVER the anon/publishable key, NEVER exposed to browser)
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -71,6 +71,34 @@ async function upsertSnapshot(snapshotKey, payload, source) {
   }
 }
 
+// Appends one row per metal per UTC day into metal_price_history, building
+// real chartable history over time with zero dependency on any third-party
+// historical price API (Yahoo blocks unauthenticated server requests; this
+// avoids that problem entirely by accumulating our own data).
+async function appendMetalHistory(symbol, price) {
+  const url = `${SUPABASE_URL}/rest/v1/metal_price_history`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: 'resolution=ignore-duplicates' // the unique (asset, day) index makes repeat same-day inserts no-ops
+    },
+    body: JSON.stringify({
+      asset: symbol,
+      price,
+      recorded_at: new Date().toISOString(),
+    })
+  });
+  // Not fatal if this fails (e.g. table not yet created) — the live snapshot
+  // path above is the important one; history is a nice-to-have that grows
+  // over time, so we just log and move on rather than failing the whole run.
+  if (!res.ok) {
+    console.error(`metal_price_history append failed for ${symbol}: ${res.status}`);
+  }
+}
+
 export default async (req) => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars');
@@ -83,6 +111,7 @@ export default async (req) => {
     try {
       const data = await fetchMetal(symbol);
       await upsertSnapshot(symbol, data, 'gold-api.com');
+      await appendMetalHistory(symbol, data.price);
       results.push({ asset: symbol, ok: true });
     } catch (err) {
       console.error(err.message);

@@ -108,41 +108,6 @@ export default async (req) => {
       });
     }
 
-    if (type === 'metal') {
-      // Same logic as metals-chart.js — kept here too since the dashboard
-      // tries this URL first (see fetchMetalProxy) before falling back to
-      // /.netlify/functions/metals-chart.
-      const symbol = url.searchParams.get('symbol');
-      const daysParam = url.searchParams.get('days');
-      const days = daysParam === 'max' || !daysParam ? null : parseInt(daysParam, 10);
-      if (!symbol) throw new Error('Missing symbol parameter');
-
-      const range = days == null ? '5y' : days <= 1 ? '5d' : days <= 7 ? '1mo' : days <= 30 ? '3mo' : days <= 90 ? '6mo' : days <= 365 ? '2y' : days <= 1095 ? '5y' : '10y';
-      const interval = days == null || days > 365 ? '1d' : days <= 7 ? '1h' : '1d';
-      const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
-
-      const res = await fetch(yahooUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
-      });
-      if (!res.ok) throw new Error(`Yahoo fetch failed: ${res.status}`);
-      const data = await res.json();
-      const result = data?.chart?.result?.[0];
-      if (!result) throw new Error('No chart result from Yahoo');
-
-      const timestamps = result.timestamp || [];
-      const closes = result.indicators?.quote?.[0]?.close || [];
-      const prices = [];
-      for (let i = 0; i < timestamps.length; i++) {
-        if (closes[i] != null) prices.push([timestamps[i] * 1000, closes[i]]);
-      }
-      if (!prices.length) throw new Error('No valid price points returned');
-
-      return new Response(JSON.stringify({ ok: true, prices, source: 'yahoo-finance' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
     throw new Error(`Unknown or missing type parameter: ${type}`);
   } catch (err) {
     return new Response(JSON.stringify({ ok: false, error: err.message }), {

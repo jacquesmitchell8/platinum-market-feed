@@ -1277,20 +1277,21 @@
     }
 
     async function fetchMetalProxy(symbol, days) {
+      // Routed to our own accumulated history (metals-history.js) instead of
+      // Yahoo Finance — Yahoo's unofficial chart endpoint blocks unauthenticated
+      // server requests (404/401) as anti-scraping protection, which is not
+      // something to route around. Our own Supabase-backed history starts thin
+      // and grows daily via fetch-market-snapshots.js, with zero dependency on
+      // any third-party historical price API.
       const dStr = days == null ? '1095' : String(days);
-      const urls = [
-        `/.netlify/functions/crypto-feed?type=metal&symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(dStr)}`,
-        `/.netlify/functions/metals-chart?symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(dStr)}`,
-      ];
-      for (const url of urls) {
-        try {
-          const res = await pmFetch(url, {}, 15000);
-          const j = await res.json();
-          if (j.ok && j.prices?.length) {
-            return j.prices.map(([ts, price]) => ({ ts, price }));
-          }
-        } catch (_) {}
-      }
+      const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(dStr)}`;
+      try {
+        const res = await pmFetch(url, {}, 15000);
+        const j = await res.json();
+        if (j.ok && j.prices?.length) {
+          return j.prices.map(([ts, price]) => ({ ts, price }));
+        }
+      } catch (_) {}
       return null;
     }
 

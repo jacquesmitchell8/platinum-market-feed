@@ -1,47 +1,24 @@
 // netlify/functions/perth-mint.js
 //
 // IMPORTANT — READ BEFORE MODIFYING:
-// The Perth Mint does not publish a public API. Their retail bid/offer
-// prices only exist on their website, updated client-side, with no
-// documented JSON endpoint. Scraping their retail page was considered and
-// deliberately rejected — see conversation history — because it would mean
-// circumventing a deliberate choice by Perth Mint not to expose this data
-// programmatically, against the spirit of their published terms.
+// The Perth Mint does not publish a public API — only a retail website with
+// no documented JSON endpoint. Scraping it was considered and rejected (see
+// conversation history) as circumventing a deliberate choice not to expose
+// this data programmatically.
 //
-// What this function actually returns instead: a clearly-labeled ESTIMATE,
-// derived from LBMA/Yahoo spot gold and platinum prices converted to AUD,
-// in the same response shape the dashboard's fetchPerthMint() expects, so
-// the chart renders without code changes — but every data point is tagged
-// `estimated: true` and the whole response carries a `disclaimer` field.
-// This is NOT real Perth Mint retail pricing and should never be presented
-// to a user as if it were.
+// What this function returns instead: a clearly-labeled ESTIMATE derived
+// from our own accumulated gold/platinum history (metal_price_history in
+// Supabase, built by fetch-market-snapshots.js — NOT Yahoo Finance, which
+// blocks unauthenticated server requests with 401/404 anti-scraping errors).
+// Every data point is tagged `estimated: true` and the response carries a
+// `disclaimer` field. This is NOT real Perth Mint retail pricing.
 //
-// Required Netlify env vars: none (Yahoo + Frankfurter are both keyless).
+// Required Netlify env vars:
+//   SUPABASE_URL      -> <your Supabase project URL>
+//   SUPABASE_ANON_KEY -> publishable/anon key (read-only, safe to use here)
 
-const RANGE_FOR_KEY = {
-  oneWeekHistoricData: { range: '5d', interval: '1h' },
-  twoYearsHistoricData: { range: '2y', interval: '1d' },
-  threeYearsHistoricData: { range: '5y', interval: '1d' },
-  fiveYearsHistoricData: { range: '5y', interval: '1d' },
-};
-
-async function fetchYahooSeries(symbol, range, interval) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
-  });
-  if (!res.ok) throw new Error(`Yahoo fetch failed for ${symbol}: ${res.status}`);
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  if (!result) throw new Error(`No chart result for ${symbol}`);
-  const timestamps = result.timestamp || [];
-  const closes = result.indicators?.quote?.[0]?.close || [];
-  const points = [];
-  for (let i = 0; i < timestamps.length; i++) {
-    if (closes[i] != null) points.push({ ts: timestamps[i] * 1000, usdPerOz: closes[i] });
-  }
-  return points;
-}
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 async function fetchAudUsdRate() {
   try {
@@ -50,16 +27,40 @@ async function fetchAudUsdRate() {
     const j = await res.json();
     if (j.rates?.USD) return j.rates.USD;
   } catch (_) {}
-  return 0.65; // reasonable fallback if FX lookup fails
+  return 0.65;
 }
 
-function buildHistoricArray(usdPoints, audUsdRate, metal) {
-  // Convert USD/oz futures price to an AUD/oz estimate, then synthesize a
-  // bid/offer spread around it (~1.5% each side, roughly typical retail
-  // bullion margin) since we have no real retail bid/offer to report.
+async function fetchOwnHistory(asset) {
+  // Same logic as metals-history.js — kept inline here to avoid one function
+  // calling another over HTTP, which Netlify functions can't do directly anyway.
+  const histUrl = `${SUPABASE_URL}/rest/v1/metal_price_history?select=price,recorded_at&asset=eq.${asset}&order=recorded_at.asc&limit=5000`;
+  try {
+    const res = await fetch(histUrl, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        return rows.map(r => ({ ts: new Date(r.recorded_at).getTime(), usdPerOz: r.price }));
+      }
+    }
+  } catch (_) {}
+
+  // Fall back to just the current snapshot if history table is empty/missing.
+  const snapUrl = `${SUPABASE_URL}/rest/v1/market_snapshots?select=payload,updated_at&snapshot_key=eq.${asset}`;
+  const snapRes = await fetch(snapUrl, {
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+  });
+  if (!snapRes.ok) return [];
+  const rows = await snapRes.json();
+  if (!rows.length) return [];
+  return [{ ts: new Date(rows[0].updated_at).getTime(), usdPerOz: rows[0].payload.price }];
+}
+
+function buildHistoricArray(usdPoints, audUsdRate) {
   return usdPoints.map((p) => {
     const audMid = p.usdPerOz / audUsdRate;
-    const spread = audMid * 0.015;
+    const spread = audMid * 0.015; // synthetic ~1.5% retail spread, since we have no real bid/offer
     return {
       timestamp: p.ts,
       mid: Math.round(audMid * 100) / 100,
@@ -71,44 +72,45 @@ function buildHistoricArray(usdPoints, audUsdRate, metal) {
 }
 
 export default async (req) => {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return new Response(JSON.stringify({ ok: false, error: 'Missing Supabase env vars' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   try {
     const audUsdRate = await fetchAudUsdRate();
+    const goldRaw = await fetchOwnHistory('XAU');
+    const platRaw = await fetchOwnHistory('XPT');
 
-    const goldRaw = await fetchYahooSeries('GC=F', '5y', '1d');
-    const platRaw = await fetchYahooSeries('PL=F', '5y', '1d');
-
-    function sliceFor(key) {
-      const cfg = RANGE_FOR_KEY[key];
-      // We only fetched one broad range above; reuse it for all keys rather
-      // than hitting Yahoo repeatedly — fine since this is an estimate, not
-      // precision retail data anyway.
-      return cfg;
-    }
+    const goldHist = buildHistoricArray(goldRaw, audUsdRate);
+    const platHist = buildHistoricArray(platRaw, audUsdRate);
 
     const goldEntry = {
       metal: 'Gold',
       currency: 'AUD',
       estimated: true,
-      oneWeekHistoricData: buildHistoricArray(goldRaw.slice(-40), audUsdRate, 'Gold'),
-      twoYearsHistoricData: buildHistoricArray(goldRaw, audUsdRate, 'Gold'),
-      threeYearsHistoricData: buildHistoricArray(goldRaw, audUsdRate, 'Gold'),
-      fiveYearsHistoricData: buildHistoricArray(goldRaw, audUsdRate, 'Gold'),
+      oneWeekHistoricData: goldHist.slice(-40),
+      twoYearsHistoricData: goldHist,
+      threeYearsHistoricData: goldHist,
+      fiveYearsHistoricData: goldHist,
     };
 
     const platEntry = {
       metal: 'Platinum',
       currency: 'AUD',
       estimated: true,
-      oneWeekHistoricData: buildHistoricArray(platRaw.slice(-40), audUsdRate, 'Platinum'),
-      twoYearsHistoricData: buildHistoricArray(platRaw, audUsdRate, 'Platinum'),
-      threeYearsHistoricData: buildHistoricArray(platRaw, audUsdRate, 'Platinum'),
-      fiveYearsHistoricData: buildHistoricArray(platRaw, audUsdRate, 'Platinum'),
+      oneWeekHistoricData: platHist.slice(-40),
+      twoYearsHistoricData: platHist,
+      threeYearsHistoricData: platHist,
+      fiveYearsHistoricData: platHist,
     };
 
     return new Response(JSON.stringify({
       ok: true,
       estimated: true,
-      disclaimer: 'ESTIMATE ONLY — Perth Mint has no public API. These figures are derived from LBMA/Yahoo spot gold and platinum prices converted to AUD with a synthetic retail spread, NOT real Perth Mint bid/offer prices. For actual retail pricing, see perthmint.com directly.',
+      disclaimer: 'ESTIMATE ONLY — Perth Mint has no public API. These figures are derived from our own accumulated spot gold/platinum data converted to AUD with a synthetic retail spread, NOT real Perth Mint bid/offer prices. History accumulates daily and starts thin. For actual retail pricing, see perthmint.com directly.',
       result: [goldEntry, platEntry],
       audUsdRate,
     }), {
