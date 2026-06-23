@@ -44,6 +44,31 @@ create table if not exists producer_quotes (
   source text
 );
 
+-- Monthly baselines for long timeframes. We store month-end closes.
+create table if not exists metal_price_history_monthly (
+  id bigserial primary key,
+  asset text not null,
+  price numeric not null,
+  recorded_at timestamptz not null,
+  recorded_day date not null
+);
+
+create table if not exists crypto_price_history_monthly (
+  id bigserial primary key,
+  asset text not null,
+  price numeric not null,
+  recorded_at timestamptz not null,
+  recorded_day date not null
+);
+
+create table if not exists producer_price_history_monthly (
+  id bigserial primary key,
+  ticker text not null,
+  price numeric not null,
+  recorded_at timestamptz not null,
+  recorded_day date not null
+);
+
 create table if not exists news_stories (
   id bigserial primary key,
   title text not null,
@@ -99,6 +124,24 @@ create unique index if not exists producer_price_history_ticker_day
 create index if not exists producer_price_history_ticker_recorded
   on producer_price_history (ticker, recorded_at);
 
+create unique index if not exists metal_price_history_monthly_asset_day
+  on metal_price_history_monthly (asset, recorded_day);
+
+create index if not exists metal_price_history_monthly_asset_recorded
+  on metal_price_history_monthly (asset, recorded_at);
+
+create unique index if not exists crypto_price_history_monthly_asset_day
+  on crypto_price_history_monthly (asset, recorded_day);
+
+create index if not exists crypto_price_history_monthly_asset_recorded
+  on crypto_price_history_monthly (asset, recorded_at);
+
+create unique index if not exists producer_price_history_monthly_ticker_day
+  on producer_price_history_monthly (ticker, recorded_day);
+
+create index if not exists producer_price_history_monthly_ticker_recorded
+  on producer_price_history_monthly (ticker, recorded_at);
+
 -- ─── 4. Row Level Security ─────────────────────────────────────────────────
 -- service_role (Netlify) bypasses RLS and can read/write everything.
 -- anon key (browser) can only read public market data — never write.
@@ -109,10 +152,14 @@ alter table crypto_price_history enable row level security;
 alter table producer_price_history enable row level security;
 alter table producer_quotes enable row level security;
 alter table news_stories enable row level security;
+alter table metal_price_history_monthly enable row level security;
+alter table crypto_price_history_monthly enable row level security;
+alter table producer_price_history_monthly enable row level security;
 
 drop policy if exists "Public read market snapshots" on market_snapshots;
 drop policy if exists "Public read metal history" on metal_price_history;
 drop policy if exists "Public read news" on news_stories;
+drop policy if exists "Public read metal history monthly" on metal_price_history_monthly;
 
 create policy "Public read market snapshots"
   on market_snapshots for select
@@ -121,6 +168,11 @@ create policy "Public read market snapshots"
 
 create policy "Public read metal history"
   on metal_price_history for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read metal history monthly"
+  on metal_price_history_monthly for select
   to anon, authenticated
   using (true);
 

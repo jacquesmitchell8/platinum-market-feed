@@ -11,6 +11,8 @@
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 
+import { sbFetchAll } from './lib/supabase-paginate.js';
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -43,10 +45,11 @@ function supabaseHeaders() {
 }
 
 async function getStoredHistory(ticker) {
-  const url = `${SUPABASE_URL}/rest/v1/producer_price_history?select=price,recorded_at&ticker=eq.${encodeURIComponent(ticker)}&order=recorded_at.asc&limit=10000`;
-  const res = await fetch(url, { headers: supabaseHeaders() });
-  if (!res.ok) return [];
-  return res.json();
+  return sbFetchAll(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    `producer_price_history?select=price,recorded_at&ticker=eq.${encodeURIComponent(ticker)}&order=recorded_at.asc`
+  );
 }
 
 async function upsertHistoryRow(ticker, price, dateStr) {

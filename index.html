@@ -1223,7 +1223,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v8:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v9:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1276,29 +1276,18 @@
       });
     }
 
-    // Converts the existing 1971-2026 annual DATA array into chart points for
-    // a given metal ('g' for gold, 'p' for platinum), using mid-year (July 1)
-    // as each year's timestamp. This is real LBMA/WPIC historical data already
-    // in this file — used here as an honest backdrop so a 3-year chart doesn't
-    // show one flat point stretched across the whole axis while our own daily
-    // tracking (metals-history.js) is still thin in its first days/weeks.
-    function annualBackdropPoints(metalKey, days) {
-      // Annual data only makes sense as a backdrop for multi-year views —
-      // one point per year stretched across a 1-year-or-shorter window looks
-      // like a flat line and is actively misleading (exactly what happened
-      // before this fix). For 1y and under, skip the backdrop entirely and
-      // rely solely on our own accumulated daily history, even if that's
-      // currently thin — a short, honest, real curve beats a long, fake-looking
-      // flat one.
-      if (days != null && days <= 365) return [];
-      const cutoffYear = days == null ? 1971 : new Date(Date.now() - days * 86400000).getFullYear();
-      return DATA
-        .filter((d) => d[metalKey] != null && d.y >= cutoffYear)
-        .map((d) => ({ ts: Date.UTC(d.y, 6, 1), price: d[metalKey] }));
+    function granularityForDays(days) {
+      // Daily up to 5y — we store that in Supabase. Monthly only for open-ended long views.
+      // (Previously capped at 400d which forced monthly for 3y; combined with Supabase's
+      // 1000-row page limit that produced a ~2.7y wall on charts.)
+      if (days == null) return 'monthly';
+      if (days <= 1825) return 'daily';
+      return 'monthly';
     }
 
     async function fetchMetalProxy(symbol, days) {
-      const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}`;
+      const granularity = granularityForDays(days);
+      const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}&granularity=${encodeURIComponent(granularity)}`;
       try {
         const res = await pmFetch(url, {}, 15000);
         const j = await res.json();
@@ -1313,36 +1302,17 @@
 
     function filterByTimeframe(pts, tf) {
       if (!pts?.length) return [];
-      let out = pts;
-      if (tf.hours) out = pts.filter((p) => Date.now() - p.ts <= tf.hours * 3600000);
-      else if (tf.days) out = pts.filter((p) => Date.now() - p.ts <= tf.days * 86400000);
-      // Don't show a flat single-day line when the DB has older data outside this window
-      if (tf.days && out.length < 20 && pts.length > out.length) return pts;
-      return out;
+      if (tf.hours) return pts.filter((p) => Date.now() - p.ts <= tf.hours * 3600000);
+      if (tf.days) return pts.filter((p) => Date.now() - p.ts <= tf.days * 86400000);
+      return pts;
     }
-
-    // Same backdrop pattern as annualBackdropPoints (gold/platinum) — converts
-    // the existing 1971-2026 annual DATA array into chart points for a given
-    // crypto key ('b' BTC, 'e' ETH, 'c' CFX), using mid-year as the timestamp.
-    // BTC/ETH/CFX only have real values from their respective launch years
-    // onward (earlier rows are null), which the filter below handles.
-    function annualCryptoBackdropPoints(cryptoKey, days) {
-      // Same reasoning as annualBackdropPoints — annual data is only a sane
-      // backdrop for multi-year views.
-      if (days != null && days <= 365) return [];
-      const cutoffYear = days == null ? 1971 : new Date(Date.now() - days * 86400000).getFullYear();
-      return DATA
-        .filter((d) => d[cryptoKey] != null && d.y >= cutoffYear)
-        .map((d) => ({ ts: Date.UTC(d.y, 6, 1), price: d[cryptoKey] }));
-    }
-
-    const CRYPTO_BACKDROP_KEY = { 'bitcoin': 'b', 'ethereum': 'e', 'conflux-token': 'c' };
 
     async function fetchCgChartBrowser(coinId, days) {
       // Read stored crypto history from Supabase. Ingestion is propagate-curves.js.
       let pts = [];
       try {
-        const histUrl = `/.netlify/functions/crypto-history?id=${encodeURIComponent(coinId)}`;
+        const granularity = granularityForDays(days);
+        const histUrl = `/.netlify/functions/crypto-history?id=${encodeURIComponent(coinId)}&granularity=${encodeURIComponent(granularity)}`;
         const res = await pmFetch(histUrl, {}, 15000);
         const j = await res.json();
         if (j.ok && j.prices?.length) {
@@ -1424,9 +1394,11 @@
       return seriesMap;
     }
 
-    async function fetchIndexTimelineSplit(timeframeId, curveIds) {
-      const tf = TIMEFRAMES.find(t => t.id === timeframeId) || TIMEFRAMES[1];
-      const seriesMap = {};
+    async function fetchIndexTimelineSplit(metalTfId, cryptoTfId, curveIds) {
+      const metalTf = TIMEFRAMES.find(t => t.id === metalTfId) || TIMEFRAMES[5];
+      const cryptoTf = TIMEFRAMES.find(t => t.id === cryptoTfId) || TIMEFRAMES[5];
+      const metalSeries = {};
+      const cryptoSeries = {};
       const failures = [];
       const warns = [];
       const metalIds = curveIds.filter((id) => INDEX_METAL_IDS.has(id));
@@ -1436,9 +1408,9 @@
       let goldPts = null;
       if (metalIds.includes('IDX-001')) {
         try {
-          goldPts = await fetchMetalChart('IDX-001', tf.cgDays);
-          goldPts = filterByTimeframe(goldPts, tf);
-          if (goldPts.length) seriesMap['IDX-001'] = downsample(goldPts, maxPtsFor(tf));
+          goldPts = await fetchMetalChart('IDX-001', metalTf.cgDays);
+          goldPts = filterByTimeframe(goldPts, metalTf);
+          if (goldPts.length) metalSeries['IDX-001'] = downsample(goldPts, maxPtsFor(metalTf));
         } catch (_) {
           failures.push('IDX-001');
         }
@@ -1446,16 +1418,16 @@
 
       if (metalIds.includes('IDX-002')) {
         try {
-          let pts = await fetchMetalChart('IDX-002', tf.cgDays, goldPts);
-          pts = filterByTimeframe(pts, tf);
-          if (pts.length) seriesMap['IDX-002'] = downsample(pts, maxPtsFor(tf));
+          let pts = await fetchMetalChart('IDX-002', metalTf.cgDays, goldPts);
+          pts = filterByTimeframe(pts, metalTf);
+          if (pts.length) metalSeries['IDX-002'] = downsample(pts, maxPtsFor(metalTf));
           else if (goldPts?.length) {
-            seriesMap['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(tf));
+            metalSeries['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(metalTf));
             warns.push('Platinum derived from gold × Pt/Au ratio');
           }
         } catch (_) {
           if (goldPts?.length) {
-            seriesMap['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(tf));
+            metalSeries['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(metalTf));
             warns.push('Platinum derived from gold × Pt/Au ratio');
           } else {
             failures.push('IDX-002');
@@ -1465,9 +1437,9 @@
 
       for (const id of metalIds.filter((mid) => mid !== 'IDX-001' && mid !== 'IDX-002')) {
         try {
-          let pts = await fetchMetalChart(id, tf.cgDays);
-          pts = filterByTimeframe(pts, tf);
-          if (pts.length) seriesMap[id] = downsample(pts, maxPtsFor(tf));
+          let pts = await fetchMetalChart(id, metalTf.cgDays);
+          pts = filterByTimeframe(pts, metalTf);
+          if (pts.length) metalSeries[id] = downsample(pts, maxPtsFor(metalTf));
         } catch (_) {
           failures.push(id);
         }
@@ -1479,9 +1451,9 @@
           if (!coinId) return;
           await sleep(CG_FETCH_STAGGER[id] || 0);
           try {
-            let pts = await fetchChartSeries(coinId, tf.cgDays);
-            pts = filterByTimeframe(pts, tf);
-            if (pts.length) seriesMap[id] = downsample(pts, maxPtsFor(tf));
+            let pts = await fetchChartSeries(coinId, cryptoTf.cgDays);
+            pts = filterByTimeframe(pts, cryptoTf);
+            if (pts.length) cryptoSeries[id] = downsample(pts, maxPtsFor(cryptoTf));
           } catch (_) {
             failures.push(id);
           }
@@ -1489,14 +1461,17 @@
       }
       if (cryptoTasks.length) await Promise.all(cryptoTasks);
 
-      const rows = mergeSeries(seriesMap, timeframeId);
-      if (!rows.length) throw new Error('Index timeline unavailable');
+      const metalsRows = mergeSeries(metalSeries, metalTfId);
+      const cryptoRows = mergeSeries(cryptoSeries, cryptoTfId);
+      if (!metalsRows.length && !cryptoRows.length) throw new Error('Index timeline unavailable');
       const warnParts = [...warns];
       if (failures.length) warnParts.push(`Some curves unavailable (${failures.join(', ')})`);
       return {
         ok: true,
         stale: false,
-        rows,
+        metalsRows,
+        cryptoRows,
+        rows: metalsRows.length ? metalsRows : cryptoRows,
         warn: warnParts.length ? warnParts.join(' · ') : null,
         source: 'self-filling-history',
       };
@@ -1506,6 +1481,8 @@
       try {
         localStorage.setItem(lsKey, JSON.stringify({
           rows: data.rows,
+          metalsRows: data.metalsRows || null,
+          cryptoRows: data.cryptoRows || null,
           producerMeta: data.producerMeta || null,
           savedAt: Date.now(),
         }));
@@ -1547,18 +1524,19 @@
       };
     }
 
-    async function fetchMarketTimeline(tab, timeframeId, curveIds) {
+    async function fetchMarketTimeline(tab, metalTimeframeId, curveIds, cryptoTimeframeId) {
       const curves = curveIds.join(',');
-      const lsKey = TIMELINE_LS_PREFIX + tab + ':' + timeframeId + ':' + curves;
+      const cryptoTf = cryptoTimeframeId || metalTimeframeId;
+      const lsKey = TIMELINE_LS_PREFIX + tab + ':' + metalTimeframeId + ':' + cryptoTf + ':' + curves;
 
       if (tab === 'index') {
         try {
-          const split = await fetchIndexTimelineSplit(timeframeId, curveIds);
+          const split = await fetchIndexTimelineSplit(metalTimeframeId, cryptoTf, curveIds);
           saveTimelineToStorage(lsKey, split);
           return split;
         } catch (_) {}
         try {
-          const data = await fetchNetlifyTimeline(tab, timeframeId, curveIds);
+          const data = await fetchNetlifyTimeline(tab, metalTimeframeId, curveIds);
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
@@ -1567,12 +1545,12 @@
       if (tab === 'perth') {
         try {
           const audUsd = await fetchAudUsd();
-          const direct = await fetchPerthTimelineDirect(timeframeId, curveIds, audUsd);
+          const direct = await fetchPerthTimelineDirect(metalTimeframeId, curveIds, audUsd);
           saveTimelineToStorage(lsKey, direct);
           return direct;
         } catch (_) {}
         try {
-          const data = await fetchNetlifyTimeline(tab, timeframeId, curveIds);
+          const data = await fetchNetlifyTimeline(tab, metalTimeframeId, curveIds);
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
@@ -1580,12 +1558,12 @@
 
       if (tab === 'producers') {
         try {
-          const data = await fetchProducerStocks(timeframeId);
+          const data = await fetchProducerStocks(metalTimeframeId);
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
         try {
-          const data = await fetchNetlifyTimeline(tab, timeframeId, curveIds);
+          const data = await fetchNetlifyTimeline(tab, metalTimeframeId, curveIds);
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
@@ -1595,11 +1573,13 @@
         const raw = localStorage.getItem(lsKey);
         if (raw) {
           const cached = JSON.parse(raw);
-          if (cached.rows?.length) {
+          if (cached.rows?.length || cached.metalsRows?.length || cached.cryptoRows?.length) {
             return {
               ok: true,
               stale: true,
-              rows: cached.rows,
+              rows: cached.rows || cached.metalsRows || cached.cryptoRows || [],
+              metalsRows: cached.metalsRows || null,
+              cryptoRows: cached.cryptoRows || null,
               producerMeta: cached.producerMeta || null,
               warn: 'Browser cached timeline',
             };
@@ -1987,10 +1967,6 @@
         Object.entries(seriesMap).forEach(([id, pts]) => {
           const hit = pts.find(p => p.ts === ts);
           if (hit) row[id] = hit.price;
-          else {
-            const prior = [...pts].filter(p => p.ts <= ts).pop();
-            if (prior) row[id] = prior.price;
-          }
         });
         return row;
       });
@@ -1998,9 +1974,9 @@
 
     const TIMELINE_FETCH_TIMEOUT_MS = 25000;
 
-    function fetchMarketTimelineWithTimeout(tab, timeframeId, curveIds) {
+    function fetchMarketTimelineWithTimeout(tab, metalTimeframeId, curveIds, cryptoTimeframeId) {
       return Promise.race([
-        fetchMarketTimeline(tab, timeframeId, curveIds),
+        fetchMarketTimeline(tab, metalTimeframeId, curveIds, cryptoTimeframeId),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Timeline fetch timeout')), TIMELINE_FETCH_TIMEOUT_MS)
         ),
@@ -2014,10 +1990,11 @@
       })).filter(r => !Number.isNaN(r.ts) && r.price != null);
     }
 
-    function getEventsInRange(rows, activeIds) {
-      if (!rows?.length) return [];
-      const min = rows[0].ts;
-      const max = rows[rows.length - 1].ts;
+    function getEventsInRangeFromRows(rowSets, activeIds) {
+      const all = rowSets.flat().filter(Boolean);
+      if (!all.length) return [];
+      const min = Math.min(...all.map(r => r.ts));
+      const max = Math.max(...all.map(r => r.ts));
       const assetSet = new Set();
       activeIds.forEach(id => (CURVE_INDEX[id]?.assets || []).forEach(a => assetSet.add(a)));
       return TIMELINE_EVENTS
@@ -2119,21 +2096,28 @@
       return { live, perth, audUsd, error, feedWarn, perthError, updated, spotLoading, refreshSpot: fetchAll };
     }
 
-    function useTimeline(tab, timeframeId, activeIds) {
+    function useTimeline(tab, metalTimeframe, cryptoTimeframe, activeIds) {
       const [rows, setRows] = useState([]);
+      const [metalsRows, setMetalsRows] = useState([]);
+      const [cryptoRows, setCryptoRows] = useState([]);
       const [loading, setLoading] = useState(true);
       const [err, setErr] = useState(null);
       const [warn, setWarn] = useState(null);
       const [producerMeta, setProducerMeta] = useState(null);
       const hasData = useRef(false);
+      const cryptoTf = tab === 'index' ? cryptoTimeframe : metalTimeframe;
 
       useEffect(() => {
         let cancelled = false;
-        const mergedKey = `v8:merged:${tab}:${timeframeId}:${[...activeIds].sort().join(',')}`;
-        const cachedRows = cacheFresh(mergedKey) || cacheStale(mergedKey);
+        const mergedKey = `v9:merged:${tab}:${metalTimeframe}:${cryptoTf}:${[...activeIds].sort().join(',')}`;
+        const cachedRaw = localStorage.getItem(mergedKey);
+        let cached = null;
+        try { cached = cachedRaw ? JSON.parse(cachedRaw) : null; } catch (_) {}
 
-        if (cachedRows?.length) {
-          setRows(cachedRows);
+        if (cached?.rows?.length || cached?.metalsRows?.length || cached?.cryptoRows?.length) {
+          setRows(cached.rows || cached.metalsRows || cached.cryptoRows || []);
+          setMetalsRows(cached.metalsRows || []);
+          setCryptoRows(cached.cryptoRows || []);
           hasData.current = true;
           setLoading(false);
         }
@@ -2143,11 +2127,21 @@
           setErr(null);
 
           try {
-            const data = await fetchMarketTimelineWithTimeout(tab, timeframeId, activeIds);
+            const data = await fetchMarketTimelineWithTimeout(tab, metalTimeframe, activeIds, cryptoTf);
             if (cancelled) return;
-            if (data.rows?.length) {
-              setRows(data.rows);
-              cacheSet(mergedKey, data.rows);
+            const nextRows = data.rows || data.metalsRows || data.cryptoRows || [];
+            if (nextRows.length || data.metalsRows?.length || data.cryptoRows?.length) {
+              setRows(nextRows);
+              setMetalsRows(data.metalsRows || (tab === 'index' ? [] : nextRows));
+              setCryptoRows(data.cryptoRows || []);
+              try {
+                localStorage.setItem(mergedKey, JSON.stringify({
+                  rows: nextRows,
+                  metalsRows: data.metalsRows || null,
+                  cryptoRows: data.cryptoRows || null,
+                  savedAt: Date.now(),
+                }));
+              } catch (_) {}
               hasData.current = true;
               if (tab === 'producers' && data.producerMeta) {
                 setProducerMeta(data.producerMeta);
@@ -2166,9 +2160,10 @@
             }
           } catch (e) {
             if (cancelled) return;
-            const staleMerged = cacheStale(mergedKey);
-            if (staleMerged?.length) {
-              setRows(staleMerged);
+            if (cached?.rows?.length || cached?.metalsRows?.length || cached?.cryptoRows?.length) {
+              setRows(cached.rows || cached.metalsRows || cached.cryptoRows || []);
+              setMetalsRows(cached.metalsRows || []);
+              setCryptoRows(cached.cryptoRows || []);
               hasData.current = true;
               setWarn('Showing last loaded timeline · ' + (e.message || 'fetch failed'));
             } else if (!hasData.current) {
@@ -2182,9 +2177,9 @@
         }
         load();
         return () => { cancelled = true; };
-      }, [tab, timeframeId, activeIds.join(',')]);
+      }, [tab, metalTimeframe, cryptoTf, activeIds.join(',')]);
 
-      return { rows, loading, err, warn, producerMeta };
+      return { rows, metalsRows, cryptoRows, loading, err, warn, producerMeta };
     }
 
     class ErrorBoundary extends React.Component {
@@ -2298,42 +2293,70 @@
       );
     }
 
-    function TimelineCharts({ tab, timeframe, rows, activeCurves, showEvents, eventsInRange }) {
-      if (!rows.length) return null;
+    function TimeframeBar({ value, onChange, label }) {
+      return (
+        <div style={{marginBottom:10}}>
+          {label && <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:6}}>{label}</div>}
+          <div className="price-tabs">
+            {TIMEFRAMES.map(tf => (
+              <button key={tf.id} type="button"
+                className={`price-tab ${value===tf.id?'active':''}`}
+                onClick={() => onChange(tf.id)}>{tf.label}</button>
+            ))}
+          </div>
+        </div>
+      );
+    }
 
+    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, activeCurves, showEvents, eventsInRange }) {
       if (tab === 'index') {
         const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
         const cryptoMajorIds = activeCurves.filter(id =>
           CURVE_INDEX[id]?.axis === 'crypto' && id !== 'IDX-005');
         const cfxIds = activeCurves.filter(id => id === 'IDX-005');
+        const metalChartRows = metalsRows || [];
+        const cryptoChartRows = cryptoRows || [];
+        const hasMetals = metalChartRows.length && metalIds.length;
+        const hasCrypto = cryptoChartRows.length && (cryptoMajorIds.length || cfxIds.length);
+        if (!hasMetals && !hasCrypto) return null;
         return (
           <>
-            <SingleTimelineChart
-              title="Precious metals · USD per troy ounce"
-              unit="USD" rows={rows} curveIds={metalIds} timeframe={timeframe}
-              showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}/>
-            {cryptoMajorIds.length > 0 && (
-              <SingleTimelineChart
-                title="Bitcoin · Ethereum · USD spot"
-                unit="USD" rows={rows} curveIds={cryptoMajorIds} timeframe={timeframe}
-                showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+            {hasMetals && (
+              <>
+                <TimeframeBar label="Metals chart period" value={metalTimeframe} onChange={onMetalTimeframeChange} />
+                <SingleTimelineChart
+                  title={`Precious metals · USD per troy ounce · ${TIMEFRAMES.find(t=>t.id===metalTimeframe)?.label || ''}`}
+                  unit="USD" rows={metalChartRows} curveIds={metalIds} timeframe={metalTimeframe}
+                  showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}/>
+              </>
             )}
-            {cfxIds.length > 0 && (
+            {cryptoMajorIds.length > 0 && cryptoChartRows.length > 0 && (
+              <>
+                <TimeframeBar label="Crypto chart period" value={cryptoTimeframe} onChange={onCryptoTimeframeChange} />
+                <SingleTimelineChart
+                  title={`Bitcoin · Ethereum · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                  unit="USD" rows={cryptoChartRows} curveIds={cryptoMajorIds} timeframe={cryptoTimeframe}
+                  showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+              </>
+            )}
+            {cfxIds.length > 0 && cryptoChartRows.length > 0 && (
               <SingleTimelineChart
-                title="Conflux (CFX) · USD spot"
-                unit="USD" rows={rows} curveIds={cfxIds} timeframe={timeframe}
+                title={`Conflux (CFX) · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                unit="USD" rows={cryptoChartRows} curveIds={cfxIds} timeframe={cryptoTimeframe}
                 showEvents={showEvents} events={eventsForCurves(eventsInRange, cfxIds)}/>
             )}
           </>
         );
       }
 
+      if (!rows?.length) return null;
+
       if (tab === 'producers') {
         const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
         return (
           <SingleTimelineChart
             title="Top platinum producers · JSE share price (ZAR)"
-            unit="ZAR" rows={rows} curveIds={producerIds} timeframe={timeframe}
+            unit="ZAR" rows={rows} curveIds={producerIds} timeframe={metalTimeframe}
             showEvents={showEvents} events={eventsForCurves(eventsInRange, producerIds)}/>
         );
       }
@@ -2345,14 +2368,14 @@
         <>
           <SingleTimelineChart
             title="Perth Mint · Gold 1oz coins · AUD"
-            unit="AUD" rows={rows} curveIds={goldIds} timeframe={timeframe}
+            unit="AUD" rows={rows} curveIds={goldIds} timeframe={metalTimeframe}
             showEvents={showEvents} events={eventsForCurves(eventsInRange, goldIds)}/>
           <SingleTimelineChart
             title="Perth Mint · Platinum 1oz coins · AUD"
-            unit="AUD" rows={rows} curveIds={platIds} timeframe={timeframe}
+            unit="AUD" rows={rows} curveIds={platIds} timeframe={metalTimeframe}
             showEvents={showEvents} events={eventsForCurves(eventsInRange, platIds)}/>
           {showTa && (
-            <PlatinumTaChart rows={rows} timeframe={timeframe}/>
+            <PlatinumTaChart rows={rows} timeframe={metalTimeframe}/>
           )}
         </>
       );
@@ -3315,7 +3338,8 @@
     function LiveDashboard() {
       const { live, perth, audUsd, error, feedWarn, perthError, updated, spotLoading, refreshSpot } = useLivePrices();
       const [tab, setTab] = useState('index');
-      const [timeframe, setTimeframe] = useState('3y');
+      const [metalTimeframe, setMetalTimeframe] = useState('3y');
+      const [cryptoTimeframe, setCryptoTimeframe] = useState('3y');
       const [activeCurves, setActiveCurves] = useState(DEFAULT_CURVES.index);
 
       useEffect(() => {
@@ -3324,7 +3348,8 @@
         setActiveCurves(DEFAULT_CURVES[tab]);
       }, [tab]);
 
-      const { rows, loading: chartLoading, err: chartErr, warn: chartWarn, producerMeta } = useTimeline(tab, timeframe, activeCurves);
+      const { rows, metalsRows, cryptoRows, loading: chartLoading, err: chartErr, warn: chartWarn, producerMeta } =
+        useTimeline(tab, metalTimeframe, cryptoTimeframe, activeCurves);
 
       useEffect(() => {
         if (tab === 'index' && live) updateTicker(live);
@@ -3348,7 +3373,13 @@
         }
       }, [tab, live, perth, audUsd, producerMeta]);
 
-      const eventsInRange = useMemo(() => getEventsInRange(rows, activeCurves), [rows, activeCurves]);
+      const eventsInRange = useMemo(
+        () => getEventsInRangeFromRows(
+          tab === 'index' ? [metalsRows, cryptoRows] : [rows],
+          activeCurves
+        ),
+        [tab, rows, metalsRows, cryptoRows, activeCurves]
+      );
       const [showEvents, setShowEvents] = useState(true);
       const loading = tab === 'producers' ? chartLoading : spotLoading;
 
@@ -3437,14 +3468,18 @@
 
           {tab === 'index' && <SpreadPanel live={live} />}
 
-          <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:8}}>Chart period</div>
-          <div className="price-tabs" style={{marginBottom:16}}>
-            {TIMEFRAMES.map(tf => (
-              <button key={tf.id} type="button"
-                className={`price-tab ${timeframe===tf.id?'active':''}`}
-                onClick={() => setTimeframe(tf.id)}>{tf.label}</button>
-            ))}
-          </div>
+          {tab !== 'index' && (
+            <>
+              <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:8}}>Chart period</div>
+              <div className="price-tabs" style={{marginBottom:16}}>
+                {TIMEFRAMES.map(tf => (
+                  <button key={tf.id} type="button"
+                    className={`price-tab ${metalTimeframe===tf.id?'active':''}`}
+                    onClick={() => setMetalTimeframe(tf.id)}>{tf.label}</button>
+                ))}
+              </div>
+            </>
+          )}
 
           <div style={{...cardStyle, display:'flex', gap:6, flexWrap:'wrap', marginBottom:10,
             alignItems:'center', padding:'10px 14px'}}>
@@ -3465,17 +3500,25 @@
                 tab === 'index' ? 'Index price timeline'
                   : tab === 'producers' ? 'Platinum producer share prices · JSE'
                     : 'Perth Mint 1oz coin timeline'
-              } · {TIMEFRAMES.find(t=>t.id===timeframe)?.label}</span>
-              {rows.length > 0 && <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>{rows.length} data points</span>}
+              }{tab === 'index'
+                ? ` · Metals ${TIMEFRAMES.find(t=>t.id===metalTimeframe)?.label || ''} · Crypto ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`
+                : ` · ${TIMEFRAMES.find(t=>t.id===metalTimeframe)?.label || ''}`}</span>
+              {tab === 'index' ? (
+                <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>
+                  {(metalsRows?.length || 0) + (cryptoRows?.length || 0)} data points
+                </span>
+              ) : rows.length > 0 && (
+                <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>{rows.length} data points</span>
+              )}
             </div>
-            {chartLoading && !rows.length ? (
+            {chartLoading && !rows.length && !metalsRows.length && !cryptoRows.length ? (
               <div style={{padding:40, textAlign:'center', color:C.text, fontSize:13}}>Loading timeline…</div>
-            ) : chartErr && !rows.length ? (
+            ) : chartErr && !rows.length && !metalsRows.length && !cryptoRows.length ? (
               <div style={{padding:20, color:'#B91C1C', fontSize:12}}>
                 Timeline unavailable: {chartErr}
                 {' — metals via Netlify/Yahoo; crypto via Binance; Perth direct from mint API.'}
               </div>
-            ) : rows.length === 0 ? (
+            ) : !rows.length && !metalsRows.length && !cryptoRows.length ? (
               <div style={{padding:20, color:C.text, fontSize:12}}>No data for selected range.</div>
             ) : (
               <>
@@ -3486,10 +3529,12 @@
                   </div>
                 )}
                 {chartLoading && (
-                  <div style={{padding:'4px 18px 8px', fontSize:11, color:C.text}}>Updating {TIMEFRAMES.find(t=>t.id===timeframe)?.label}…</div>
+                  <div style={{padding:'4px 18px 8px', fontSize:11, color:C.text}}>Updating charts…</div>
                 )}
-                <ErrorBoundary key={`${tab}-${timeframe}`}>
-                  <TimelineCharts tab={tab} timeframe={timeframe} rows={rows}
+                <ErrorBoundary key={`${tab}-${metalTimeframe}-${cryptoTimeframe}`}>
+                  <TimelineCharts tab={tab} rows={rows} metalsRows={metalsRows} cryptoRows={cryptoRows}
+                    metalTimeframe={metalTimeframe} cryptoTimeframe={cryptoTimeframe}
+                    onMetalTimeframeChange={setMetalTimeframe} onCryptoTimeframeChange={setCryptoTimeframe}
                     activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}/>
                 </ErrorBoundary>
               </>
@@ -3497,7 +3542,7 @@
             {tab === 'producers' ? (
               <ProducerAnnouncements announcements={producerMeta?.announcements} quotes={producerMeta?.quotes} />
             ) : (
-              <MoveContextPanel events={showEvents ? eventsInRange : []} timeframe={timeframe} />
+              <MoveContextPanel events={showEvents ? eventsInRange : []} timeframe={metalTimeframe} />
             )}
             {tab === 'perth' && (
               <div style={{fontSize:11, color:'#92400E', padding:'10px 14px', margin:'0 18px 12px',

@@ -6,20 +6,22 @@
 // Model: seed history into the DB once (chunked over a few runs), then only
 // add new days going forward. Data only ever grows.
 
+import { sbFetchAll, sbCount } from './lib/supabase-paginate.js';
+
 const METALS_DEV_API_KEY = process.env.METALS_DEV_API_KEY;
-const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const BACKFILL_YEARS = 10;
+const BACKFILL_YEARS = 50;
 const CHUNK_DAYS = 29;
-const MAX_CHUNKS = 60;
-
-const CRYPTO = [
-  { asset: 'BTC', geckoId: 'bitcoin' },
-  { asset: 'ETH', geckoId: 'ethereum' },
-  { asset: 'CFX', geckoId: 'conflux-token' },
-];
+const MAX_CHUNKS = 500;
+const BINANCE_START_MS = {
+  BTC: Date.parse('2017-08-17T00:00:00Z'),
+  ETH: Date.parse('2017-08-17T00:00:00Z'),
+  CFX: Date.parse('2021-05-01T00:00:00Z'),
+};
+const CRYPTO = ['BTC', 'ETH', 'CFX'];
+const BINANCE_SYMBOL = { BTC: 'BTCUSDT', ETH: 'ETHUSDT', CFX: 'CFXUSDT' };
 
 function formatDate(d) {
   return new Date(d).toISOString().slice(0, 10);
@@ -41,15 +43,19 @@ function sbHeaders(extra = {}) {
 }
 
 async function getMetalRows(asset) {
-  const url = `${SUPABASE_URL}/rest/v1/metal_price_history?select=recorded_at&asset=eq.${asset}&order=recorded_at.asc&limit=10000`;
-  const res = await fetch(url, { headers: sbHeaders() });
-  return res.ok ? res.json() : [];
+  return sbFetchAll(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    `metal_price_history?select=recorded_at&asset=eq.${asset}&order=recorded_at.asc`
+  );
 }
 
 async function getCryptoRows(asset) {
-  const url = `${SUPABASE_URL}/rest/v1/crypto_price_history?select=recorded_at&asset=eq.${asset}&order=recorded_at.asc&limit=10000`;
-  const res = await fetch(url, { headers: sbHeaders() });
-  return res.ok ? res.json() : [];
+  return sbFetchAll(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    `crypto_price_history?select=recorded_at&asset=eq.${asset}&order=recorded_at.asc`
+  );
 }
 
 async function upsertMetal(asset, price, dateStr) {
@@ -125,52 +131,54 @@ async function propagateMetals() {
     chunks++;
   }
 
-  const total = (await getMetalRows('XAU')).length;
+  const total = await sbCount(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, 'metal_price_history', 'asset=eq.XAU');
   const gapRemaining = Math.max(0, Math.ceil((latest - cursor) / 86400000));
   return { ok: true, added, total, chunks, gapRemaining, complete: cursor > latest };
 }
 
-function withCgKey(url) {
-  if (!COINGECKO_API_KEY) return url;
-  return `${url}${url.includes('?') ? '&' : '?'}x_cg_demo_api_key=${COINGECKO_API_KEY}`;
+async function fetchBinanceKlines(symbol, startTimeMs, limit = 1000) {
+  const url = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=1d&startTime=${startTimeMs}&limit=${limit}`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetis/1.0)' } });
+  if (!res.ok) throw new Error(`Binance ${symbol} HTTP ${res.status}`);
+  return res.json();
 }
 
-async function propagateCrypto(asset, geckoId) {
-  const today = new Date();
-  const oldestWanted = new Date();
-  oldestWanted.setFullYear(oldestWanted.getFullYear() - 5);
+async function propagateCrypto(asset) {
+  const symbol = BINANCE_SYMBOL[asset];
+  if (!symbol) throw new Error(`No Binance symbol for ${asset}`);
 
+  const oldestMs = BINANCE_START_MS[asset] || Date.parse('2017-01-01T00:00:00Z');
   const stored = await getCryptoRows(asset);
   const have = new Set(stored.map((r) => formatDate(r.recorded_at)));
-  const targetDays = Math.ceil((today - oldestWanted) / 86400000);
 
-  // Re-seed if we're missing more than a week of expected daily rows
-  if (have.size >= targetDays - 7) {
-    return { ok: true, added: 0, total: stored.length, complete: true };
-  }
-
-  const cgUrl = withCgKey(
-    `https://api.coingecko.com/api/v3/coins/${geckoId}/market_chart?vs_currency=usd&days=${Math.min(targetDays, 1825)}`
-  );
-  const res = await fetch(cgUrl, { headers: { 'User-Agent': 'PlatinumMetisBot/1.0' } });
-  if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
-  const data = await res.json();
-
-  const byDay = new Map();
-  for (const [ts, price] of data.prices || []) {
-    byDay.set(formatDate(ts), price);
-  }
+  let cursorMs = oldestMs;
+  while (have.has(formatDate(cursorMs))) cursorMs += 86400000;
 
   let added = 0;
-  for (const [day, price] of byDay) {
-    if (day >= formatDate(oldestWanted) && day <= formatDate(today) && !have.has(day)) {
-      await upsertCrypto(asset, price, day);
-      added++;
+  let pages = 0;
+
+  while (cursorMs < Date.now()) {
+    pages++;
+    const klines = await fetchBinanceKlines(symbol, cursorMs, 1000);
+    if (!Array.isArray(klines) || klines.length === 0) break;
+
+    for (const k of klines) {
+      const openTime = k[0];
+      const close = Number(k[4]);
+      const day = formatDate(openTime);
+      if (!have.has(day) && Number.isFinite(close)) {
+        await upsertCrypto(asset, close, day);
+        have.add(day);
+        added++;
+      }
+      cursorMs = openTime + 86400000;
     }
+
+    if (klines.length < 1000) break;
   }
 
-  const total = (await getCryptoRows(asset)).length;
-  return { ok: true, added, total };
+  const total = await sbCount(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, 'crypto_price_history', `asset=eq.${asset}`);
+  return { ok: true, added, total, pages, complete: cursorMs >= Date.now() - 86400000, source: 'binance' };
 }
 
 export default async () => {
@@ -182,8 +190,8 @@ export default async () => {
 
   try { results.metals = await propagateMetals(); } catch (e) { results.metals = { ok: false, error: e.message }; }
 
-  for (const { asset, geckoId } of CRYPTO) {
-    try { results.crypto[asset] = await propagateCrypto(asset, geckoId); }
+  for (const asset of CRYPTO) {
+    try { results.crypto[asset] = await propagateCrypto(asset); }
     catch (e) { results.crypto[asset] = { ok: false, error: e.message }; }
   }
 

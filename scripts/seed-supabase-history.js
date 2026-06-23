@@ -7,8 +7,8 @@
  *   2. Paste real values from Netlify → Environment variables
  *   3. node scripts/seed-supabase-history.js
  *
- * Or after git push, hit /.netlify/functions/seed-history on your live site
- * (uses Netlify env vars automatically — no local keys needed).
+ * Netlify deploy also runs propagate-curves hourly, but local seed is needed
+ * for full metals history (Metals.Dev / Yahoo limits on serverless).
  */
 
 const fs = require('fs');
@@ -57,8 +57,7 @@ Option A — local seed (recommended):
   4. node scripts/seed-supabase-history.js
 
 Option B — after git push:
-  Open https://platinum-conflux.netlify.app/.netlify/functions/seed-history
-  Repeat until the response says "complete": true`);
+  Deploy runs propagate-curves automatically; re-run this script locally for full metals backfill.`);
 }
 
 if (SUPABASE_URL.includes('your-url') || SUPABASE_SERVICE_ROLE_KEY.includes('your-key')) {
@@ -73,7 +72,7 @@ if (!METALS_DEV_API_KEY) {
   die('METALS_DEV_API_KEY is required — copy it from Netlify environment variables.');
 }
 
-const BACKFILL_YEARS = 10;
+const BACKFILL_YEARS = 50; // run until Metals.Dev / source has no more data
 const CHUNK_DAYS = 29;
 const METALS = ['XAU', 'XPT'];
 const CRYPTO = [
@@ -146,12 +145,29 @@ async function countRows(table, filter) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows(table, filter) {
+  const out = [];
+  let from = 0;
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+    const url = `${SUPABASE_URL}/rest/v1/${table}?select=recorded_day,recorded_at&${filter}&order=recorded_at.asc`;
+    const res = await fetch(url, {
+      headers: { ...sbHeaders(), Range: `${from}-${to}` },
+    });
+    if (!res.ok) break;
+    const batch = await res.json();
+    if (!Array.isArray(batch) || !batch.length) break;
+    out.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return out;
+}
+
 async function getDays(table, filter) {
-  // recorded_day may be missing/null on older schema; fall back to recorded_at.
-  const url = `${SUPABASE_URL}/rest/v1/${table}?select=recorded_day,recorded_at&${filter}&order=recorded_at.asc&limit=10000`;
-  const res = await fetch(url, { headers: sbHeaders() });
-  if (!res.ok) return new Set();
-  const rows = await res.json();
+  const rows = await fetchAllRows(table, filter);
   const days = new Set();
   for (const r of rows) {
     if (r.recorded_day) days.add(String(r.recorded_day));
@@ -232,14 +248,6 @@ async function fetchDatahubPlatinumMonthly() {
   return out.sort((a, b) => a.day.localeCompare(b.day));
 }
 
-function metalsDevLatest() {
-  // Metals.Dev timeseries rejects end_date=today; use yesterday.
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  d.setUTCHours(12, 0, 0, 0);
-  return d;
-}
-
 async function fetchMetalsDevChunk(start, end) {
   if (!METALS_DEV_API_KEY) throw new Error('METALS_DEV_API_KEY not set');
   const startStr = formatDate(start);
@@ -287,7 +295,7 @@ async function seedPlatinumFromMetalsDev(cutoffDay) {
   return { added, chunks };
 }
 
-async function seedMetalsDailyFromMetalsDev(cutoffDay) {
+async function seedMetalsDailyFromMetalsDev(cutoffDay, haveXAU, haveXPT) {
   const latest = metalsDevLatest();
   const oldest = new Date(cutoffDay + 'T00:00:00Z');
 
@@ -308,11 +316,13 @@ async function seedMetalsDailyFromMetalsDev(cutoffDay) {
       if (dateStr < cutoffDay) continue;
       const gold = dayData?.metals?.gold;
       const platinum = dayData?.metals?.platinum;
-      if (gold != null) xauRows.push(mkMetalRow('XAU', gold, dateStr));
-      if (platinum != null) xptRows.push(mkMetalRow('XPT', platinum, dateStr));
+      if (gold != null && !haveXAU.has(dateStr)) xauRows.push(mkMetalRow('XAU', gold, dateStr));
+      if (platinum != null && !haveXPT.has(dateStr)) xptRows.push(mkMetalRow('XPT', platinum, dateStr));
     }
     await insertInBatches('metal_price_history', xauRows);
     await insertInBatches('metal_price_history', xptRows);
+    for (const r of xauRows) haveXAU.add(r.recorded_day);
+    for (const r of xptRows) haveXPT.add(r.recorded_day);
     addedXAU += xauRows.length;
     addedXPT += xptRows.length;
 
@@ -341,20 +351,23 @@ async function retry(fn, { tries = 6, baseMs = 2000 } = {}) {
 }
 
 async function seedMetals() {
-  const have = await getDays('metal_price_history', 'asset=eq.XAU');
-  console.log(`\n[metals] ${have.size} days stored — seeding daily via Metals.Dev (fallbacks if needed)`);
+  const storedXAU = await countRows('metal_price_history', 'asset=eq.XAU');
+  const storedXPT = await countRows('metal_price_history', 'asset=eq.XPT');
+  console.log(`\n[metals] ${storedXAU} XAU / ${storedXPT} XPT days stored — seeding gaps via Metals.Dev`);
 
   const cutoff = new Date();
   cutoff.setFullYear(cutoff.getFullYear() - BACKFILL_YEARS);
   const cutoffDay = formatDate(cutoff);
 
+  const haveXAU = await getDays('metal_price_history', 'asset=eq.XAU');
+  const haveXPT = await getDays('metal_price_history', 'asset=eq.XPT');
   let added = 0;
 
   // Preferred: daily gold + platinum from Metals.Dev (you upgraded, so this should work)
   try {
-    const md = await seedMetalsDailyFromMetalsDev(cutoffDay);
-    console.log(`[metals XAU] ${md.addedXAU} daily rows (Metals.Dev)`);
-    console.log(`[metals XPT] ${md.addedXPT} daily rows (Metals.Dev)`);
+    const md = await seedMetalsDailyFromMetalsDev(cutoffDay, haveXAU, haveXPT);
+    console.log(`[metals XAU] ${md.addedXAU} new daily rows (Metals.Dev)`);
+    console.log(`[metals XPT] ${md.addedXPT} new daily rows (Metals.Dev)`);
     added += md.addedXAU + md.addedXPT;
     const total = await countRows('metal_price_history', 'asset=eq.XAU');
     console.log(`[metals] done — ${total} gold days in Supabase (${added} new this run)`);
@@ -362,6 +375,8 @@ async function seedMetals() {
   } catch (err) {
     console.log(`[metals] Metals.Dev failed (${err.message}); using free/open fallbacks.`);
   }
+
+  const have = haveXAU;
 
   // Gold (XAU) via freegoldapi (daily)
   try {
@@ -421,25 +436,21 @@ async function fetchBinanceKlines(symbol, startTimeMs) {
   return res.json();
 }
 
-async function seedCrypto() {
-  const today = new Date();
-  const oldest = new Date();
-  oldest.setFullYear(oldest.getFullYear() - 5);
-  oldest.setUTCHours(0, 0, 0, 0);
-  const oldestMs = oldest.getTime();
+const BINANCE_START_MS = {
+  BTC: Date.parse('2017-08-17T00:00:00Z'),
+  ETH: Date.parse('2017-08-17T00:00:00Z'),
+  CFX: Date.parse('2021-05-01T00:00:00Z'),
+};
 
+async function seedCrypto() {
   const BINANCE = { BTC: 'BTCUSDT', ETH: 'ETHUSDT', CFX: 'CFXUSDT' };
 
   for (const { asset } of CRYPTO) {
     const symbol = BINANCE[asset];
     const have = await getDays('crypto_price_history', `asset=eq.${asset}`);
-    const target = Math.ceil((today.getTime() - oldestMs) / 86400000);
-    if (have.size >= target - 7) {
-      console.log(`\n[crypto ${asset}] already complete (${have.size} days)`);
-      continue;
-    }
+    const oldestMs = BINANCE_START_MS[asset] || Date.parse('2017-01-01T00:00:00Z');
 
-    console.log(`\n[crypto ${asset}] seeding from Binance (${symbol})...`);
+    console.log(`\n[crypto ${asset}] ${have.size} days stored — fetching all available from Binance (${symbol})...`);
     let cursorMs = oldestMs;
     while (have.has(formatDate(cursorMs))) cursorMs += 86400000;
 
@@ -499,7 +510,7 @@ async function fetchYahoo(ticker, range) {
 async function seedProducers() {
   for (const ticker of PRODUCERS) {
     const have = await getDays('producer_price_history', `ticker=eq.${encodeURIComponent(ticker)}`);
-    console.log(`\n[producer ${ticker}] ${have.size} days stored — fetching 2y from Yahoo...`);
+    console.log(`\n[producer ${ticker}] ${have.size} days stored (paginated) — fetching 2y from Yahoo...`);
     try {
       const points = await retry(() => fetchYahoo(ticker, '2y'), { tries: 8, baseMs: 2500 });
       const rows = [];
@@ -524,7 +535,7 @@ function sleep(ms) {
 
 async function main() {
   console.log('=== Platinum Metis — full Supabase history seed ===');
-  console.log(`Target: ${BACKFILL_YEARS}y metals, 5y crypto, 2y producers\n`);
+  console.log(`Target: ${BACKFILL_YEARS}y+ metals (until source limit), all Binance history for crypto, 2y producers\n`);
 
   await seedMetals();
   await seedCrypto();

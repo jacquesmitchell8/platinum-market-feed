@@ -17,6 +17,8 @@
 //   SUPABASE_URL      -> <your Supabase project URL>
 //   SUPABASE_ANON_KEY -> publishable/anon key (read-only, safe to use here)
 
+import { sbFetchAll } from './lib/supabase-paginate.js';
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -31,18 +33,14 @@ async function fetchAudUsdRate() {
 }
 
 async function fetchOwnHistory(asset) {
-  // Same logic as metals-history.js — kept inline here to avoid one function
-  // calling another over HTTP, which Netlify functions can't do directly anyway.
-  const histUrl = `${SUPABASE_URL}/rest/v1/metal_price_history?select=price,recorded_at&asset=eq.${asset}&order=recorded_at.asc&limit=5000`;
   try {
-    const res = await fetch(histUrl, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    if (res.ok) {
-      const rows = await res.json();
-      if (Array.isArray(rows) && rows.length > 0) {
-        return rows.map(r => ({ ts: new Date(r.recorded_at).getTime(), usdPerOz: r.price }));
-      }
+    const rows = await sbFetchAll(
+      SUPABASE_URL,
+      SUPABASE_ANON_KEY,
+      `metal_price_history?select=price,recorded_at&asset=eq.${asset}&order=recorded_at.asc`
+    );
+    if (rows.length > 0) {
+      return rows.map(r => ({ ts: new Date(r.recorded_at).getTime(), usdPerOz: r.price }));
     }
   } catch (_) {}
 
