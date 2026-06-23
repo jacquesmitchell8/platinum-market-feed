@@ -148,7 +148,15 @@ async function upsertProducer(ticker, price, dateStr) {
 async function fetchYahooDaily(symbol, range = '10y') {
   // query2 is often more reliable than query1 from some networks.
   const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisSeed/1.0)' } });
+  // Yahoo sometimes returns 404 unless the request looks like a real browser request.
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Accept': 'application/json,text/plain,*/*',
+      'Origin': 'https://finance.yahoo.com',
+      'Referer': `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
+    }
+  });
   if (!res.ok) throw new Error(`Yahoo ${symbol} HTTP ${res.status}`);
   const data = await res.json();
   const result = data?.chart?.result?.[0];
