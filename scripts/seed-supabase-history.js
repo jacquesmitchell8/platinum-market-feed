@@ -35,8 +35,8 @@ loadEnvFile();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const METALS_DEV_API_KEY = process.env.METALS_DEV_API_KEY;
-const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
+const METALS_DEV_API_KEY = process.env.METALS_DEV_API_KEY; // optional (we prefer Yahoo for metals)
+const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY; // optional (we prefer Binance for crypto)
 
 function die(msg) {
   console.error(msg);
@@ -143,98 +143,112 @@ async function upsertProducer(ticker, price, dateStr) {
   return res.ok;
 }
 
-async function fetchMetalsChunk(start, end) {
-  if (!METALS_DEV_API_KEY) throw new Error('METALS_DEV_API_KEY not set');
-  const startStr = formatDate(start);
-  const endStr = formatDate(end);
-  if (startStr > endStr) return {};
-  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${startStr}&end_date=${endStr}`;
-  const res = await fetch(url);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`Metals.Dev HTTP ${res.status}: ${data.error_message || ''}`);
-  if (data.status !== 'success') throw new Error(data.error_message || 'Metals.Dev error');
-  return data.rates || {};
+async function fetchYahooDaily(symbol, range = '10y') {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisSeed/1.0)' } });
+  if (!res.ok) throw new Error(`Yahoo ${symbol} HTTP ${res.status}`);
+  const data = await res.json();
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error(`Yahoo ${symbol} no data`);
+  const timestamps = result.timestamp || [];
+  const closes = result.indicators?.quote?.[0]?.close || [];
+  const points = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    if (closes[i] == null) continue;
+    points.push({ day: formatDate(timestamps[i] * 1000), price: closes[i] });
+  }
+  return points;
 }
 
 async function seedMetals() {
-  const latest = metalsDevLatest();
-  const oldest = new Date();
-  oldest.setFullYear(oldest.getFullYear() - BACKFILL_YEARS);
-  oldest.setUTCHours(0, 0, 0, 0);
-
   const have = await getDays('metal_price_history', 'asset=eq.XAU');
-  let cursor = new Date(oldest);
-  while (cursor <= latest && have.has(formatDate(cursor))) cursor.setUTCDate(cursor.getUTCDate() + 1);
+  console.log(`\n[metals] ${have.size} days stored — fetching 10y daily from Yahoo (GC=F/PL=F)`);
 
-  let chunks = 0;
+  const tasks = [
+    { asset: 'XAU', yahoo: 'GC=F' },
+    { asset: 'XPT', yahoo: 'PL=F' },
+  ];
+
   let added = 0;
-
-  console.log(`\n[metals] ${have.size} days stored — seeding from ${formatDate(cursor)} to ${formatDate(latest)} (today via snapshots)`);
-
-  while (cursor <= latest) {
-    let chunkEnd = new Date(cursor);
-    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + CHUNK_DAYS - 1);
-    if (chunkEnd > latest) chunkEnd = new Date(latest);
-
-    process.stdout.write(`  chunk ${++chunks}: ${formatDate(cursor)} → ${formatDate(chunkEnd)} ... `);
+  for (const t of tasks) {
     try {
-      const rates = await fetchMetalsChunk(cursor, chunkEnd);
+      const points = await fetchYahooDaily(t.yahoo, '10y');
       let n = 0;
-      for (const [dateStr, dayData] of Object.entries(rates)) {
-        if (dayData?.metals?.gold != null) { await upsertMetal('XAU', dayData.metals.gold, dateStr); have.add(dateStr); n++; added++; }
-        if (dayData?.metals?.platinum != null) { await upsertMetal('XPT', dayData.metals.platinum, dateStr); added++; }
+      for (const p of points) {
+        if (!have.has(p.day)) {
+          await upsertMetal(t.asset, p.price, p.day);
+          have.add(p.day);
+          n++;
+          added++;
+        }
       }
-      console.log(`${n} days`);
+      console.log(`[metals ${t.asset}] ${n} new days (${points.length} fetched)`);
     } catch (err) {
-      console.log(`FAILED: ${err.message}`);
+      console.log(`[metals ${t.asset}] FAILED: ${err.message}`);
+      if (METALS_DEV_API_KEY) {
+        console.log('  (Metals.Dev key is set, but Yahoo is preferred; you can upgrade Metals.Dev quota if needed.)');
+      }
     }
-
-    cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
+    await sleep(800);
   }
 
   const total = await countRows('metal_price_history', 'asset=eq.XAU');
   console.log(`[metals] done — ${total} gold days in Supabase (${added} new this run)`);
 }
 
-function cgUrl(path) {
-  const base = `https://api.coingecko.com/api/v3/${path}`;
-  if (!COINGECKO_API_KEY) return base;
-  return `${base}${base.includes('?') ? '&' : '?'}x_cg_demo_api_key=${COINGECKO_API_KEY}`;
+async function fetchBinanceKlines(symbol, startTimeMs) {
+  const url = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=1d&startTime=${startTimeMs}&limit=1000`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisSeed/1.0)' } });
+  if (!res.ok) throw new Error(`Binance ${symbol} HTTP ${res.status}`);
+  return res.json();
 }
 
 async function seedCrypto() {
   const today = new Date();
   const oldest = new Date();
   oldest.setFullYear(oldest.getFullYear() - 5);
+  oldest.setUTCHours(0, 0, 0, 0);
+  const oldestMs = oldest.getTime();
 
-  for (const { asset, geckoId } of CRYPTO) {
+  const BINANCE = { BTC: 'BTCUSDT', ETH: 'ETHUSDT', CFX: 'CFXUSDT' };
+
+  for (const { asset } of CRYPTO) {
+    const symbol = BINANCE[asset];
     const have = await getDays('crypto_price_history', `asset=eq.${asset}`);
-    const target = Math.ceil((today - oldest) / 86400000);
+    const target = Math.ceil((today.getTime() - oldestMs) / 86400000);
     if (have.size >= target - 7) {
       console.log(`\n[crypto ${asset}] already complete (${have.size} days)`);
       continue;
     }
 
-    console.log(`\n[crypto ${asset}] fetching ${target} days from CoinGecko...`);
-    const res = await fetch(cgUrl(`coins/${geckoId}/market_chart?vs_currency=usd&days=${Math.min(target, 1825)}`), {
-      headers: { 'User-Agent': 'PlatinumMetisSeed/1.0' },
-    });
-    if (!res.ok) throw new Error(`CoinGecko ${asset} HTTP ${res.status}`);
-    const data = await res.json();
-
-    const byDay = new Map();
-    for (const [ts, price] of data.prices || []) byDay.set(formatDate(ts), price);
+    console.log(`\n[crypto ${asset}] seeding from Binance (${symbol})...`);
+    let cursorMs = oldestMs;
+    while (have.has(formatDate(cursorMs))) cursorMs += 86400000;
 
     let added = 0;
-    for (const [day, price] of byDay) {
-      if (day >= formatDate(oldest) && day <= formatDate(today) && !have.has(day)) {
-        await upsertCrypto(asset, price, day);
-        added++;
+    let pages = 0;
+    while (cursorMs < Date.now()) {
+      pages++;
+      const klines = await fetchBinanceKlines(symbol, cursorMs);
+      if (!Array.isArray(klines) || klines.length === 0) break;
+      for (const k of klines) {
+        const openTime = k[0];
+        const close = Number(k[4]);
+        const day = formatDate(openTime);
+        if (!have.has(day) && Number.isFinite(close)) {
+          await upsertCrypto(asset, close, day);
+          have.add(day);
+          added++;
+        }
+        cursorMs = openTime + 86400000;
       }
+      if (klines.length < 1000) break;
+      await sleep(250);
     }
+
     const total = await countRows('crypto_price_history', `asset=eq.${asset}`);
-    console.log(`[crypto ${asset}] done — ${total} days (${added} new)`);
-    await sleep(1500);
+    console.log(`[crypto ${asset}] done — ${total} days (${added} new, ${pages} pages)`);
+    await sleep(800);
   }
 }
 
