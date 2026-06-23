@@ -12,10 +12,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const BACKFILL_YEARS = 10;
-const CHUNK_DAYS = 30;
-const MAX_CHUNKS = 60; // 60 × 30 days ≈ 5 years of gap-fill per run
+const CHUNK_DAYS = 29;
+const MAX_CHUNKS = 60;
 
-const METALS = ['XAU', 'XPT'];
 const CRYPTO = [
   { asset: 'BTC', geckoId: 'bitcoin' },
   { asset: 'ETH', geckoId: 'ethereum' },
@@ -24,6 +23,13 @@ const CRYPTO = [
 
 function formatDate(d) {
   return new Date(d).toISOString().slice(0, 10);
+}
+
+function metalsDevLatest() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  d.setUTCHours(12, 0, 0, 0);
+  return d;
 }
 
 function sbHeaders(extra = {}) {
@@ -63,39 +69,40 @@ async function upsertCrypto(asset, price, dateStr) {
 }
 
 async function fetchMetalsDevChunk(startDate, endDate) {
-  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${formatDate(startDate)}&end_date=${formatDate(endDate)}`;
+  const startStr = formatDate(startDate);
+  const endStr = formatDate(endDate);
+  if (startStr > endStr) return {};
+  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${startStr}&end_date=${endStr}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Metals.Dev ${res.status}`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Metals.Dev ${res.status}: ${data.error_message || res.statusText}`);
   if (data.status !== 'success') throw new Error(data.error_message || 'Metals.Dev error');
-  return data.rates;
+  return data.rates || {};
 }
 
 async function propagateMetals() {
   if (!METALS_DEV_API_KEY) return { ok: false, error: 'METALS_DEV_API_KEY not set' };
 
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
+  const latest = metalsDevLatest();
   const oldestWanted = new Date();
   oldestWanted.setFullYear(oldestWanted.getFullYear() - BACKFILL_YEARS);
-  oldestWanted.setHours(0, 0, 0, 0);
+  oldestWanted.setUTCHours(0, 0, 0, 0);
 
   const xau = await getMetalRows('XAU');
   const have = new Set(xau.map((r) => formatDate(r.recorded_at)));
 
-  // Resume from the first missing day — fills holes in the middle, not just edges.
   let cursor = new Date(oldestWanted);
-  while (cursor <= today && have.has(formatDate(cursor))) {
-    cursor.setDate(cursor.getDate() + 1);
+  while (cursor <= latest && have.has(formatDate(cursor))) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
   let added = 0;
   let chunks = 0;
 
-  while (cursor <= today && chunks < MAX_CHUNKS) {
+  while (cursor <= latest && chunks < MAX_CHUNKS) {
     let chunkEnd = new Date(cursor);
-    chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS - 1);
-    if (chunkEnd > today) chunkEnd = new Date(today);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + CHUNK_DAYS - 1);
+    if (chunkEnd > latest) chunkEnd = new Date(latest);
 
     try {
       const rates = await fetchMetalsDevChunk(cursor, chunkEnd);
@@ -114,13 +121,13 @@ async function propagateMetals() {
       console.error('metals propagate chunk:', err.message);
     }
 
-    cursor.setDate(cursor.getDate() + CHUNK_DAYS);
+    cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
     chunks++;
   }
 
   const total = (await getMetalRows('XAU')).length;
-  const gapRemaining = Math.max(0, Math.ceil((today - cursor) / 86400000));
-  return { ok: true, added, total, chunks, gapRemaining };
+  const gapRemaining = Math.max(0, Math.ceil((latest - cursor) / 86400000));
+  return { ok: true, added, total, chunks, gapRemaining, complete: cursor > latest };
 }
 
 function withCgKey(url) {

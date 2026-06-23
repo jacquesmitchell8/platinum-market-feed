@@ -72,7 +72,7 @@ if (!METALS_DEV_API_KEY) {
 }
 
 const BACKFILL_YEARS = 10;
-const CHUNK_DAYS = 30;
+const CHUNK_DAYS = 29;
 const METALS = ['XAU', 'XPT'];
 const CRYPTO = [
   { asset: 'BTC', geckoId: 'bitcoin' },
@@ -83,6 +83,13 @@ const PRODUCERS = ['VAL.JO', 'IMP.JO', 'SSW.JO', 'NPH.JO'];
 
 function formatDate(d) {
   return new Date(d).toISOString().slice(0, 10);
+}
+
+function metalsDevLatest() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  d.setUTCHours(12, 0, 0, 0);
+  return d;
 }
 
 function sbHeaders(extra = {}) {
@@ -138,34 +145,36 @@ async function upsertProducer(ticker, price, dateStr) {
 
 async function fetchMetalsChunk(start, end) {
   if (!METALS_DEV_API_KEY) throw new Error('METALS_DEV_API_KEY not set');
-  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${formatDate(start)}&end_date=${formatDate(end)}`;
+  const startStr = formatDate(start);
+  const endStr = formatDate(end);
+  if (startStr > endStr) return {};
+  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${startStr}&end_date=${endStr}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Metals.Dev HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Metals.Dev HTTP ${res.status}: ${data.error_message || ''}`);
   if (data.status !== 'success') throw new Error(data.error_message || 'Metals.Dev error');
-  return data.rates;
+  return data.rates || {};
 }
 
 async function seedMetals() {
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
+  const latest = metalsDevLatest();
   const oldest = new Date();
   oldest.setFullYear(oldest.getFullYear() - BACKFILL_YEARS);
-  oldest.setHours(0, 0, 0, 0);
+  oldest.setUTCHours(0, 0, 0, 0);
 
   const have = await getDays('metal_price_history', 'asset=eq.XAU');
   let cursor = new Date(oldest);
-  while (cursor <= today && have.has(formatDate(cursor))) cursor.setDate(cursor.getDate() + 1);
+  while (cursor <= latest && have.has(formatDate(cursor))) cursor.setUTCDate(cursor.getUTCDate() + 1);
 
   let chunks = 0;
   let added = 0;
 
-  console.log(`\n[metals] ${have.size} days stored — seeding from ${formatDate(cursor)} to ${formatDate(today)}`);
+  console.log(`\n[metals] ${have.size} days stored — seeding from ${formatDate(cursor)} to ${formatDate(latest)} (today via snapshots)`);
 
-  while (cursor <= today) {
+  while (cursor <= latest) {
     let chunkEnd = new Date(cursor);
-    chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS - 1);
-    if (chunkEnd > today) chunkEnd = new Date(today);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + CHUNK_DAYS - 1);
+    if (chunkEnd > latest) chunkEnd = new Date(latest);
 
     process.stdout.write(`  chunk ${++chunks}: ${formatDate(cursor)} → ${formatDate(chunkEnd)} ... `);
     try {
@@ -180,7 +189,7 @@ async function seedMetals() {
       console.log(`FAILED: ${err.message}`);
     }
 
-    cursor.setDate(cursor.getDate() + CHUNK_DAYS);
+    cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
   }
 
   const total = await countRows('metal_price_history', 'asset=eq.XAU');

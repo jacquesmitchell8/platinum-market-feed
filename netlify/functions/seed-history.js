@@ -13,7 +13,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const BACKFILL_YEARS = 10;
-const CHUNK_DAYS = 30;
+const CHUNK_DAYS = 29; // Metals.Dev max 30-day window; end_date cannot be today
 const TIME_BUDGET_MS = 24000;
 const CRYPTO = [
   { asset: 'BTC', geckoId: 'bitcoin' },
@@ -23,6 +23,14 @@ const CRYPTO = [
 
 function formatDate(d) {
   return new Date(d).toISOString().slice(0, 10);
+}
+
+/** Metals.Dev returns 400 if end_date is today — history ends yesterday. */
+function metalsDevLatest() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  d.setUTCHours(12, 0, 0, 0);
+  return d;
 }
 
 function sbHeaders(extra = {}) {
@@ -45,44 +53,55 @@ async function upsertMetal(asset, price, dateStr) {
 }
 
 async function fetchMetalsChunk(start, end) {
-  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${formatDate(start)}&end_date=${formatDate(end)}`;
+  const startStr = formatDate(start);
+  const endStr = formatDate(end);
+  if (startStr > endStr) return {};
+  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${startStr}&end_date=${endStr}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Metals.Dev ${res.status}`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Metals.Dev ${res.status}: ${data.error_message || res.statusText}`);
+  }
   if (data.status !== 'success') throw new Error(data.error_message || 'Metals.Dev error');
-  return data.rates;
+  return data.rates || {};
 }
 
 async function seedMetalsUntilDone(deadline) {
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
+  const latest = metalsDevLatest();
   const oldest = new Date();
   oldest.setFullYear(oldest.getFullYear() - BACKFILL_YEARS);
-  oldest.setHours(0, 0, 0, 0);
+  oldest.setUTCHours(0, 0, 0, 0);
 
   const have = await getMetalDays();
   let cursor = new Date(oldest);
-  while (cursor <= today && have.has(formatDate(cursor))) cursor.setDate(cursor.getDate() + 1);
+  while (cursor <= latest && have.has(formatDate(cursor))) cursor.setUTCDate(cursor.getUTCDate() + 1);
 
   let added = 0;
   let chunks = 0;
+  let lastError = null;
 
-  while (cursor <= today && Date.now() < deadline) {
+  while (cursor <= latest && Date.now() < deadline) {
     let chunkEnd = new Date(cursor);
-    chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS - 1);
-    if (chunkEnd > today) chunkEnd = new Date(today);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + CHUNK_DAYS - 1);
+    if (chunkEnd > latest) chunkEnd = new Date(latest);
 
-    const rates = await fetchMetalsChunk(cursor, chunkEnd);
-    for (const [dateStr, dayData] of Object.entries(rates)) {
-      if (dayData?.metals?.gold != null) { await upsertMetal('XAU', dayData.metals.gold, dateStr); have.add(dateStr); added++; }
-      if (dayData?.metals?.platinum != null) await upsertMetal('XPT', dayData.metals.platinum, dateStr);
+    try {
+      const rates = await fetchMetalsChunk(cursor, chunkEnd);
+      for (const [dateStr, dayData] of Object.entries(rates)) {
+        if (dayData?.metals?.gold != null) { await upsertMetal('XAU', dayData.metals.gold, dateStr); have.add(dateStr); added++; }
+        if (dayData?.metals?.platinum != null) await upsertMetal('XPT', dayData.metals.platinum, dateStr);
+      }
+    } catch (err) {
+      lastError = err.message;
+      console.error('seed chunk failed', formatDate(cursor), err.message);
     }
-    cursor.setDate(cursor.getDate() + CHUNK_DAYS);
+
+    cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
     chunks++;
   }
 
-  const complete = cursor > today;
-  return { added, chunks, complete, stored: have.size, resumeFrom: complete ? null : formatDate(cursor) };
+  const complete = cursor > latest;
+  return { added, chunks, complete, stored: have.size, resumeFrom: complete ? null : formatDate(cursor), lastError };
 }
 
 function cgUrl(path) {
@@ -142,7 +161,14 @@ export default async () => {
   }
 
   const deadline = Date.now() + TIME_BUDGET_MS;
-  const metals = await seedMetalsUntilDone(deadline);
+  let metals;
+  try {
+    metals = await seedMetalsUntilDone(deadline);
+  } catch (err) {
+    return new Response(JSON.stringify({ ok: false, error: err.message }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   const crypto = {};
   for (const { asset, geckoId } of CRYPTO) {
