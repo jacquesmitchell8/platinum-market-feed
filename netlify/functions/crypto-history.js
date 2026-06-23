@@ -117,15 +117,24 @@ export default async (req) => {
     const oldestWanted = new Date();
     oldestWanted.setDate(oldestWanted.getDate() - BACKFILL_DAYS);
 
+    const firstStoredDate = stored.length ? new Date(stored[0].recorded_at) : null;
     const lastStoredDate = stored.length ? new Date(stored[stored.length - 1].recorded_at) : null;
-    const gapStart = lastStoredDate && lastStoredDate > oldestWanted ? lastStoredDate : oldestWanted;
 
     let newPoints = [];
-    if (gapStart < today) {
+    const needsBackfill = !firstStoredDate || firstStoredDate > oldestWanted;
+    if (needsBackfill) {
       try {
-        newPoints = await fillGap(asset, geckoId, gapStart, today);
+        const backEnd = firstStoredDate && firstStoredDate > oldestWanted ? firstStoredDate : today;
+        newPoints.push(...await fillGap(asset, geckoId, oldestWanted, backEnd));
       } catch (err) {
-        console.error(`crypto gap-fill failed for ${asset}: ${err.message}`);
+        console.error(`crypto backfill failed for ${asset}: ${err.message}`);
+      }
+    }
+    if (lastStoredDate && lastStoredDate < today) {
+      try {
+        newPoints.push(...await fillGap(asset, geckoId, lastStoredDate, today));
+      } catch (err) {
+        console.error(`crypto forward-fill failed for ${asset}: ${err.message}`);
       }
     }
 

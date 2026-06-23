@@ -129,12 +129,26 @@ export default async (req) => {
     const oldestWanted = new Date();
     oldestWanted.setFullYear(oldestWanted.getFullYear() - BACKFILL_YEARS);
 
+    const firstStoredDate = stored.length ? new Date(stored[0].recorded_at) : null;
     const lastStoredDate = stored.length ? new Date(stored[stored.length - 1].recorded_at) : null;
-    const gapStart = lastStoredDate && lastStoredDate > oldestWanted ? lastStoredDate : oldestWanted;
 
     let newPoints = { XAU: [], XPT: [] };
-    if (METALS_DEV_API_KEY && gapStart < today) {
-      newPoints = await fillGap(gapStart, today);
+    if (METALS_DEV_API_KEY) {
+      // Backfill the past: snapshots may have added recent days only, leaving
+      // a decade-sized hole — fill from oldestWanted up to our earliest row.
+      const needsBackfill = !firstStoredDate || firstStoredDate > oldestWanted;
+      if (needsBackfill) {
+        const backEnd = firstStoredDate && firstStoredDate > oldestWanted ? firstStoredDate : today;
+        const back = await fillGap(oldestWanted, backEnd);
+        newPoints.XAU.push(...back.XAU);
+        newPoints.XPT.push(...back.XPT);
+      }
+      // Forward fill: catch up from the latest stored day to today.
+      if (lastStoredDate && lastStoredDate < today) {
+        const fwd = await fillGap(lastStoredDate, today);
+        newPoints.XAU.push(...fwd.XAU);
+        newPoints.XPT.push(...fwd.XPT);
+      }
     }
 
     const existingPoints = stored.map(r => ({ ts: new Date(r.recorded_at).getTime(), price: r.price }));
