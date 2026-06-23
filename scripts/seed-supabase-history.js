@@ -102,6 +102,31 @@ function sbHeaders(extra = {}) {
   };
 }
 
+const UPSERT_BATCH_SIZE = 500;
+
+async function insertBatch(table, rows) {
+  if (!rows.length) return true;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: sbHeaders({
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=ignore-duplicates',
+    }),
+    body: JSON.stringify(rows),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Supabase insert failed (${table}) HTTP ${res.status}${t ? ': ' + t.slice(0, 180) : ''}`);
+  }
+  return true;
+}
+
+async function insertInBatches(table, rows, batchSize = UPSERT_BATCH_SIZE) {
+  for (let i = 0; i < rows.length; i += batchSize) {
+    await insertBatch(table, rows.slice(i, i + batchSize));
+  }
+}
+
 async function countRows(table, filter) {
   const url = `${SUPABASE_URL}/rest/v1/${table}?select=recorded_day&${filter}`;
   const res = await fetch(url, { headers: { ...sbHeaders(), Prefer: 'count=exact', Range: '0-0' } });
@@ -118,31 +143,16 @@ async function getDays(table, filter) {
   return new Set(rows.map((r) => r.recorded_day));
 }
 
-async function upsertMetal(asset, price, dateStr) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/metal_price_history`, {
-    method: 'POST',
-    headers: sbHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' }),
-    body: JSON.stringify({ asset, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr }),
-  });
-  return res.ok;
+function mkMetalRow(asset, price, dateStr) {
+  return { asset, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr };
 }
 
-async function upsertCrypto(asset, price, dateStr) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/crypto_price_history`, {
-    method: 'POST',
-    headers: sbHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' }),
-    body: JSON.stringify({ asset, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr }),
-  });
-  return res.ok;
+function mkCryptoRow(asset, price, dateStr) {
+  return { asset, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr };
 }
 
-async function upsertProducer(ticker, price, dateStr) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/producer_price_history`, {
-    method: 'POST',
-    headers: sbHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' }),
-    body: JSON.stringify({ ticker, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr }),
-  });
-  return res.ok;
+function mkProducerRow(ticker, price, dateStr) {
+  return { ticker, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr };
 }
 
 async function fetchYahooDaily(symbol, range = '10y') {
@@ -241,13 +251,15 @@ async function seedPlatinumFromMetalsDev(cutoffDay) {
     if (chunkEnd > end) chunkEnd.setTime(end.getTime());
 
     const rates = await fetchMetalsDevChunk(cursor, chunkEnd);
+    const rows = [];
     for (const [dateStr, dayData] of Object.entries(rates)) {
       const platinum = dayData?.metals?.platinum;
       if (platinum != null && dateStr >= cutoffDay) {
-        await upsertMetal('XPT', platinum, dateStr);
-        added++;
+        rows.push(mkMetalRow('XPT', platinum, dateStr));
       }
     }
+    await insertInBatches('metal_price_history', rows);
+    added += rows.length;
 
     cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
     chunks++;
@@ -273,13 +285,19 @@ async function seedMetalsDailyFromMetalsDev(cutoffDay) {
     if (chunkEnd > latest) chunkEnd.setTime(latest.getTime());
 
     const rates = await fetchMetalsDevChunk(cursor, chunkEnd);
+    const xauRows = [];
+    const xptRows = [];
     for (const [dateStr, dayData] of Object.entries(rates)) {
       if (dateStr < cutoffDay) continue;
       const gold = dayData?.metals?.gold;
       const platinum = dayData?.metals?.platinum;
-      if (gold != null) { await upsertMetal('XAU', gold, dateStr); addedXAU++; }
-      if (platinum != null) { await upsertMetal('XPT', platinum, dateStr); addedXPT++; }
+      if (gold != null) xauRows.push(mkMetalRow('XAU', gold, dateStr));
+      if (platinum != null) xptRows.push(mkMetalRow('XPT', platinum, dateStr));
     }
+    await insertInBatches('metal_price_history', xauRows);
+    await insertInBatches('metal_price_history', xptRows);
+    addedXAU += xauRows.length;
+    addedXPT += xptRows.length;
 
     cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
     chunks++;
@@ -331,15 +349,16 @@ async function seedMetals() {
   // Gold (XAU) via freegoldapi (daily)
   try {
     const pts = (await fetchFreeGoldApiDaily()).filter(p => p.day >= cutoffDay);
-    let n = 0;
+    const rows = [];
     for (const p of pts) {
       if (!have.has(p.day)) {
-        await upsertMetal('XAU', p.price, p.day);
+        rows.push(mkMetalRow('XAU', p.price, p.day));
         have.add(p.day);
-        n++; added++;
       }
     }
-    console.log(`[metals XAU] ${n} new days (${pts.length} fetched, freegoldapi)`);
+    await insertInBatches('metal_price_history', rows);
+    added += rows.length;
+    console.log(`[metals XAU] ${rows.length} new days (${pts.length} fetched, freegoldapi)`);
   } catch (err) {
     console.log(`[metals XAU] FAILED: ${err.message}`);
   }
@@ -357,23 +376,18 @@ async function seedMetals() {
 
   try {
     const pts = await retry(() => fetchYahooDaily('PL=F', '10y')).then(arr => arr.filter(p => p.day >= cutoffDay));
-    let n = 0;
-    for (const p of pts) {
-      // We reuse the same have-set (based on XAU days). That's fine for dedupe day-level.
-      await upsertMetal('XPT', p.price, p.day);
-      n++; added++;
-    }
-    console.log(`[metals XPT] ${n} days (${pts.length} fetched, Yahoo daily)`);
+    const rows = pts.map(p => mkMetalRow('XPT', p.price, p.day));
+    await insertInBatches('metal_price_history', rows);
+    added += rows.length;
+    console.log(`[metals XPT] ${rows.length} days (${pts.length} fetched, Yahoo daily)`);
   } catch (err) {
     console.log(`[metals XPT] Yahoo failed (${err.message}); falling back to monthly platinum.csv`);
     try {
       const pts = (await fetchDatahubPlatinumMonthly()).filter(p => p.day >= cutoffDay);
-      let n = 0;
-      for (const p of pts) {
-        await upsertMetal('XPT', p.price, p.day);
-        n++; added++;
-      }
-      console.log(`[metals XPT] ${n} months (${pts.length} fetched, datahub)`);
+      const rows = pts.map(p => mkMetalRow('XPT', p.price, p.day));
+      await insertInBatches('metal_price_history', rows);
+      added += rows.length;
+      console.log(`[metals XPT] ${rows.length} months (${pts.length} fetched, datahub)`);
     } catch (e2) {
       console.log(`[metals XPT] FAILED: ${e2.message}`);
     }
@@ -418,17 +432,19 @@ async function seedCrypto() {
       pages++;
       const klines = await fetchBinanceKlines(symbol, cursorMs);
       if (!Array.isArray(klines) || klines.length === 0) break;
+      const rows = [];
       for (const k of klines) {
         const openTime = k[0];
         const close = Number(k[4]);
         const day = formatDate(openTime);
         if (!have.has(day) && Number.isFinite(close)) {
-          await upsertCrypto(asset, close, day);
+          rows.push(mkCryptoRow(asset, close, day));
           have.add(day);
-          added++;
         }
         cursorMs = openTime + 86400000;
       }
+      await insertInBatches('crypto_price_history', rows);
+      added += rows.length;
       if (klines.length < 1000) break;
       await sleep(250);
     }
@@ -469,10 +485,12 @@ async function seedProducers() {
     console.log(`\n[producer ${ticker}] ${have.size} days stored — fetching 2y from Yahoo...`);
     try {
       const points = await fetchYahoo(ticker, '2y');
-      let added = 0;
+      const rows = [];
       for (const p of points) {
-        if (!have.has(p.day)) { await upsertProducer(ticker, p.price, p.day); added++; }
+        if (!have.has(p.day)) rows.push(mkProducerRow(ticker, p.price, p.day));
       }
+      await insertInBatches('producer_price_history', rows);
+      let added = rows.length;
       const total = await countRows('producer_price_history', `ticker=eq.${encodeURIComponent(ticker)}`);
       console.log(`[producer ${ticker}] done — ${total} days (${added} new)`);
     } catch (err) {
