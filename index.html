@@ -1223,7 +1223,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v7:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v8:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1298,38 +1298,22 @@
     }
 
     async function fetchMetalProxy(symbol, days) {
-      // Routed to our own accumulated history (metals-history.js) instead of
-      // Yahoo Finance — Yahoo's unofficial chart endpoint blocks unauthenticated
-      // server requests (404/401) as anti-scraping protection, which is not
-      // something to route around. Our own Supabase-backed history starts thin
-      // and grows daily via fetch-market-snapshots.js, with zero dependency on
-      // any third-party historical price API.
-      //
-      // Because that live history is thin in its first days, we merge it with
-      // the annual backdrop above so the chart always shows an honest shape —
-      // decades of real annual data, with our own daily tracking layered on
-      // the recent end as it accumulates. Live points win over backdrop points
-      // when both exist for the same period (live is always more precise).
-      const metalKey = symbol === 'GC=F' ? 'g' : symbol === 'PL=F' ? 'p' : null;
-      const backdrop = metalKey ? annualBackdropPoints(metalKey, days) : [];
-
-      const dStr = days == null ? '1095' : String(days);
-      const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(dStr)}`;
-      let live = [];
+      // Read stored history from Supabase (metals-history.js). Ingestion is
+      // propagate-curves.js — charts never fetch from the internet directly.
+      const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}`;
       try {
         const res = await pmFetch(url, {}, 15000);
         const j = await res.json();
-        if (j.ok && j.prices?.length) {
-          live = j.prices.map(([ts, price]) => ({ ts, price }));
+        if (!j.ok || !j.prices?.length) return null;
+        let pts = j.prices.map(([ts, price]) => ({ ts, price }));
+        if (days != null) {
+          const cutoff = Date.now() - days * 86400000;
+          pts = pts.filter((p) => p.ts >= cutoff);
         }
-      } catch (_) {}
-
-      // Drop any backdrop points that fall within the live data's own range —
-      // live (real, recent, our own tracking) always takes priority there.
-      const liveStart = live.length ? Math.min(...live.map(p => p.ts)) : Infinity;
-      const merged = [...backdrop.filter(p => p.ts < liveStart), ...live].sort((a, b) => a.ts - b.ts);
-
-      return merged.length ? merged : null;
+        return pts.length ? pts : null;
+      } catch (_) {
+        return null;
+      }
     }
 
     const CG_FETCH_STAGGER = { 'IDX-003': 0, 'IDX-004': 500, 'IDX-005': 1000 };
@@ -1359,46 +1343,38 @@
     const CRYPTO_BACKDROP_KEY = { 'bitcoin': 'b', 'ethereum': 'e', 'conflux-token': 'c' };
 
     async function fetchCgChartBrowser(coinId, days) {
-      // Self-filling Supabase history first (crypto-history.js), then fall back
-      // to the live CoinGecko proxy if storage is still empty on first deploy.
-      const backdropKey = CRYPTO_BACKDROP_KEY[coinId];
-      const backdrop = backdropKey ? annualCryptoBackdropPoints(backdropKey, days) : [];
-
-      let live = [];
+      // Read stored crypto history from Supabase. Ingestion is propagate-curves.js.
+      let pts = [];
       try {
         const histUrl = `/.netlify/functions/crypto-history?id=${encodeURIComponent(coinId)}`;
-        const res = await pmFetch(histUrl, {}, 20000);
+        const res = await pmFetch(histUrl, {}, 15000);
         const j = await res.json();
         if (j.ok && j.prices?.length) {
-          live = j.prices.map(([ts, price]) => ({ ts, price }));
+          pts = j.prices.map(([ts, price]) => ({ ts, price }));
         }
       } catch (_) {}
 
-      if (!live.length) {
+      if (!pts.length) {
         const dStr = days == null ? 'max' : String(days);
         const url = `/.netlify/functions/crypto-feed?type=chart&id=${encodeURIComponent(coinId)}&days=${encodeURIComponent(dStr)}`;
         try {
           const res = await pmFetch(url, {}, 15000);
           if (res.ok) {
-            const text = await res.text();
-            const j = JSON.parse(text);
+            const j = await res.json();
             if (j.ok && j.prices?.length) {
-              live = j.prices.map(([ts, price]) => ({ ts, price }));
+              pts = j.prices.map(([ts, price]) => ({ ts, price }));
             }
           }
         } catch (_) {}
       }
 
-      if (days != null && live.length) {
+      if (days != null && pts.length) {
         const cutoff = Date.now() - days * 86400000;
-        live = live.filter((p) => p.ts >= cutoff);
+        pts = pts.filter((p) => p.ts >= cutoff);
       }
 
-      const liveStart = live.length ? Math.min(...live.map(p => p.ts)) : Infinity;
-      const merged = [...backdrop.filter(p => p.ts < liveStart), ...live].sort((a, b) => a.ts - b.ts);
-
-      if (!merged.length) throw new Error('crypto chart empty (no stored history and no backdrop available)');
-      return merged;
+      if (!pts.length) throw new Error('No stored crypto history for ' + coinId);
+      return pts;
     }
 
     async function fetchMetalChart(indexId, days, goldPtsForFallback) {
