@@ -1,96 +1,156 @@
 // netlify/functions/metals-history.js
 //
-// Returns gold/platinum price HISTORY built entirely from our own data —
-// every snapshot fetch-market-snapshots.js has written to Supabase
-// `market_snapshots` since this system went live (every 5 min). No
-// third-party historical API involved at all: not Yahoo (blocked by bot
-// detection), not gold-api.com's unclear-pricing history tier, nothing
-// external for history specifically.
+// Called by the dashboard every time the gold/platinum chart loads.
 //
-// This will look thin on day one and get genuinely useful over the
-// following days/weeks as more snapshots accumulate — which is the
-// correct trade-off for a system that should never again depend on a
-// fragile or gated third-party historical endpoint for something this
-// data already collects for free, just by running.
+// What it does, every single call:
+//   1. Check our own stored history (metal_price_history in Supabase) for
+//      this asset.
+//   2. If there's a gap between the last stored entry and today, fetch ONLY
+//      that missing range from Metals.Dev (free, no card, real daily gold
+//      + platinum data) and write it in.
+//   3. Return the full merged curve.
 //
-// Matches the same { ok, prices: [[ts_ms, price], ...] } shape the
-// dashboard's fetchMetalProxy() already expects, so no caller-side changes
-// needed beyond pointing the URL here.
+// No separate backfill step. No manual triggering. No reloading anything.
+// The first time this runs there's no history yet, so it fills ~10 years in
+// one go (chunked internally to respect Metals.Dev's 30-day-per-call limit
+// and Netlify's execution time budget) — after that, there's nothing left to
+// fill, so every later call is fast and just reads what's already stored.
 //
 // Required Netlify env vars:
-//   SUPABASE_URL      -> <your Supabase project URL>
-//   SUPABASE_ANON_KEY -> publishable/anon key (read-only, safe to use here)
+//   METALS_DEV_API_KEY        -> free key from metals.dev dashboard
+//   SUPABASE_URL              -> <your Supabase project URL>
+//   SUPABASE_SERVICE_ROLE_KEY -> secret key (this writes, not just reads)
 
+const METALS_DEV_API_KEY = process.env.METALS_DEV_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// We only ever store the LATEST snapshot per asset in market_snapshots
-// (it's an upsert table, not an append log) — so true history requires a
-// separate append-only table. This function checks for one and creates the
-// shape gracefully degrades to "just the current point" if it doesn't
-// exist yet, rather than erroring outright.
-const HISTORY_TABLE = 'metal_price_history';
+const BACKFILL_YEARS = 10;
+const CHUNK_DAYS = 30;
+const MAX_CHUNKS_THIS_CALL = 6; // keeps each call comfortably inside Netlify's free-tier time budget
+
+function formatDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+async function getStoredHistory(asset) {
+  const url = `${SUPABASE_URL}/rest/v1/metal_price_history?select=price,recorded_at&asset=eq.${asset}&order=recorded_at.asc&limit=10000`;
+  const res = await fetch(url, {
+    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }
+  });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+async function fetchMetalsDevChunk(startDate, endDate) {
+  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${formatDate(startDate)}&end_date=${formatDate(endDate)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Metals.Dev fetch failed: ${res.status}`);
+  const data = await res.json();
+  if (data.status !== 'success') throw new Error(`Metals.Dev error: ${data.error_message || 'unknown'}`);
+  return data.rates; // { "2023-01-01": { metals: { gold, platinum } }, ... }
+}
+
+async function upsertHistoryRow(asset, price, dateStr) {
+  const url = `${SUPABASE_URL}/rest/v1/metal_price_history`;
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: 'resolution=ignore-duplicates'
+    },
+    body: JSON.stringify({ asset, price, recorded_at: `${dateStr}T12:00:00Z` })
+  });
+}
+
+// Fetches and stores whatever's missing between `from` and `to`, for BOTH
+// gold and platinum at once (Metals.Dev returns both in the same response,
+// so we fill both assets' gaps together regardless of which one triggered
+// this call) — chunked to stay inside the time budget for one call.
+async function fillGap(from, to) {
+  let cursor = new Date(from);
+  const end = new Date(to);
+  let chunks = 0;
+  const newRows = { XAU: [], XPT: [] };
+
+  while (cursor < end && chunks < MAX_CHUNKS_THIS_CALL) {
+    let chunkEnd = new Date(cursor);
+    chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS - 1);
+    if (chunkEnd > end) chunkEnd = new Date(end);
+
+    try {
+      const rates = await fetchMetalsDevChunk(cursor, chunkEnd);
+      for (const [dateStr, dayData] of Object.entries(rates)) {
+        const gold = dayData?.metals?.gold;
+        const platinum = dayData?.metals?.platinum;
+        if (gold != null) {
+          await upsertHistoryRow('XAU', gold, dateStr);
+          newRows.XAU.push({ ts: new Date(dateStr).getTime(), price: gold });
+        }
+        if (platinum != null) {
+          await upsertHistoryRow('XPT', platinum, dateStr);
+          newRows.XPT.push({ ts: new Date(dateStr).getTime(), price: platinum });
+        }
+      }
+    } catch (_) {
+      // If Metals.Dev hiccups on one chunk, skip it — next call will retry
+      // this same gap since it's still missing from storage.
+    }
+
+    cursor.setDate(cursor.getDate() + CHUNK_DAYS);
+    chunks++;
+  }
+
+  return newRows;
+}
 
 export default async (req) => {
   const url = new URL(req.url);
-  const symbol = url.searchParams.get('symbol'); // 'XAU' or 'XPT' (also accepts GC=F/PL=F for compatibility)
+  const requested = url.searchParams.get('symbol'); // 'XAU'/'XPT' or legacy 'GC=F'/'PL=F'
   const symbolMap = { 'GC=F': 'XAU', 'PL=F': 'XPT' };
-  const key = symbolMap[symbol] || symbol;
+  const asset = symbolMap[requested] || requested;
 
-  if (!key) {
+  if (!asset) {
     return new Response(JSON.stringify({ ok: false, error: 'Missing symbol parameter' }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      status: 200, headers: { 'Content-Type': 'application/json' }
     });
   }
-
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return new Response(JSON.stringify({ ok: false, error: 'Missing Supabase env vars' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      status: 500, headers: { 'Content-Type': 'application/json' }
     });
   }
 
   try {
-    const histUrl = `${SUPABASE_URL}/rest/v1/${HISTORY_TABLE}?select=price,recorded_at&asset=eq.${encodeURIComponent(key)}&order=recorded_at.asc&limit=5000`;
-    const histRes = await fetch(histUrl, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
+    const stored = await getStoredHistory(asset);
+    const today = new Date();
+    const oldestWanted = new Date();
+    oldestWanted.setFullYear(oldestWanted.getFullYear() - BACKFILL_YEARS);
 
-    if (histRes.ok) {
-      const rows = await histRes.json();
-      if (Array.isArray(rows) && rows.length > 0) {
-        const prices = rows.map(r => [new Date(r.recorded_at).getTime(), r.price]);
-        return new Response(JSON.stringify({ ok: true, prices, source: 'supabase-history' }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
+    const lastStoredDate = stored.length ? new Date(stored[stored.length - 1].recorded_at) : null;
+    const gapStart = lastStoredDate && lastStoredDate > oldestWanted ? lastStoredDate : oldestWanted;
+
+    let newPoints = { XAU: [], XPT: [] };
+    if (METALS_DEV_API_KEY && gapStart < today) {
+      newPoints = await fillGap(gapStart, today);
     }
-    // Table missing or empty (404 from PostgREST if table doesn't exist, or just no rows yet) —
-    // fall through to returning just the current snapshot below, rather than erroring.
-  } catch (_) {
-    // Same fallback applies on any unexpected failure reading history.
-  }
 
-  try {
-    const snapUrl = `${SUPABASE_URL}/rest/v1/market_snapshots?select=payload,updated_at&snapshot_key=eq.${encodeURIComponent(key)}`;
-    const snapRes = await fetch(snapUrl, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    if (!snapRes.ok) throw new Error(`Supabase snapshot fetch failed: ${snapRes.status}`);
-    const rows = await snapRes.json();
-    if (!rows.length) throw new Error('No snapshot data yet for ' + key);
+    const existingPoints = stored.map(r => ({ ts: new Date(r.recorded_at).getTime(), price: r.price }));
+    const allPoints = [...existingPoints, ...newPoints[asset]]
+      .sort((a, b) => a.ts - b.ts)
+      // de-dupe same-day points (gap-fill may slightly overlap the last stored day)
+      .filter((p, i, arr) => i === 0 || new Date(p.ts).toDateString() !== new Date(arr[i - 1].ts).toDateString());
 
-    const row = rows[0];
-    const prices = [[new Date(row.updated_at).getTime(), row.payload.price]];
+    if (!allPoints.length) {
+      return new Response(JSON.stringify({ ok: false, error: 'No data available yet for ' + asset }), {
+        status: 200, headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
-    return new Response(JSON.stringify({
-      ok: true,
-      prices,
-      source: 'supabase-snapshot-only',
-      warn: 'History table not yet available — showing current snapshot only. History accumulates daily.',
-    }), {
+    const prices = allPoints.map(p => [p.ts, p.price]);
+    return new Response(JSON.stringify({ ok: true, prices, source: 'self-filling-history' }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
