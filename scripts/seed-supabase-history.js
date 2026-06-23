@@ -205,6 +205,59 @@ async function fetchDatahubPlatinumMonthly() {
   return out.sort((a, b) => a.day.localeCompare(b.day));
 }
 
+function metalsDevLatest() {
+  // Metals.Dev timeseries rejects end_date=today; use yesterday.
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  d.setUTCHours(12, 0, 0, 0);
+  return d;
+}
+
+async function fetchMetalsDevChunk(start, end) {
+  if (!METALS_DEV_API_KEY) throw new Error('METALS_DEV_API_KEY not set');
+  const startStr = formatDate(start);
+  const endStr = formatDate(end);
+  if (startStr > endStr) return {};
+  const url = `https://api.metals.dev/v1/timeseries?api_key=${METALS_DEV_API_KEY}&start_date=${startStr}&end_date=${endStr}`;
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Metals.Dev ${res.status}: ${data.error_message || res.statusText}`);
+  if (data.status !== 'success') throw new Error(data.error_message || 'Metals.Dev error');
+  return data.rates || {};
+}
+
+async function seedPlatinumFromMetalsDev(cutoffDay) {
+  const latest = metalsDevLatest();
+  const oldest = new Date(cutoffDay + 'T00:00:00Z');
+  const end = latest;
+
+  let cursor = new Date(oldest);
+  let added = 0;
+  let chunks = 0;
+
+  while (cursor <= end) {
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + (CHUNK_DAYS - 1));
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+
+    const rates = await fetchMetalsDevChunk(cursor, chunkEnd);
+    for (const [dateStr, dayData] of Object.entries(rates)) {
+      const platinum = dayData?.metals?.platinum;
+      if (platinum != null && dateStr >= cutoffDay) {
+        await upsertMetal('XPT', platinum, dateStr);
+        added++;
+      }
+    }
+
+    cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
+    chunks++;
+    // small pause to be polite
+    await sleep(150);
+  }
+
+  return { added, chunks };
+}
+
 async function retry(fn, { tries = 6, baseMs = 2000 } = {}) {
   let last;
   for (let i = 0; i < tries; i++) {
@@ -247,6 +300,16 @@ async function seedMetals() {
   }
 
   // Platinum (XPT): try Yahoo daily first (may 429), else monthly open dataset.
+  try {
+    // With Metals.Dev upgraded, prefer it for platinum daily (reliable, no Yahoo 429).
+    const md = await seedPlatinumFromMetalsDev(cutoffDay);
+    console.log(`[metals XPT] ${md.added} daily rows (Metals.Dev)`);
+    // Skip Yahoo entirely now that we have a paid daily source.
+    return;
+  } catch (err) {
+    console.log(`[metals XPT] Metals.Dev failed (${err.message}); trying Yahoo daily (may 429)…`);
+  }
+
   try {
     const pts = await retry(() => fetchYahooDaily('PL=F', '10y')).then(arr => arr.filter(p => p.day >= cutoffDay));
     let n = 0;
