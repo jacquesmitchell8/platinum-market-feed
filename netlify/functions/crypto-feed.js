@@ -90,8 +90,12 @@ export default async (req) => {
         });
       }
 
-      const interval = days !== 'max' && +days >= 2 && +days <= 30 ? '&interval=hourly' : '';
-      const cgUrl = withApiKey(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=${days}${interval}`);
+      // No manual interval parameter — CoinGecko auto-selects granularity based
+      // on the date range (finer for short windows, daily for long ones), and
+      // per their own docs, manually specifying interval=hourly/5m is only
+      // supported on Enterprise plans and can cause requests to fail silently
+      // on Demo/free tiers. Leaving it empty is the documented correct approach.
+      const cgUrl = withApiKey(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=${days}`);
 
       const res = await fetch(cgUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
