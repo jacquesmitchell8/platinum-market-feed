@@ -21,6 +21,7 @@ export default {
     console.log('Deploy succeeded — propagating curves into Supabase');
 
     const targets = [
+      '/.netlify/functions/seed-history',
       '/.netlify/functions/propagate-curves',
       '/.netlify/functions/fetch-market-snapshots',
       '/.netlify/functions/news-digest',
