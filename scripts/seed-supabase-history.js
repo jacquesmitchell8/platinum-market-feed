@@ -258,6 +258,37 @@ async function seedPlatinumFromMetalsDev(cutoffDay) {
   return { added, chunks };
 }
 
+async function seedMetalsDailyFromMetalsDev(cutoffDay) {
+  const latest = metalsDevLatest();
+  const oldest = new Date(cutoffDay + 'T00:00:00Z');
+
+  let cursor = new Date(oldest);
+  let addedXAU = 0;
+  let addedXPT = 0;
+  let chunks = 0;
+
+  while (cursor <= latest) {
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + (CHUNK_DAYS - 1));
+    if (chunkEnd > latest) chunkEnd.setTime(latest.getTime());
+
+    const rates = await fetchMetalsDevChunk(cursor, chunkEnd);
+    for (const [dateStr, dayData] of Object.entries(rates)) {
+      if (dateStr < cutoffDay) continue;
+      const gold = dayData?.metals?.gold;
+      const platinum = dayData?.metals?.platinum;
+      if (gold != null) { await upsertMetal('XAU', gold, dateStr); addedXAU++; }
+      if (platinum != null) { await upsertMetal('XPT', platinum, dateStr); addedXPT++; }
+    }
+
+    cursor.setUTCDate(cursor.getUTCDate() + CHUNK_DAYS);
+    chunks++;
+    await sleep(150);
+  }
+
+  return { addedXAU, addedXPT, chunks };
+}
+
 async function retry(fn, { tries = 6, baseMs = 2000 } = {}) {
   let last;
   for (let i = 0; i < tries; i++) {
@@ -276,13 +307,27 @@ async function retry(fn, { tries = 6, baseMs = 2000 } = {}) {
 
 async function seedMetals() {
   const have = await getDays('metal_price_history', 'asset=eq.XAU');
-  console.log(`\n[metals] ${have.size} days stored — seeding Gold (freegoldapi) + Platinum (datahub monthly, with Yahoo daily if available)`);
+  console.log(`\n[metals] ${have.size} days stored — seeding daily via Metals.Dev (fallbacks if needed)`);
 
   const cutoff = new Date();
   cutoff.setFullYear(cutoff.getFullYear() - BACKFILL_YEARS);
   const cutoffDay = formatDate(cutoff);
 
   let added = 0;
+
+  // Preferred: daily gold + platinum from Metals.Dev (you upgraded, so this should work)
+  try {
+    const md = await seedMetalsDailyFromMetalsDev(cutoffDay);
+    console.log(`[metals XAU] ${md.addedXAU} daily rows (Metals.Dev)`);
+    console.log(`[metals XPT] ${md.addedXPT} daily rows (Metals.Dev)`);
+    added += md.addedXAU + md.addedXPT;
+    const total = await countRows('metal_price_history', 'asset=eq.XAU');
+    console.log(`[metals] done — ${total} gold days in Supabase (${added} new this run)`);
+    return;
+  } catch (err) {
+    console.log(`[metals] Metals.Dev failed (${err.message}); using free/open fallbacks.`);
+  }
+
   // Gold (XAU) via freegoldapi (daily)
   try {
     const pts = (await fetchFreeGoldApiDaily()).filter(p => p.day >= cutoffDay);
@@ -395,8 +440,15 @@ async function seedCrypto() {
 }
 
 async function fetchYahoo(ticker, range) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=1d`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'PlatinumMetisSeed/1.0' } });
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=1d`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Accept': 'application/json,text/plain,*/*',
+      'Origin': 'https://finance.yahoo.com',
+      'Referer': `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`,
+    }
+  });
   if (!res.ok) throw new Error(`Yahoo ${ticker} HTTP ${res.status}`);
   const data = await res.json();
   const result = data?.chart?.result?.[0];
