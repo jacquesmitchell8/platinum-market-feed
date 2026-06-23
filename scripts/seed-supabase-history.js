@@ -27,7 +27,9 @@ function loadEnvFile() {
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
-    if (!process.env[key]) process.env[key] = val;
+    // Always prefer the project's .env.seed for this one-off script.
+    // (Users often have stale env vars from previous runs in their shell.)
+    process.env[key] = val;
   }
 }
 
