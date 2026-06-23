@@ -2,20 +2,74 @@
 /**
  * ONE-OFF full history seed for Supabase.
  *
- * Keeps fetching until every asset has complete daily history stored.
- * Run from terminal (no Netlify timeout):
+ * Setup (once):
+ *   1. Copy .env.seed.example → .env.seed
+ *   2. Paste real values from Netlify → Environment variables
+ *   3. node scripts/seed-supabase-history.js
  *
- *   cd ~/Desktop/"Platinum ReBuild"
- *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... METALS_DEV_API_KEY=... \
- *   COINGECKO_API_KEY=... node scripts/seed-supabase-history.js
- *
- * Safe to re-run — duplicate days are ignored.
+ * Or after git push, hit /.netlify/functions/seed-history on your live site
+ * (uses Netlify env vars automatically — no local keys needed).
  */
+
+const fs = require('fs');
+const path = require('path');
+
+function loadEnvFile() {
+  const envPath = path.join(__dirname, '..', '.env.seed');
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq < 1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let val = trimmed.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!process.env[key]) process.env[key] = val;
+  }
+}
+
+loadEnvFile();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const METALS_DEV_API_KEY = process.env.METALS_DEV_API_KEY;
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
+
+function die(msg) {
+  console.error(msg);
+  process.exit(1);
+}
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  die(`Missing credentials.
+
+Do NOT use the placeholder text "your-url" / "your-key".
+
+Option A — local seed (recommended):
+  1. cp .env.seed.example .env.seed
+  2. Open Netlify → your site → Environment variables
+  3. Copy the real values into .env.seed
+  4. node scripts/seed-supabase-history.js
+
+Option B — after git push:
+  Open https://platinum-conflux.netlify.app/.netlify/functions/seed-history
+  Repeat until the response says "complete": true`);
+}
+
+if (SUPABASE_URL.includes('your-url') || SUPABASE_SERVICE_ROLE_KEY.includes('your-key')) {
+  die('Still using placeholder values in .env.seed — paste your real Netlify env vars.');
+}
+
+if (!SUPABASE_URL.startsWith('https://') || !SUPABASE_URL.includes('supabase.co')) {
+  die(`SUPABASE_URL looks wrong: ${SUPABASE_URL}`);
+}
+
+if (!METALS_DEV_API_KEY) {
+  die('METALS_DEV_API_KEY is required — copy it from Netlify environment variables.');
+}
 
 const BACKFILL_YEARS = 10;
 const CHUNK_DAYS = 30;
@@ -26,11 +80,6 @@ const CRYPTO = [
   { asset: 'CFX', geckoId: 'conflux-token' },
 ];
 const PRODUCERS = ['VAL.JO', 'IMP.JO', 'SSW.JO', 'NPH.JO'];
-
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
-  process.exit(1);
-}
 
 function formatDate(d) {
   return new Date(d).toISOString().slice(0, 10);
