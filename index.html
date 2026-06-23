@@ -1276,6 +1276,19 @@
       });
     }
 
+    // Converts the existing 1971-2026 annual DATA array into chart points for
+    // a given metal ('g' for gold, 'p' for platinum), using mid-year (July 1)
+    // as each year's timestamp. This is real LBMA/WPIC historical data already
+    // in this file — used here as an honest backdrop so a 3-year chart doesn't
+    // show one flat point stretched across the whole axis while our own daily
+    // tracking (metals-history.js) is still thin in its first days/weeks.
+    function annualBackdropPoints(metalKey, days) {
+      const cutoffYear = days == null ? 1971 : new Date(Date.now() - days * 86400000).getFullYear();
+      return DATA
+        .filter((d) => d[metalKey] != null && d.y >= cutoffYear)
+        .map((d) => ({ ts: Date.UTC(d.y, 6, 1), price: d[metalKey] }));
+    }
+
     async function fetchMetalProxy(symbol, days) {
       // Routed to our own accumulated history (metals-history.js) instead of
       // Yahoo Finance — Yahoo's unofficial chart endpoint blocks unauthenticated
@@ -1283,16 +1296,32 @@
       // something to route around. Our own Supabase-backed history starts thin
       // and grows daily via fetch-market-snapshots.js, with zero dependency on
       // any third-party historical price API.
+      //
+      // Because that live history is thin in its first days, we merge it with
+      // the annual backdrop above so the chart always shows an honest shape —
+      // decades of real annual data, with our own daily tracking layered on
+      // the recent end as it accumulates. Live points win over backdrop points
+      // when both exist for the same period (live is always more precise).
+      const metalKey = symbol === 'GC=F' ? 'g' : symbol === 'PL=F' ? 'p' : null;
+      const backdrop = metalKey ? annualBackdropPoints(metalKey, days) : [];
+
       const dStr = days == null ? '1095' : String(days);
       const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(dStr)}`;
+      let live = [];
       try {
         const res = await pmFetch(url, {}, 15000);
         const j = await res.json();
         if (j.ok && j.prices?.length) {
-          return j.prices.map(([ts, price]) => ({ ts, price }));
+          live = j.prices.map(([ts, price]) => ({ ts, price }));
         }
       } catch (_) {}
-      return null;
+
+      // Drop any backdrop points that fall within the live data's own range —
+      // live (real, recent, our own tracking) always takes priority there.
+      const liveStart = live.length ? Math.min(...live.map(p => p.ts)) : Infinity;
+      const merged = [...backdrop.filter(p => p.ts < liveStart), ...live].sort((a, b) => a.ts - b.ts);
+
+      return merged.length ? merged : null;
     }
 
     const CG_FETCH_STAGGER = { 'IDX-003': 0, 'IDX-004': 500, 'IDX-005': 1000 };
