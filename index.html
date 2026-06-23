@@ -499,7 +499,8 @@
     window.PM = window.PM || {};
     (function (PM) {
       const MINTED_METAL_URL = 'https://mintedmetal.com/api/prices.json';
-      const CG_SPOT_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,conflux-token&vs_currencies=usd&include_24hr_change=true';
+      // Crypto spot prices now fetched via /.netlify/functions/crypto-feed?type=spot
+      // (see fetchCryptoSpotBrowser below) instead of calling CoinGecko directly.
       const SPOT_LS_KEY = 'pm_metis_spot_v1';
       let spotInflight = null;
 
@@ -600,10 +601,14 @@
       }
 
       async function fetchCryptoSpotBrowser() {
-        const res = await fetchWithTimeout(CG_SPOT_URL, {}, 10000);
-        if (!res.ok) throw new Error('CoinGecko ' + res.status);
+        // Routed through the server-side crypto-feed proxy (with API key + caching)
+        // instead of hitting CoinGecko's keyless tier directly — direct browser
+        // calls here, combined with chart requests, are what triggered today's
+        // rate-limit escalation (429 -> 401).
+        const res = await fetchWithTimeout('/.netlify/functions/crypto-feed?type=spot', {}, 10000);
+        if (!res.ok) throw new Error('crypto-feed spot ' + res.status);
         const j = await readJson(res);
-        if (!j.bitcoin?.usd) throw new Error('CoinGecko empty');
+        if (!j.ok || !j.bitcoin?.usd) throw new Error('crypto-feed spot empty');
         return j;
       }
 
