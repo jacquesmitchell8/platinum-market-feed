@@ -171,36 +171,104 @@ async function fetchYahooDaily(symbol, range = '10y') {
   return points;
 }
 
+async function fetchFreeGoldApiDaily() {
+  // Free, no-key daily gold history. We'll take last 10 years.
+  const res = await fetch('https://freegoldapi.com/data/latest.json', {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisSeed/1.0)',
+      'Accept': 'application/json',
+    }
+  });
+  if (!res.ok) throw new Error(`freegoldapi HTTP ${res.status}`);
+  const rows = await res.json();
+  if (!Array.isArray(rows) || !rows.length) throw new Error('freegoldapi returned no rows');
+  return rows
+    .filter(r => r?.date && typeof r.price === 'number')
+    .map(r => ({ day: r.date, price: r.price }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+}
+
+async function fetchDatahubPlatinumMonthly() {
+  // Open data (PDDL) monthly series for platinum (USD/oz).
+  const res = await fetch('https://datahub.io/energy-and-commodities/precious-metals-prices/_r/-/data/platinum.csv', {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisSeed/1.0)' }
+  });
+  if (!res.ok) throw new Error(`datahub platinum.csv HTTP ${res.status}`);
+  const text = await res.text();
+  const lines = text.trim().split('\n');
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    const [date, price] = lines[i].split(',');
+    const p = Number(price);
+    if (date && Number.isFinite(p)) out.push({ day: date, price: p });
+  }
+  return out.sort((a, b) => a.day.localeCompare(b.day));
+}
+
+async function retry(fn, { tries = 6, baseMs = 2000 } = {}) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); } catch (e) {
+      last = e;
+      const msg = String(e?.message || e);
+      // Only backoff for 429 / throttling.
+      if (!/\\b429\\b|thrott/i.test(msg)) throw e;
+      const wait = baseMs * Math.pow(2, i);
+      console.log(`  throttled, waiting ${Math.round(wait/1000)}s…`);
+      await sleep(wait);
+    }
+  }
+  throw last;
+}
+
 async function seedMetals() {
   const have = await getDays('metal_price_history', 'asset=eq.XAU');
-  console.log(`\n[metals] ${have.size} days stored — fetching 10y daily from Yahoo (GC=F/PL=F)`);
+  console.log(`\n[metals] ${have.size} days stored — seeding Gold (freegoldapi) + Platinum (datahub monthly, with Yahoo daily if available)`);
 
-  const tasks = [
-    { asset: 'XAU', yahoo: 'GC=F' },
-    { asset: 'XPT', yahoo: 'PL=F' },
-  ];
+  const cutoff = new Date();
+  cutoff.setFullYear(cutoff.getFullYear() - BACKFILL_YEARS);
+  const cutoffDay = formatDate(cutoff);
 
   let added = 0;
-  for (const t of tasks) {
-    try {
-      const points = await fetchYahooDaily(t.yahoo, '10y');
-      let n = 0;
-      for (const p of points) {
-        if (!have.has(p.day)) {
-          await upsertMetal(t.asset, p.price, p.day);
-          have.add(p.day);
-          n++;
-          added++;
-        }
-      }
-      console.log(`[metals ${t.asset}] ${n} new days (${points.length} fetched)`);
-    } catch (err) {
-      console.log(`[metals ${t.asset}] FAILED: ${err.message}`);
-      if (METALS_DEV_API_KEY) {
-        console.log('  (Metals.Dev key is set, but Yahoo is preferred; you can upgrade Metals.Dev quota if needed.)');
+  // Gold (XAU) via freegoldapi (daily)
+  try {
+    const pts = (await fetchFreeGoldApiDaily()).filter(p => p.day >= cutoffDay);
+    let n = 0;
+    for (const p of pts) {
+      if (!have.has(p.day)) {
+        await upsertMetal('XAU', p.price, p.day);
+        have.add(p.day);
+        n++; added++;
       }
     }
-    await sleep(800);
+    console.log(`[metals XAU] ${n} new days (${pts.length} fetched, freegoldapi)`);
+  } catch (err) {
+    console.log(`[metals XAU] FAILED: ${err.message}`);
+  }
+
+  // Platinum (XPT): try Yahoo daily first (may 429), else monthly open dataset.
+  try {
+    const pts = await retry(() => fetchYahooDaily('PL=F', '10y')).then(arr => arr.filter(p => p.day >= cutoffDay));
+    let n = 0;
+    for (const p of pts) {
+      // We reuse the same have-set (based on XAU days). That's fine for dedupe day-level.
+      await upsertMetal('XPT', p.price, p.day);
+      n++; added++;
+    }
+    console.log(`[metals XPT] ${n} days (${pts.length} fetched, Yahoo daily)`);
+  } catch (err) {
+    console.log(`[metals XPT] Yahoo failed (${err.message}); falling back to monthly platinum.csv`);
+    try {
+      const pts = (await fetchDatahubPlatinumMonthly()).filter(p => p.day >= cutoffDay);
+      let n = 0;
+      for (const p of pts) {
+        await upsertMetal('XPT', p.price, p.day);
+        n++; added++;
+      }
+      console.log(`[metals XPT] ${n} months (${pts.length} fetched, datahub)`);
+    } catch (e2) {
+      console.log(`[metals XPT] FAILED: ${e2.message}`);
+    }
   }
 
   const total = await countRows('metal_price_history', 'asset=eq.XAU');
