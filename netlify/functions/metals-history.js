@@ -27,7 +27,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const BACKFILL_YEARS = 10;
 const CHUNK_DAYS = 30;
-const MAX_CHUNKS_THIS_CALL = 6; // keeps each call comfortably inside Netlify's free-tier time budget
+const MAX_CHUNKS_THIS_CALL = 15; // each chunk is ~30 days; 15 ≈ 450 days per call
 
 function formatDate(d) {
   return d.toISOString().slice(0, 10);
@@ -61,7 +61,7 @@ async function upsertHistoryRow(asset, price, dateStr) {
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       Prefer: 'resolution=ignore-duplicates'
     },
-    body: JSON.stringify({ asset, price, recorded_at: `${dateStr}T12:00:00Z` })
+    body: JSON.stringify({ asset, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr })
   });
 }
 

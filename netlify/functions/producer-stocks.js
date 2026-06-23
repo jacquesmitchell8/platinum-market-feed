@@ -1,17 +1,15 @@
 // netlify/functions/producer-stocks.js
 //
 // Called by the dashboard's Producers tab on every page load.
-// On each call: fetches fresh JSE share prices via Yahoo Finance for the 4
-// platinum producers, upserts into Supabase `producer_quotes` (running
-// historical record), then returns the latest quotes in the shape the
-// dashboard expects.
-//
-// The separate fetch-producers.js scheduled function (7am/7pm) still runs
-// as a backup cadence in case the page isn't visited for a while.
+// On each call:
+//   1. Fetches JSE share prices via Yahoo Finance
+//   2. Appends daily closes into producer_price_history (our own curve record)
+//   3. Gap-fills from Yahoo if history is thin
+//   4. Returns chart rows + producerMeta in the shape the dashboard expects
 //
 // Required Netlify env vars:
-//   SUPABASE_URL              -> <your Supabase project URL>
-//   SUPABASE_SERVICE_ROLE_KEY -> secret key (needed here because this function writes, not just reads)
+//   SUPABASE_URL
+//   SUPABASE_SERVICE_ROLE_KEY
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -23,28 +21,92 @@ const PRODUCERS = [
   { ticker: 'NPH.JO', name: 'Northam Platinum', id: 'IDX-204', country: 'South Africa', production: '~0.5 Moz Pt/yr' },
 ];
 
-async function fetchQuote(producer) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${producer.ticker}?range=5d&interval=1d`;
+const TICKER_TO_ID = Object.fromEntries(PRODUCERS.map(p => [p.ticker, p.id]));
+const BACKFILL_RANGE = '2y';
+
+const TIMEFRAME_FILTERS = {
+  '24h': { hours: 24 },
+  '1w': { days: 7 },
+  '1m': { days: 30 },
+  '3m': { days: 90 },
+  '1y': { days: 365 },
+  '3y': { days: 1095 },
+  '5y': { days: 1825 },
+};
+
+function formatDate(d) {
+  return new Date(d).toISOString().slice(0, 10);
+}
+
+function supabaseHeaders() {
+  return { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` };
+}
+
+async function getStoredHistory(ticker) {
+  const url = `${SUPABASE_URL}/rest/v1/producer_price_history?select=price,recorded_at&ticker=eq.${encodeURIComponent(ticker)}&order=recorded_at.asc&limit=10000`;
+  const res = await fetch(url, { headers: supabaseHeaders() });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+async function upsertHistoryRow(ticker, price, dateStr) {
+  await fetch(`${SUPABASE_URL}/rest/v1/producer_price_history`, {
+    method: 'POST',
+    headers: {
+      ...supabaseHeaders(),
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=ignore-duplicates'
+    },
+    body: JSON.stringify({ ticker, price, recorded_at: `${dateStr}T12:00:00Z`, recorded_day: dateStr })
+  });
+}
+
+async function fetchYahooChart(ticker, range) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=1d`;
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
   });
-  if (!res.ok) throw new Error(`${producer.ticker} fetch failed: ${res.status}`);
+  if (!res.ok) throw new Error(`${ticker} Yahoo fetch failed: ${res.status}`);
   const data = await res.json();
   const result = data?.chart?.result?.[0];
-  if (!result) throw new Error(`${producer.ticker} no chart result`);
+  if (!result) throw new Error(`${ticker} no chart result`);
 
-  const closes = (result.indicators?.quote?.[0]?.close || []).filter(c => c != null);
-  const latest = closes[closes.length - 1];
-  const prior = closes[closes.length - 2];
-  if (latest == null) throw new Error(`${producer.ticker} no valid close price`);
+  const timestamps = result.timestamp || [];
+  const closes = result.indicators?.quote?.[0]?.close || [];
+  const points = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    if (closes[i] == null) continue;
+    points.push({ ts: timestamps[i] * 1000, price: closes[i], day: formatDate(timestamps[i] * 1000) });
+  }
+  return { points, currency: result.meta?.currency || 'ZAR' };
+}
 
-  return {
-    ticker: producer.ticker,
-    name: producer.name,
-    price: latest,
-    currency: result.meta?.currency || 'ZAR',
-    change_pct: prior ? ((latest - prior) / prior) * 100 : null,
-  };
+async function storePoints(ticker, points) {
+  for (const p of points) {
+    await upsertHistoryRow(ticker, p.price, p.day);
+  }
+}
+
+async function ensureHistory(producer) {
+  const stored = await getStoredHistory(producer.ticker);
+  const today = new Date();
+  const oldestWanted = new Date();
+  oldestWanted.setFullYear(oldestWanted.getFullYear() - 2);
+
+  const lastStored = stored.length ? new Date(stored[stored.length - 1].recorded_at) : null;
+  const needsBackfill = !stored.length || (lastStored && lastStored < oldestWanted);
+
+  let freshPoints = [];
+  try {
+    const chart = await fetchYahooChart(producer.ticker, needsBackfill ? BACKFILL_RANGE : '5d');
+    freshPoints = chart.points;
+    await storePoints(producer.ticker, freshPoints);
+  } catch (err) {
+    console.error(`Producer fetch failed for ${producer.ticker}: ${err.message}`);
+  }
+
+  const updated = await getStoredHistory(producer.ticker);
+  return { stored: updated, freshPoints };
 }
 
 async function upsertQuote(quote) {
@@ -52,9 +114,8 @@ async function upsertQuote(quote) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
+      ...supabaseHeaders(),
       'Content-Type': 'application/json',
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       Prefer: 'resolution=merge-duplicates'
     },
     body: JSON.stringify({
@@ -65,39 +126,73 @@ async function upsertQuote(quote) {
   return res.ok;
 }
 
-async function refreshProducersFromYahoo() {
-  const fresh = {};
-  for (const producer of PRODUCERS) {
-    try {
-      const quote = await fetchQuote(producer);
-      await upsertQuote(quote);
-      fresh[quote.ticker] = quote;
-    } catch (err) {
-      console.error(`Producer refresh failed for ${producer.ticker}: ${err.message}`);
-    }
-  }
-  return fresh;
+function filterByTimeframe(points, timeframeId) {
+  const tf = TIMEFRAME_FILTERS[timeframeId];
+  if (!tf || !points.length) return points;
+  const now = Date.now();
+  if (tf.hours) return points.filter(p => now - p.ts <= tf.hours * 3600000);
+  if (tf.days) return points.filter(p => now - p.ts <= tf.days * 86400000);
+  return points;
+}
+
+function buildChartRows(seriesMap, timeframeId) {
+  const tsSet = new Set();
+  Object.values(seriesMap).forEach(pts => pts.forEach(p => tsSet.add(p.ts)));
+  const sorted = [...tsSet].sort((a, b) => a - b);
+  return sorted.map(ts => {
+    const row = { ts };
+    Object.entries(seriesMap).forEach(([id, pts]) => {
+      const hit = pts.find(p => p.ts === ts);
+      if (hit) row[id] = hit.price;
+      else {
+        const prior = [...pts].filter(p => p.ts <= ts).pop();
+        if (prior) row[id] = prior.price;
+      }
+    });
+    return row;
+  });
 }
 
 export default async (req) => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return new Response(JSON.stringify({ ok: false, error: 'Missing Supabase env vars' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      status: 500, headers: { 'Content-Type': 'application/json' }
     });
   }
 
-  let freshQuotes = {};
-  try {
-    freshQuotes = await refreshProducersFromYahoo();
-  } catch (err) {
-    console.error('refreshProducersFromYahoo failed entirely: ' + err.message);
+  const url = new URL(req.url);
+  const timeframeId = url.searchParams.get('timeframe') || '1y';
+
+  const seriesMap = {};
+  const freshQuotes = {};
+
+  for (const producer of PRODUCERS) {
+    const { stored, freshPoints } = await ensureHistory(producer);
+    const points = stored.map(r => ({
+      ts: new Date(r.recorded_at).getTime(),
+      price: r.price,
+    }));
+    const filtered = filterByTimeframe(points, timeframeId);
+    if (filtered.length) seriesMap[producer.id] = filtered;
+
+    const latest = freshPoints.length ? freshPoints[freshPoints.length - 1] : points[points.length - 1];
+    const prior = freshPoints.length > 1 ? freshPoints[freshPoints.length - 2] : points[points.length - 2];
+    if (latest) {
+      const quote = {
+        ticker: producer.ticker,
+        name: producer.name,
+        price: latest.price,
+        currency: 'ZAR',
+        change_pct: prior ? ((latest.price - prior.price) / prior.price) * 100 : null,
+      };
+      await upsertQuote(quote);
+      freshQuotes[producer.ticker] = quote;
+    }
   }
 
   try {
-    const url = `${SUPABASE_URL}/rest/v1/producer_quotes?select=ticker,name,price,currency,change_pct,updated_at,source`;
-    const res = await fetch(url, {
-      headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/producer_quotes?select=ticker,name,price,currency,change_pct,updated_at,source`, {
+      headers: supabaseHeaders()
     });
     if (!res.ok) throw new Error(`Supabase read failed: ${res.status}`);
     const rows = await res.json();
@@ -118,24 +213,25 @@ export default async (req) => {
       };
     });
 
+    const chartRows = buildChartRows(seriesMap, timeframeId);
     const oldestUpdate = rows.length
       ? rows.reduce((min, r) => Math.min(min, new Date(r.updated_at).getTime()), Date.now())
       : Date.now();
 
     return new Response(JSON.stringify({
       ok: true,
-      quotes,
-      announcements: [],
+      rows: chartRows,
+      producerMeta: { quotes, announcements: [] },
       updatedAt: new Date(oldestUpdate).toISOString(),
-      stale: Object.keys(freshQuotes).length === 0, // true only if this call's live refresh failed entirely
+      stale: Object.keys(freshQuotes).length === 0,
+      source: 'self-filling-producer-history',
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (err) {
     return new Response(JSON.stringify({ ok: false, error: err.message }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      status: 200, headers: { 'Content-Type': 'application/json' }
     });
   }
 };

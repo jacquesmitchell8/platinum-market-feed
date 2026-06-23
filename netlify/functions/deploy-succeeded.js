@@ -1,10 +1,9 @@
 // netlify/functions/deploy-succeeded.js
 //
 // Event-triggered function (Netlify auto-runs this on every successful
-// deploy, purely by filename convention — no schedule or wiring needed).
-// Fires the same news + producer refresh that runs on page load, so the
-// data is fresh immediately after any code change goes live, without
-// waiting for a visitor or the 7am/7pm scheduled backup.
+// deploy). Refreshes all data feeds and propagates curve history into
+// Supabase so charts work immediately after deploy without waiting for
+// a visitor or the scheduled cron jobs.
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -16,7 +15,7 @@ export default {
       return;
     }
 
-    console.log('Deploy succeeded — triggering news and producer refresh');
+    console.log('Deploy succeeded — propagating curve history and refreshing feeds');
 
     const siteUrl = event?.site?.url || event?.deploy?.url;
     if (!siteUrl) {
@@ -25,6 +24,12 @@ export default {
     }
 
     const targets = [
+      '/.netlify/functions/fetch-market-snapshots',
+      '/.netlify/functions/metals-history?symbol=XAU',
+      '/.netlify/functions/metals-history?symbol=XPT',
+      '/.netlify/functions/crypto-history?id=bitcoin',
+      '/.netlify/functions/crypto-history?id=ethereum',
+      '/.netlify/functions/crypto-history?id=conflux-token',
       '/.netlify/functions/news-digest',
       '/.netlify/functions/producer-stocks',
       '/.netlify/functions/perth-mint',
@@ -32,9 +37,9 @@ export default {
     for (const path of targets) {
       try {
         const res = await fetch(`${siteUrl}${path}`);
-        console.log(`Post-deploy refresh ${path}: ${res.status}`);
+        console.log(`Post-deploy propagate ${path}: ${res.status}`);
       } catch (err) {
-        console.error(`Post-deploy refresh ${path} failed: ${err.message}`);
+        console.error(`Post-deploy propagate ${path} failed: ${err.message}`);
       }
     }
   }

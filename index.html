@@ -1359,36 +1359,45 @@
     const CRYPTO_BACKDROP_KEY = { 'bitcoin': 'b', 'ethereum': 'e', 'conflux-token': 'c' };
 
     async function fetchCgChartBrowser(coinId, days) {
-      // Routed through the server-side crypto-feed proxy (API key + caching)
-      // rather than calling CoinGecko directly from the browser — direct
-      // browser calls here were the other half of what caused the rate-limit
-      // escalation to 401 earlier today.
-      //
-      // Merged with the same annual DATA backdrop used for gold/platinum, so
-      // a live-fetch hiccup (rate limit, cold cache, etc) never results in an
-      // empty chart — there's always real annual history to show, with the
-      // live fetch adding precision on top when it succeeds.
+      // Self-filling Supabase history first (crypto-history.js), then fall back
+      // to the live CoinGecko proxy if storage is still empty on first deploy.
       const backdropKey = CRYPTO_BACKDROP_KEY[coinId];
       const backdrop = backdropKey ? annualCryptoBackdropPoints(backdropKey, days) : [];
 
-      const dStr = days == null ? 'max' : String(days);
-      const url = `/.netlify/functions/crypto-feed?type=chart&id=${encodeURIComponent(coinId)}&days=${encodeURIComponent(dStr)}`;
       let live = [];
       try {
-        const res = await pmFetch(url, {}, 15000);
-        if (res.ok) {
-          const text = await res.text();
-          const j = JSON.parse(text);
-          if (j.ok && j.prices?.length) {
-            live = j.prices.map(([ts, price]) => ({ ts, price }));
-          }
+        const histUrl = `/.netlify/functions/crypto-history?id=${encodeURIComponent(coinId)}`;
+        const res = await pmFetch(histUrl, {}, 20000);
+        const j = await res.json();
+        if (j.ok && j.prices?.length) {
+          live = j.prices.map(([ts, price]) => ({ ts, price }));
         }
       } catch (_) {}
+
+      if (!live.length) {
+        const dStr = days == null ? 'max' : String(days);
+        const url = `/.netlify/functions/crypto-feed?type=chart&id=${encodeURIComponent(coinId)}&days=${encodeURIComponent(dStr)}`;
+        try {
+          const res = await pmFetch(url, {}, 15000);
+          if (res.ok) {
+            const text = await res.text();
+            const j = JSON.parse(text);
+            if (j.ok && j.prices?.length) {
+              live = j.prices.map(([ts, price]) => ({ ts, price }));
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (days != null && live.length) {
+        const cutoff = Date.now() - days * 86400000;
+        live = live.filter((p) => p.ts >= cutoff);
+      }
 
       const liveStart = live.length ? Math.min(...live.map(p => p.ts)) : Infinity;
       const merged = [...backdrop.filter(p => p.ts < liveStart), ...live].sort((a, b) => a.ts - b.ts);
 
-      if (!merged.length) throw new Error('crypto-feed chart empty (no live data and no backdrop available)');
+      if (!merged.length) throw new Error('crypto chart empty (no stored history and no backdrop available)');
       return merged;
     }
 
@@ -1522,7 +1531,7 @@
         stale: false,
         rows,
         warn: warnParts.length ? warnParts.join(' · ') : null,
-        source: 'coingecko-yahoo',
+        source: 'self-filling-history',
       };
     }
 
@@ -1658,7 +1667,17 @@
           const r = await fetch(url);
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const data = await r.json();
-          if (data.ok) return data;
+          if (data.ok) {
+            const rows = (data.rows || []).map(row => ({
+              ...row,
+              label: row.label || fmtTs(row.ts, timeframeId),
+            }));
+            return {
+              ...data,
+              rows,
+              producerMeta: data.producerMeta || { quotes: data.quotes || [], announcements: data.announcements || [] },
+            };
+          }
           throw new Error(data.error || 'Producer feed failed');
         } catch (e) {
           if (url === urls[urls.length - 1]) throw e;
@@ -1687,11 +1706,18 @@
       } catch (_) {}
     }
 
+    function perthRowTs(r) {
+      if (r.timestamp != null) return typeof r.timestamp === 'number' ? r.timestamp : new Date(r.timestamp).getTime();
+      if (r.dateTime != null) return new Date(r.dateTime).getTime();
+      if (r.ts != null) return r.ts;
+      return NaN;
+    }
+
     function filterPerthHistory(rows, tf) {
       if (!rows?.length) return [];
       const now = Date.now();
-      if (tf.hours) return rows.filter(r => now - new Date(r.dateTime).getTime() <= tf.hours * 3600000);
-      if (tf.days) return rows.filter(r => now - new Date(r.dateTime).getTime() <= tf.days * 86400000);
+      if (tf.hours) return rows.filter(r => now - perthRowTs(r) <= tf.hours * 3600000);
+      if (tf.days) return rows.filter(r => now - perthRowTs(r) <= tf.days * 86400000);
       return rows;
     }
 
@@ -2014,9 +2040,9 @@
 
     function perthToSeries(metalRows, field, audUsd, usdConv) {
       return metalRows.map(r => ({
-        ts: new Date(r.dateTime).getTime(),
+        ts: perthRowTs(r),
         price: usdConv ? r[field] * audUsd : r[field],
-      }));
+      })).filter(r => !Number.isNaN(r.ts) && r.price != null);
     }
 
     function getEventsInRange(rows, activeIds) {

@@ -89,13 +89,33 @@ async function appendMetalHistory(symbol, price) {
       asset: symbol,
       price,
       recorded_at: new Date().toISOString(),
+      recorded_day: new Date().toISOString().slice(0, 10),
     })
   });
-  // Not fatal if this fails (e.g. table not yet created) — the live snapshot
-  // path above is the important one; history is a nice-to-have that grows
-  // over time, so we just log and move on rather than failing the whole run.
   if (!res.ok) {
     console.error(`metal_price_history append failed for ${symbol}: ${res.status}`);
+  }
+}
+
+async function appendCryptoHistory(symbol, price) {
+  const url = `${SUPABASE_URL}/rest/v1/crypto_price_history`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: 'resolution=ignore-duplicates'
+    },
+    body: JSON.stringify({
+      asset: symbol,
+      price,
+      recorded_at: new Date().toISOString(),
+      recorded_day: new Date().toISOString().slice(0, 10),
+    })
+  });
+  if (!res.ok) {
+    console.error(`crypto_price_history append failed for ${symbol}: ${res.status}`);
   }
 }
 
@@ -123,6 +143,7 @@ export default async (req) => {
     try {
       const data = await fetchCrypto(symbol, geckoId);
       await upsertSnapshot(symbol, data, 'coingecko.com');
+      await appendCryptoHistory(symbol, data.price);
       results.push({ asset: symbol, ok: true });
     } catch (err) {
       console.error(err.message);
