@@ -501,7 +501,7 @@ async function seedProducers() {
     const have = await getDays('producer_price_history', `ticker=eq.${encodeURIComponent(ticker)}`);
     console.log(`\n[producer ${ticker}] ${have.size} days stored — fetching 2y from Yahoo...`);
     try {
-      const points = await fetchYahoo(ticker, '2y');
+      const points = await retry(() => fetchYahoo(ticker, '2y'), { tries: 8, baseMs: 2500 });
       const rows = [];
       for (const p of points) {
         if (!have.has(p.day)) rows.push(mkProducerRow(ticker, p.price, p.day));
@@ -513,7 +513,8 @@ async function seedProducers() {
     } catch (err) {
       console.log(`[producer ${ticker}] FAILED: ${err.message}`);
     }
-    await sleep(800);
+    // Give Yahoo a breather between tickers
+    await sleep(5000);
   }
 }
 
