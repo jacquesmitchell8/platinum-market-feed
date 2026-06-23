@@ -38,10 +38,24 @@ function setCached(key, data) {
   cache.set(key, { data, time: Date.now() });
 }
 
+function cgHeaders() {
+  const h = { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)', Accept: 'application/json' };
+  if (COINGECKO_API_KEY) h['x-cg-demo-api-key'] = COINGECKO_API_KEY;
+  return h;
+}
+
 function withApiKey(url) {
   if (!COINGECKO_API_KEY) return url;
   const separator = url.includes('?') ? '&' : '?';
   return `${url}${separator}x_cg_demo_api_key=${COINGECKO_API_KEY}`;
+}
+
+async function cgFetch(url) {
+  let res = await fetch(withApiKey(url), { headers: cgHeaders() });
+  if (res.status === 401 && COINGECKO_API_KEY) {
+    res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' } });
+  }
+  return res;
 }
 
 export default async (req) => {
@@ -60,9 +74,7 @@ export default async (req) => {
       }
 
       const cgUrl = withApiKey('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,conflux-token&vs_currencies=usd&include_24hr_change=true');
-      const res = await fetch(cgUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
-      });
+      const res = await cgFetch(cgUrl);
       if (!res.ok) throw new Error(`CoinGecko spot fetch failed: ${res.status}`);
       const data = await res.json();
       if (!data.bitcoin?.usd) throw new Error('CoinGecko spot returned no data');
@@ -97,9 +109,7 @@ export default async (req) => {
       // on Demo/free tiers. Leaving it empty is the documented correct approach.
       const cgUrl = withApiKey(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=${days}`);
 
-      const res = await fetch(cgUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
-      });
+      const res = await cgFetch(cgUrl);
       if (!res.ok) throw new Error(`CoinGecko fetch failed: ${res.status}`);
       const data = await res.json();
       if (!data.prices?.length) throw new Error('CoinGecko returned no price data');
