@@ -912,10 +912,10 @@
       'IDX-105': { id:'IDX-105', code:'PM-PT-OZ-OFFER-USD', label:'Perth Mint — 1oz Platinum — Sell (US dollars)', name:'Perth Mint · 1oz Platinum · Sell (USD equiv.)', unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#4A6785', perthMetal:'Platinum', perthField:'offer', usdConv:true, assets:['platinum','perth'], axis:'platinum' },
       'IDX-106': { id:'IDX-106', code:'PM-AU-OZ-OFFER-USD', label:'Perth Mint — 1oz Gold — Sell (US dollars)',     name:'Perth Mint · 1oz Gold · Sell (USD equiv.)',     unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#9A7B1A', perthMetal:'Gold',     perthField:'offer', usdConv:true, assets:['gold','perth'], axis:'gold' },
       'IDX-107': { id:'IDX-107', code:'PM-PT-TA', label:'Platinum — Technical structure (S/R · patterns)', name:'Platinum · Technical overlay', unit:'AUD', source:'Computed · Perth Mint sell', family:'ta', tab:'perth', color:'#7C3AED', assets:['platinum','perth'], axis:'platinum-ta', taOverlay:true, taSource:'IDX-103' },
-      'IDX-201': { id:'IDX-201', code:'VAL-JSE',  label:'Valterra Platinum — VAL.JO',           name:'Valterra Platinum · JSE',             unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#1E40AF', yahoo:'VAL.JO', ticker:'VAL.JO', exchange:'JSE', country:'South Africa', production:'~1.7 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-202': { id:'IDX-202', code:'IMP-JSE',  label:'Impala Platinum — IMP.JO',             name:'Impala Platinum · JSE',               unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#B45309', yahoo:'IMP.JO', ticker:'IMP.JO', exchange:'JSE', country:'South Africa', production:'~1.1 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-203': { id:'IDX-203', code:'SSW-JSE',  label:'Sibanye-Stillwater — SSW.JO',          name:'Sibanye-Stillwater · JSE',            unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#047857', yahoo:'SSW.JO', ticker:'SSW.JO', exchange:'JSE', country:'South Africa / USA', production:'~0.9 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-204': { id:'IDX-204', code:'NPH-JSE',  label:'Northam Platinum — NPH.JO',            name:'Northam Platinum · JSE',              unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#6B21A8', yahoo:'NPH.JO', ticker:'NPH.JO', exchange:'JSE', country:'South Africa', production:'~0.5 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-201': { id:'IDX-201', code:'VAL-JSE',  label:'Valterra Platinum — VAL.JO',           name:'Valterra Platinum · JSE',             unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#1E40AF', yahoo:'VAL.JO', ticker:'VAL.JO', exchange:'JSE', country:'South Africa', production:'~1.7 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-202': { id:'IDX-202', code:'IMP-JSE',  label:'Impala Platinum — IMP.JO',             name:'Impala Platinum · JSE',               unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#B45309', yahoo:'IMP.JO', ticker:'IMP.JO', exchange:'JSE', country:'South Africa', production:'~1.1 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-203': { id:'IDX-203', code:'SSW-JSE',  label:'Sibanye-Stillwater — SSW.JO',          name:'Sibanye-Stillwater · JSE',            unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#047857', yahoo:'SSW.JO', ticker:'SSW.JO', exchange:'JSE', country:'South Africa / USA', production:'~0.9 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-204': { id:'IDX-204', code:'NPH-JSE',  label:'Northam Platinum — NPH.JO',            name:'Northam Platinum · JSE',              unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#6B21A8', yahoo:'NPH.JO', ticker:'NPH.JO', exchange:'JSE', country:'South Africa', production:'~0.5 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
     };
 
     const TIMEFRAMES = [
@@ -925,7 +925,7 @@
       { id:'3m',  label:'3 Months',  cgDays:90,   perthKey:'twoYearsHistoricData',    days:90,    maxPts:500 },
       { id:'1y',  label:'1 Year',    cgDays:365,  perthKey:'twoYearsHistoricData',    days:365,   maxPts:600 },
       { id:'3y',  label:'3 Years',   cgDays:1095, perthKey:'threeYearsHistoricData',  days:1095,  maxPts:700 },
-      { id:'5y',  label:'5 Years',   cgDays:null, perthKey:'fiveYearsHistoricData',   maxPts:800 },
+      { id:'5y',  label:'5 Years',   cgDays:null, perthKey:'fiveYearsHistoricData', days:1825, maxPts:800 },
     ];
 
     /* Market-moving events — shown on timeline when in range */
@@ -1223,7 +1223,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v9:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v10:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1236,8 +1236,9 @@
     const loadSpotFromStorage = () => (window.PM && window.PM.loadSpotFromStorage ? window.PM.loadSpotFromStorage() : null);
     const saveSpotToStorage = (data) => { if (window.PM && window.PM.saveSpotToStorage) window.PM.saveSpotToStorage(data); };
 
-    async function fetchMarketSpot() {
-      if (window.PM && window.PM.fetchMarketSpot) return window.PM.fetchMarketSpot();
+    /** Delegate to boot IIFE — do not redeclare fetchMarketSpot (duplicate caused load hangs). */
+    async function fetchSpotForDashboard() {
+      if (window.PM?.fetchMarketSpot) return window.PM.fetchMarketSpot();
       const cached = loadSpotFromStorage();
       if (cached) return cached;
       return {
@@ -1394,16 +1395,21 @@
       return seriesMap;
     }
 
-    async function fetchIndexTimelineSplit(metalTfId, cryptoTfId, curveIds) {
+    function filterRowsByTimeframe(rows, timeframeId) {
+      const tf = TIMEFRAMES.find((t) => t.id === timeframeId);
+      if (!tf || !rows?.length) return rows || [];
+      const now = Date.now();
+      if (tf.hours) return rows.filter((r) => now - r.ts <= tf.hours * 3600000);
+      if (tf.days) return rows.filter((r) => now - r.ts <= tf.days * 86400000);
+      return rows;
+    }
+
+    async function fetchMetalsTimeline(metalTfId, curveIds) {
       const metalTf = TIMEFRAMES.find(t => t.id === metalTfId) || TIMEFRAMES[5];
-      const cryptoTf = TIMEFRAMES.find(t => t.id === cryptoTfId) || TIMEFRAMES[5];
       const metalSeries = {};
-      const cryptoSeries = {};
       const failures = [];
       const warns = [];
       const metalIds = curveIds.filter((id) => INDEX_METAL_IDS.has(id));
-      const cryptoIds = curveIds.filter((id) => INDEX_CRYPTO_IDS.has(id));
-      const cryptoTasks = [];
 
       let goldPts = null;
       if (metalIds.includes('IDX-001')) {
@@ -1445,6 +1451,22 @@
         }
       }
 
+      const metalsRows = mergeSeries(metalSeries, metalTfId);
+      const warnParts = [...warns];
+      if (failures.length) warnParts.push(`Some metal curves unavailable (${failures.join(', ')})`);
+      return {
+        metalsRows,
+        warn: warnParts.length ? warnParts.join(' · ') : null,
+      };
+    }
+
+    async function fetchCryptoTimeline(cryptoTfId, curveIds) {
+      const cryptoTf = TIMEFRAMES.find(t => t.id === cryptoTfId) || TIMEFRAMES[5];
+      const cryptoSeries = {};
+      const failures = [];
+      const cryptoIds = curveIds.filter((id) => INDEX_CRYPTO_IDS.has(id));
+      const cryptoTasks = [];
+
       for (const id of cryptoIds) {
         cryptoTasks.push((async () => {
           const coinId = CG_TIMELINE_IDS[id];
@@ -1461,11 +1483,24 @@
       }
       if (cryptoTasks.length) await Promise.all(cryptoTasks);
 
-      const metalsRows = mergeSeries(metalSeries, metalTfId);
       const cryptoRows = mergeSeries(cryptoSeries, cryptoTfId);
+      const warnParts = [];
+      if (failures.length) warnParts.push(`Some crypto curves unavailable (${failures.join(', ')})`);
+      return {
+        cryptoRows,
+        warn: warnParts.length ? warnParts.join(' · ') : null,
+      };
+    }
+
+    async function fetchIndexTimelineSplit(metalTfId, cryptoTfId, curveIds) {
+      const [metals, crypto] = await Promise.all([
+        fetchMetalsTimeline(metalTfId, curveIds),
+        fetchCryptoTimeline(cryptoTfId, curveIds),
+      ]);
+      const metalsRows = metals.metalsRows || [];
+      const cryptoRows = crypto.cryptoRows || [];
       if (!metalsRows.length && !cryptoRows.length) throw new Error('Index timeline unavailable');
-      const warnParts = [...warns];
-      if (failures.length) warnParts.push(`Some curves unavailable (${failures.join(', ')})`);
+      const warnParts = [metals.warn, crypto.warn].filter(Boolean);
       return {
         ok: true,
         stale: false,
@@ -1697,7 +1732,7 @@
       }
       const span = rows[rows.length - 1].ts - rows[0].ts;
       const tol = Math.max(span * 0.02, 7 * 86400000);
-      return bestD <= tol ? best.label : null;
+      return bestD <= tol ? best.ts : null;
     }
 
     function eventsForCurves(events, curveIds) {
@@ -2053,7 +2088,7 @@
         setSpotLoading(true);
         try {
           const [spotData, perthData, audFromFx] = await Promise.all([
-            fetchMarketSpot(),
+            fetchSpotForDashboard(),
             fetchPerthMint().catch(() => null),
             fetchAudUsd().catch(() => null),
           ]);
@@ -2106,78 +2141,133 @@
       const [producerMeta, setProducerMeta] = useState(null);
       const hasData = useRef(false);
       const cryptoTf = tab === 'index' ? cryptoTimeframe : metalTimeframe;
+      const idsKey = [...activeIds].sort().join(',');
 
+      // Index tab: metals and crypto load independently so period buttons actually change each chart.
       useEffect(() => {
+        if (tab !== 'index') return undefined;
         let cancelled = false;
-        const mergedKey = `v9:merged:${tab}:${metalTimeframe}:${cryptoTf}:${[...activeIds].sort().join(',')}`;
-        const cachedRaw = localStorage.getItem(mergedKey);
-        let cached = null;
-        try { cached = cachedRaw ? JSON.parse(cachedRaw) : null; } catch (_) {}
+        const cacheKey = `v10:metals:${metalTimeframe}:${idsKey}`;
 
-        if (cached?.rows?.length || cached?.metalsRows?.length || cached?.cryptoRows?.length) {
-          setRows(cached.rows || cached.metalsRows || cached.cryptoRows || []);
-          setMetalsRows(cached.metalsRows || []);
-          setCryptoRows(cached.cryptoRows || []);
-          hasData.current = true;
-          setLoading(false);
-        }
-
-        async function load() {
+        async function loadMetals() {
           if (!hasData.current) setLoading(true);
-          setErr(null);
-
           try {
-            const data = await fetchMarketTimelineWithTimeout(tab, metalTimeframe, activeIds, cryptoTf);
+            const data = await Promise.race([
+              fetchMetalsTimeline(metalTimeframe, activeIds),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Metals timeout')), TIMELINE_FETCH_TIMEOUT_MS)),
+            ]);
             if (cancelled) return;
-            const nextRows = data.rows || data.metalsRows || data.cryptoRows || [];
-            if (nextRows.length || data.metalsRows?.length || data.cryptoRows?.length) {
-              setRows(nextRows);
-              setMetalsRows(data.metalsRows || (tab === 'index' ? [] : nextRows));
-              setCryptoRows(data.cryptoRows || []);
-              try {
-                localStorage.setItem(mergedKey, JSON.stringify({
-                  rows: nextRows,
-                  metalsRows: data.metalsRows || null,
-                  cryptoRows: data.cryptoRows || null,
-                  savedAt: Date.now(),
-                }));
-              } catch (_) {}
-              hasData.current = true;
-              if (tab === 'producers' && data.producerMeta) {
-                setProducerMeta(data.producerMeta);
-              } else if (tab !== 'producers') {
-                setProducerMeta(null);
-              }
-              if (data.stale) {
-                setWarn(data.warn || `Cached snapshot · ${new Date(data.updatedAt || Date.now()).toLocaleString()}`);
-              } else if (data.warn) {
-                setWarn(data.warn);
-              } else {
-                setWarn(null);
-              }
-            } else {
-              throw new Error('No timeline rows returned');
-            }
+            setMetalsRows(data.metalsRows || []);
+            setRows((prev) => (data.metalsRows?.length ? data.metalsRows : prev));
+            if (data.warn) setWarn(data.warn);
+            hasData.current = true;
+            try {
+              localStorage.setItem(cacheKey, JSON.stringify({ metalsRows: data.metalsRows, savedAt: Date.now() }));
+            } catch (_) {}
           } catch (e) {
-            if (cancelled) return;
-            if (cached?.rows?.length || cached?.metalsRows?.length || cached?.cryptoRows?.length) {
-              setRows(cached.rows || cached.metalsRows || cached.cryptoRows || []);
-              setMetalsRows(cached.metalsRows || []);
-              setCryptoRows(cached.cryptoRows || []);
-              hasData.current = true;
-              setWarn('Showing last loaded timeline · ' + (e.message || 'fetch failed'));
-            } else if (!hasData.current) {
-              setErr(e.message || 'Timeline unavailable — try again shortly');
-            } else {
-              setWarn('Refresh failed — showing last loaded timeline.');
-            }
+            if (!cancelled && !hasData.current) setErr(e.message || 'Metals timeline unavailable');
           } finally {
             if (!cancelled) setLoading(false);
           }
         }
+
+        try {
+          const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+          if (cached?.metalsRows?.length) {
+            setMetalsRows(cached.metalsRows);
+            hasData.current = true;
+            setLoading(false);
+          }
+        } catch (_) {}
+
+        loadMetals();
+        return () => { cancelled = true; };
+      }, [tab, metalTimeframe, idsKey]);
+
+      useEffect(() => {
+        if (tab !== 'index') return undefined;
+        let cancelled = false;
+        const cacheKey = `v10:crypto:${cryptoTf}:${idsKey}`;
+
+        async function loadCrypto() {
+          if (!hasData.current) setLoading(true);
+          try {
+            const data = await Promise.race([
+              fetchCryptoTimeline(cryptoTf, activeIds),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Crypto timeout')), TIMELINE_FETCH_TIMEOUT_MS)),
+            ]);
+            if (cancelled) return;
+            setCryptoRows(data.cryptoRows || []);
+            if (data.warn) setWarn((w) => [w, data.warn].filter(Boolean).join(' · '));
+            hasData.current = true;
+            try {
+              localStorage.setItem(cacheKey, JSON.stringify({ cryptoRows: data.cryptoRows, savedAt: Date.now() }));
+            } catch (_) {}
+          } catch (e) {
+            if (!cancelled && !hasData.current) setErr(e.message || 'Crypto timeline unavailable');
+          } finally {
+            if (!cancelled) setLoading(false);
+          }
+        }
+
+        try {
+          const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+          if (cached?.cryptoRows?.length) {
+            setCryptoRows(cached.cryptoRows);
+            hasData.current = true;
+            setLoading(false);
+          }
+        } catch (_) {}
+
+        loadCrypto();
+        return () => { cancelled = true; };
+      }, [tab, cryptoTf, idsKey]);
+
+      useEffect(() => {
+        if (tab === 'index') return undefined;
+        let cancelled = false;
+        const mergedKey = `v10:${tab}:${metalTimeframe}:${idsKey}`;
+
+        async function load() {
+          if (!hasData.current) setLoading(true);
+          setErr(null);
+          try {
+            const data = await fetchMarketTimelineWithTimeout(tab, metalTimeframe, activeIds, cryptoTf);
+            if (cancelled) return;
+            const nextRows = data.rows || [];
+            if (nextRows.length) {
+              setRows(nextRows);
+              setMetalsRows([]);
+              setCryptoRows([]);
+              hasData.current = true;
+              if (tab === 'producers' && data.producerMeta) setProducerMeta(data.producerMeta);
+              else setProducerMeta(null);
+              setWarn(data.stale ? (data.warn || 'Cached snapshot') : (data.warn || null));
+              try {
+                localStorage.setItem(mergedKey, JSON.stringify({ rows: nextRows, savedAt: Date.now() }));
+              } catch (_) {}
+            } else {
+              throw new Error('No timeline rows returned');
+            }
+          } catch (e) {
+            if (!cancelled && !hasData.current) setErr(e.message || 'Timeline unavailable');
+          } finally {
+            if (!cancelled) setLoading(false);
+          }
+        }
+
+        try {
+          const cached = JSON.parse(localStorage.getItem(mergedKey) || 'null');
+          if (cached?.rows?.length) {
+            setRows(cached.rows);
+            hasData.current = true;
+            setLoading(false);
+          }
+        } catch (_) {}
+
         load();
         return () => { cancelled = true; };
-      }, [tab, metalTimeframe, cryptoTf, activeIds.join(',')]);
+      }, [tab, metalTimeframe, cryptoTf, idsKey]);
 
       return { rows, metalsRows, cryptoRows, loading, err, warn, producerMeta };
     }
@@ -2227,11 +2317,12 @@
       if (!curveIds.length || !rows.length) return null;
 
       const chartRows = useMemo(() => {
-        const withData = rows.filter((r) =>
+        const filtered = filterRowsByTimeframe(rows, timeframe);
+        const withData = filtered.filter((r) =>
           curveIds.some((id) => r[id] != null && !isNaN(r[id]))
         );
-        return withData.length ? withData : rows;
-      }, [rows, curveIds]);
+        return withData.length ? withData : filtered;
+      }, [rows, curveIds, timeframe]);
 
       const yDomain = yDomainForChart(chartRows, curveIds, logScale);
       const hasValues = chartRows.some((r) =>
@@ -2275,18 +2366,83 @@
               <Legend wrapperStyle={{fontSize:11, paddingTop:6}}
                 formatter={id => CURVE_INDEX[id]?.label || id}/>
               {showEvents && events.map(e => {
-                const xl = eventXLabel(e.ts, chartRows);
-                if (!xl) return null;
+                const xTs = eventXLabel(e.ts, chartRows);
+                if (xTs == null) return null;
                 return (
-                  <ReferenceLine key={`${e.ts}-${title}`} x={xl} stroke={e.c}
+                  <ReferenceLine key={`${e.ts}-${title}`} x={xTs} stroke={e.c}
                     strokeDasharray="4 3" strokeWidth={1.5} label={mkTsLbl(e.s, e.c)}/>
                 );
               })}
               {curveIds.map(id => (
                 <Line key={id} type="monotone" dataKey={id} name={id}
                   stroke={CURVE_INDEX[id].color} strokeWidth={2} dot={false}
-                  connectNulls activeDot={{r:4, strokeWidth:0, fill:CURVE_INDEX[id].color}}/>
+                  connectNulls={false} activeDot={{r:4, strokeWidth:0, fill:CURVE_INDEX[id].color}}/>
               ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function DualAxisCryptoChart({ title, rows, btcId, ethId, timeframe, showEvents, events }) {
+      if (!rows?.length) return null;
+
+      const chartRows = useMemo(() => {
+        const filtered = filterRowsByTimeframe(rows, timeframe);
+        return filtered.filter((r) =>
+          (r[btcId] != null && !isNaN(r[btcId])) || (r[ethId] != null && !isNaN(r[ethId]))
+        );
+      }, [rows, timeframe, btcId, ethId]);
+
+      if (!chartRows.length) {
+        return (
+          <div style={{marginBottom:8}}>
+            <div style={{...panelHdr, paddingTop:10}}><span>{title}</span></div>
+            <div style={{padding:24, textAlign:'center', color:C.text, fontSize:12}}>
+              No crypto data for selected period.
+            </div>
+          </div>
+        );
+      }
+
+      const btcDomain = yDomainForChart(chartRows, [btcId], false);
+      const ethDomain = yDomainForChart(chartRows, [ethId], false);
+
+      return (
+        <div style={{marginBottom:8}}>
+          <div style={{...panelHdr, paddingTop:10}}>
+            <span>{title}</span>
+            <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>
+              · dual scale (BTC left · ETH right)
+            </span>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={chartRows} margin={{top:20, right:58, left:8, bottom:4}}>
+              <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+              <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                tickFormatter={(ts) => fmtTs(ts, timeframe)}
+                interval="preserveStartEnd" minTickGap={44} {...axP} />
+              <YAxis yAxisId="btc" orientation="left" {...axP} width={62}
+                domain={btcDomain} tickFormatter={(v) => fmtUsd(v, 0)} />
+              <YAxis yAxisId="eth" orientation="right" {...axP} width={62}
+                domain={ethDomain} tickFormatter={(v) => fmtUsd(v, 0)} />
+              <Tooltip content={<TimelineTip/>} cursor={{stroke:C.border}}/>
+              <Legend wrapperStyle={{fontSize:11, paddingTop:6}}
+                formatter={id => CURVE_INDEX[id]?.label || id}/>
+              {showEvents && events.map(e => {
+                const xTs = eventXLabel(e.ts, chartRows);
+                if (xTs == null) return null;
+                return (
+                  <ReferenceLine key={`${e.ts}-dual`} x={xTs} stroke={e.c}
+                    strokeDasharray="4 3" strokeWidth={1.5} label={mkTsLbl(e.s, e.c)}/>
+                );
+              })}
+              <Line yAxisId="btc" type="monotone" dataKey={btcId} name={btcId}
+                stroke={CURVE_INDEX[btcId].color} strokeWidth={2} dot={false}
+                connectNulls={false} activeDot={{r:4, strokeWidth:0, fill:CURVE_INDEX[btcId].color}}/>
+              <Line yAxisId="eth" type="monotone" dataKey={ethId} name={ethId}
+                stroke={CURVE_INDEX[ethId].color} strokeWidth={2} dot={false}
+                connectNulls={false} activeDot={{r:4, strokeWidth:0, fill:CURVE_INDEX[ethId].color}}/>
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -2333,10 +2489,17 @@
             {cryptoMajorIds.length > 0 && cryptoChartRows.length > 0 && (
               <>
                 <TimeframeBar label="Crypto chart period" value={cryptoTimeframe} onChange={onCryptoTimeframeChange} />
-                <SingleTimelineChart
-                  title={`Bitcoin · Ethereum · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
-                  unit="USD" rows={cryptoChartRows} curveIds={cryptoMajorIds} timeframe={cryptoTimeframe}
-                  showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+                {cryptoMajorIds.includes('IDX-003') && cryptoMajorIds.includes('IDX-004') ? (
+                  <DualAxisCryptoChart
+                    title={`Bitcoin · Ethereum · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                    rows={cryptoChartRows} btcId="IDX-003" ethId="IDX-004" timeframe={cryptoTimeframe}
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+                ) : (
+                  <SingleTimelineChart
+                    title={`Crypto · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                    unit="USD" rows={cryptoChartRows} curveIds={cryptoMajorIds} timeframe={cryptoTimeframe}
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+                )}
               </>
             )}
             {cfxIds.length > 0 && cryptoChartRows.length > 0 && (
@@ -3328,7 +3491,7 @@
             ))}
           </div>
           <div style={{fontSize:10, color:C.text, marginTop:12}}>
-            Source: Google News (company + production / results queries) · JSE prices via Yahoo Finance
+            Source: Google News (company + production / results queries) · JSE prices via Twelve Data
           </div>
         </div>
       );

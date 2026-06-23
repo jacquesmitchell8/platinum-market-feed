@@ -2,16 +2,18 @@
 //
 // Called by the dashboard's Producers tab on every page load.
 // On each call:
-//   1. Fetches JSE share prices via Yahoo Finance
+//   1. Fetches JSE share prices via Twelve Data (or FMP fallback)
 //   2. Appends daily closes into producer_price_history (our own curve record)
-//   3. Gap-fills from Yahoo if history is thin
+//   3. Gap-fills from the data provider if history is thin
 //   4. Returns chart rows + producerMeta in the shape the dashboard expects
 //
 // Required Netlify env vars:
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
+//   TWELVE_DATA_API_KEY  (free — https://twelvedata.com/pricing)
 
 import { sbFetchAll } from './lib/supabase-paginate.js';
+import { fetchJseDailyHistory, fetchJseLatestQuote } from './lib/jse-history.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,7 +26,6 @@ const PRODUCERS = [
 ];
 
 const TICKER_TO_ID = Object.fromEntries(PRODUCERS.map(p => [p.ticker, p.id]));
-const BACKFILL_RANGE = '2y';
 
 const TIMEFRAME_FILTERS = {
   '24h': { hours: 24 },
@@ -64,26 +65,6 @@ async function upsertHistoryRow(ticker, price, dateStr) {
   });
 }
 
-async function fetchYahooChart(ticker, range) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=1d`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
-  });
-  if (!res.ok) throw new Error(`${ticker} Yahoo fetch failed: ${res.status}`);
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  if (!result) throw new Error(`${ticker} no chart result`);
-
-  const timestamps = result.timestamp || [];
-  const closes = result.indicators?.quote?.[0]?.close || [];
-  const points = [];
-  for (let i = 0; i < timestamps.length; i++) {
-    if (closes[i] == null) continue;
-    points.push({ ts: timestamps[i] * 1000, price: closes[i], day: formatDate(timestamps[i] * 1000) });
-  }
-  return { points, currency: result.meta?.currency || 'ZAR' };
-}
-
 async function storePoints(ticker, points) {
   for (const p of points) {
     await upsertHistoryRow(ticker, p.price, p.day);
@@ -101,9 +82,11 @@ async function ensureHistory(producer) {
 
   let freshPoints = [];
   try {
-    const chart = await fetchYahooChart(producer.ticker, needsBackfill ? BACKFILL_RANGE : '5d');
-    freshPoints = chart.points;
+    const years = needsBackfill ? 10 : 1;
+    const { points, source } = await fetchJseDailyHistory(producer.ticker, { years });
+    freshPoints = points;
     await storePoints(producer.ticker, freshPoints);
+    console.log(`[producer ${producer.ticker}] ${points.length} days from ${source}`);
   } catch (err) {
     console.error(`Producer fetch failed for ${producer.ticker}: ${err.message}`);
   }
@@ -123,7 +106,7 @@ async function upsertQuote(quote) {
     },
     body: JSON.stringify({
       ticker: quote.ticker, name: quote.name, price: quote.price, currency: quote.currency,
-      change_pct: quote.change_pct, updated_at: new Date().toISOString(), source: 'yahoo-finance',
+      change_pct: quote.change_pct, updated_at: new Date().toISOString(), source: quote.source || 'jse-history',
     })
   });
   return res.ok;
@@ -181,13 +164,24 @@ export default async (req) => {
     const latest = freshPoints.length ? freshPoints[freshPoints.length - 1] : points[points.length - 1];
     const prior = freshPoints.length > 1 ? freshPoints[freshPoints.length - 2] : points[points.length - 2];
     if (latest) {
-      const quote = {
+      let quote = {
         ticker: producer.ticker,
         name: producer.name,
         price: latest.price,
         currency: 'ZAR',
         change_pct: prior ? ((latest.price - prior.price) / prior.price) * 100 : null,
+        source: 'jse-history',
       };
+      try {
+        const live = await fetchJseLatestQuote(producer.ticker);
+        quote = {
+          ...quote,
+          price: live.price,
+          currency: live.currency || 'ZAR',
+          change_pct: live.change_pct ?? quote.change_pct,
+          source: live.source,
+        };
+      } catch (_) { /* use last stored close */ }
       await upsertQuote(quote);
       freshQuotes[producer.ticker] = quote;
     }

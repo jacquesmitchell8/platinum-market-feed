@@ -1,12 +1,15 @@
 // netlify/functions/fetch-producers.js
 //
 // Scheduled function — runs twice daily at 7am and 7pm (see netlify.toml).
-// Fetches JSE share prices for the 4 platinum producers via Yahoo Finance's
-// unofficial v8 chart endpoint, and upserts into Supabase `producer_quotes`.
+// Fetches JSE share prices for the 4 platinum producers via Twelve Data / FMP,
+// and upserts into Supabase `producer_quotes`.
 //
 // Required Netlify env vars:
-//   SUPABASE_URL              -> <your Supabase project URL>
-//   SUPABASE_SERVICE_ROLE_KEY -> secret key (NEVER the anon/publishable key, NEVER exposed to browser)
+//   SUPABASE_URL
+//   SUPABASE_SERVICE_ROLE_KEY
+//   TWELVE_DATA_API_KEY  (free — https://twelvedata.com/pricing)
+
+import { fetchJseLatestQuote } from './lib/jse-history.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -19,31 +22,14 @@ const PRODUCERS = [
 ];
 
 async function fetchQuote(producer) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${producer.ticker}?range=5d&interval=1d`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/1.0)' }
-  });
-  if (!res.ok) throw new Error(`${producer.ticker} fetch failed: ${res.status}`);
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  if (!result) throw new Error(`${producer.ticker} no chart result`);
-
-  const closes = result.indicators?.quote?.[0]?.close || [];
-  const validCloses = closes.filter(c => c != null);
-  const latest = validCloses[validCloses.length - 1];
-  const prior = validCloses[validCloses.length - 2];
-
-  if (latest == null) throw new Error(`${producer.ticker} no valid close price`);
-
-  const changePct = prior ? ((latest - prior) / prior) * 100 : null;
-  const currency = result.meta?.currency || 'ZAR';
-
+  const live = await fetchJseLatestQuote(producer.ticker);
   return {
     ticker: producer.ticker,
     name: producer.name,
-    price: latest,
-    currency,
-    change_pct: changePct,
+    price: live.price,
+    currency: live.currency || 'ZAR',
+    change_pct: live.change_pct,
+    source: live.source,
   };
 }
 
@@ -64,7 +50,7 @@ async function upsertQuote(quote) {
       currency: quote.currency,
       change_pct: quote.change_pct,
       updated_at: new Date().toISOString(),
-      source: 'yahoo-finance',
+      source: quote.source || 'jse-history',
     })
   });
   if (!res.ok) {

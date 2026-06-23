@@ -483,49 +483,29 @@ async function seedCrypto() {
   }
 }
 
-async function fetchYahoo(ticker, range) {
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=1d`;
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-      'Accept': 'application/json,text/plain,*/*',
-      'Origin': 'https://finance.yahoo.com',
-      'Referer': `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`,
-    }
-  });
-  if (!res.ok) throw new Error(`Yahoo ${ticker} HTTP ${res.status}`);
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  if (!result) throw new Error(`Yahoo ${ticker} no data`);
-  const timestamps = result.timestamp || [];
-  const closes = result.indicators?.quote?.[0]?.close || [];
-  const points = [];
-  for (let i = 0; i < timestamps.length; i++) {
-    if (closes[i] == null) continue;
-    points.push({ day: formatDate(timestamps[i] * 1000), price: closes[i] });
-  }
-  return points;
-}
-
 async function seedProducers() {
+  const { fetchJseDailyHistory } = await import('../netlify/functions/lib/jse-history.mjs');
+  if (!process.env.TWELVE_DATA_API_KEY && !process.env.FMP_API_KEY) {
+    console.log('\n[producers] SKIP — set TWELVE_DATA_API_KEY (free) or FMP_API_KEY in .env.seed');
+    return;
+  }
+
   for (const ticker of PRODUCERS) {
     const have = await getDays('producer_price_history', `ticker=eq.${encodeURIComponent(ticker)}`);
-    console.log(`\n[producer ${ticker}] ${have.size} days stored (paginated) — fetching 2y from Yahoo...`);
+    console.log(`\n[producer ${ticker}] ${have.size} days stored — fetching up to 10y from Twelve Data / FMP...`);
     try {
-      const points = await retry(() => fetchYahoo(ticker, '2y'), { tries: 8, baseMs: 2500 });
+      const { points, source } = await retry(() => fetchJseDailyHistory(ticker, { years: 10 }), { tries: 4, baseMs: 2000 });
       const rows = [];
       for (const p of points) {
         if (!have.has(p.day)) rows.push(mkProducerRow(ticker, p.price, p.day));
       }
       await insertInBatches('producer_price_history', rows);
-      let added = rows.length;
       const total = await countRows('producer_price_history', `ticker=eq.${encodeURIComponent(ticker)}`);
-      console.log(`[producer ${ticker}] done — ${total} days (${added} new)`);
+      console.log(`[producer ${ticker}] done — ${total} days (${rows.length} new, source: ${source})`);
     } catch (err) {
       console.log(`[producer ${ticker}] FAILED: ${err.message}`);
     }
-    // Give Yahoo a breather between tickers
-    await sleep(5000);
+    await sleep(1500);
   }
 }
 
@@ -535,7 +515,7 @@ function sleep(ms) {
 
 async function main() {
   console.log('=== Platinum Metis — full Supabase history seed ===');
-  console.log(`Target: ${BACKFILL_YEARS}y+ metals (until source limit), all Binance history for crypto, 2y producers\n`);
+  console.log(`Target: ${BACKFILL_YEARS}y+ metals (until source limit), all Binance history for crypto, 10y producers (Twelve Data)\n`);
 
   await seedMetals();
   await seedCrypto();
