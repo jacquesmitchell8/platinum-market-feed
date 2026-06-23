@@ -1298,19 +1298,12 @@
     }
 
     async function fetchMetalProxy(symbol, days) {
-      // Read stored history from Supabase (metals-history.js). Ingestion is
-      // propagate-curves.js — charts never fetch from the internet directly.
       const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}`;
       try {
         const res = await pmFetch(url, {}, 15000);
         const j = await res.json();
         if (!j.ok || !j.prices?.length) return null;
-        let pts = j.prices.map(([ts, price]) => ({ ts, price }));
-        if (days != null) {
-          const cutoff = Date.now() - days * 86400000;
-          pts = pts.filter((p) => p.ts >= cutoff);
-        }
-        return pts.length ? pts : null;
+        return j.prices.map(([ts, price]) => ({ ts, price }));
       } catch (_) {
         return null;
       }
@@ -1320,9 +1313,12 @@
 
     function filterByTimeframe(pts, tf) {
       if (!pts?.length) return [];
-      if (tf.hours) return pts.filter((p) => Date.now() - p.ts <= tf.hours * 3600000);
-      if (tf.days) return pts.filter((p) => Date.now() - p.ts <= tf.days * 86400000);
-      return pts;
+      let out = pts;
+      if (tf.hours) out = pts.filter((p) => Date.now() - p.ts <= tf.hours * 3600000);
+      else if (tf.days) out = pts.filter((p) => Date.now() - p.ts <= tf.days * 86400000);
+      // Don't show a flat single-day line when the DB has older data outside this window
+      if (tf.days && out.length < 20 && pts.length > out.length) return pts;
+      return out;
     }
 
     // Same backdrop pattern as annualBackdropPoints (gold/platinum) — converts
@@ -1366,11 +1362,6 @@
             }
           }
         } catch (_) {}
-      }
-
-      if (days != null && pts.length) {
-        const cutoff = Date.now() - days * 86400000;
-        pts = pts.filter((p) => p.ts >= cutoff);
       }
 
       if (!pts.length) throw new Error('No stored crypto history for ' + coinId);
@@ -1917,7 +1908,9 @@
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={ta.chartRows} margin={{top:24, right:16, left:8, bottom:4}}>
               <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
-              <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={44} {...axP} />
+              <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                tickFormatter={(ts) => fmtTs(ts, timeframe)}
+                interval="preserveStartEnd" minTickGap={44} {...axP} />
               <YAxis {...axP} width={62} domain={['auto', 'auto']} tickFormatter={fmtY}/>
               <Tooltip content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
@@ -2136,7 +2129,7 @@
 
       useEffect(() => {
         let cancelled = false;
-        const mergedKey = `merged:${tab}:${timeframeId}:${[...activeIds].sort().join(',')}`;
+        const mergedKey = `v8:merged:${tab}:${timeframeId}:${[...activeIds].sort().join(',')}`;
         const cachedRows = cacheFresh(mergedKey) || cacheStale(mergedKey);
 
         if (cachedRows?.length) {
@@ -2276,7 +2269,9 @@
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={chartRows} margin={{top:20, right:16, left:8, bottom:4}}>
               <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
-              <XAxis dataKey="label" interval="preserveStartEnd" minTickGap={44} {...axP} />
+              <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                tickFormatter={(ts) => fmtTs(ts, timeframe)}
+                interval="preserveStartEnd" minTickGap={44} {...axP} />
               <YAxis {...axP} width={62} scale={logScale ? 'log' : 'linear'}
                 domain={yDomain}
                 allowDataOverflow={logScale}
