@@ -104,13 +104,24 @@ function sbHeaders(extra = {}) {
 
 const UPSERT_BATCH_SIZE = 500;
 
+const ON_CONFLICT = {
+  metal_price_history: 'asset,recorded_day',
+  crypto_price_history: 'asset,recorded_day',
+  producer_price_history: 'ticker,recorded_day',
+};
+
 async function insertBatch(table, rows) {
   if (!rows.length) return true;
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+  const onConflict = ON_CONFLICT[table];
+  const url = onConflict
+    ? `${SUPABASE_URL}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`
+    : `${SUPABASE_URL}/rest/v1/${table}`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: sbHeaders({
       'Content-Type': 'application/json',
-      Prefer: 'resolution=ignore-duplicates',
+      // With on_conflict set, this becomes a proper upsert on our day-level key.
+      Prefer: 'resolution=merge-duplicates',
     }),
     body: JSON.stringify(rows),
   });
@@ -136,11 +147,17 @@ async function countRows(table, filter) {
 }
 
 async function getDays(table, filter) {
-  const url = `${SUPABASE_URL}/rest/v1/${table}?select=recorded_day&${filter}&order=recorded_day.asc&limit=10000`;
+  // recorded_day may be missing/null on older schema; fall back to recorded_at.
+  const url = `${SUPABASE_URL}/rest/v1/${table}?select=recorded_day,recorded_at&${filter}&order=recorded_at.asc&limit=10000`;
   const res = await fetch(url, { headers: sbHeaders() });
   if (!res.ok) return new Set();
   const rows = await res.json();
-  return new Set(rows.map((r) => r.recorded_day));
+  const days = new Set();
+  for (const r of rows) {
+    if (r.recorded_day) days.add(String(r.recorded_day));
+    else if (r.recorded_at) days.add(formatDate(r.recorded_at));
+  }
+  return days;
 }
 
 function mkMetalRow(asset, price, dateStr) {
