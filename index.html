@@ -1304,14 +1304,18 @@
     }
 
     async function fetchCgChartBrowser(coinId, days) {
+      // Routed through the server-side crypto-feed proxy (API key + caching)
+      // rather than calling CoinGecko directly from the browser — direct
+      // browser calls here were the other half of what caused the rate-limit
+      // escalation to 401 earlier today.
       const dStr = days == null ? 'max' : String(days);
-      const interval = days != null && days >= 2 && days <= 30 ? '&interval=hourly' : '';
-      const url = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinId)}/market_chart?vs_currency=usd&days=${dStr}${interval}`;
-      const res = await pmFetch(url, {}, 12000);
-      if (!res.ok) throw new Error('CoinGecko chart ' + res.status);
+      const url = `/.netlify/functions/crypto-feed?type=chart&id=${encodeURIComponent(coinId)}&days=${encodeURIComponent(dStr)}`;
+      const res = await pmFetch(url, {}, 15000);
+      if (!res.ok) throw new Error('crypto-feed chart ' + res.status);
       const text = await res.text();
       const j = JSON.parse(text);
-      if (!j.prices?.length) throw new Error('CoinGecko chart empty');
+      if (j.error && !j.prices?.length) throw new Error(j.error);
+      if (!j.ok || !j.prices?.length) throw new Error('crypto-feed chart empty');
       return j.prices.map(([ts, price]) => ({ ts, price }));
     }
 
@@ -1338,18 +1342,9 @@
     }
 
     async function fetchChartSeriesInner(coinId, days) {
-      try {
-        return await fetchCgChartBrowser(coinId, days);
-      } catch (_) {}
-      const dStr = days == null ? 'max' : String(days);
-      const url = `/.netlify/functions/crypto-feed?type=chart&id=${encodeURIComponent(coinId)}&days=${encodeURIComponent(dStr)}`;
-      const res = await pmFetch(url, {}, 15000);
-      if (!res.ok) throw new Error('Chart proxy ' + res.status);
-      const text = await res.text();
-      const j = JSON.parse(text);
-      if (j.error && !j.prices?.length) throw new Error(j.error);
-      if (!j.prices?.length) throw new Error('Empty chart');
-      return j.prices.map(([ts, price]) => ({ ts, price }));
+      // fetchCgChartBrowser already routes through the crypto-feed proxy,
+      // so this is just a thin wrapper for the in-flight de-duplication below.
+      return await fetchCgChartBrowser(coinId, days);
     }
 
     async function fetchChartSeries(coinId, days) {
