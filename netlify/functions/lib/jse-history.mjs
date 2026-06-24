@@ -1,173 +1,196 @@
 /**
- * JSE producer daily history — Twelve Data (primary) + FMP (fallback).
- * Yahoo Finance rate-limits server/automation traffic; these sources are reliable for JSE.
+ * JSE producer daily history.
  *
- * Env: TWELVE_DATA_API_KEY (free at https://twelvedata.com/pricing)
- *      FMP_API_KEY (optional fallback at https://financialmodelingprep.com/developer/docs)
+ * Source priority for .JO tickers:
+ *   1. Yahoo Finance (free, works for JSE when not rate-limited)
+ *   2. FMP stable API (free tier is US-only — JSE returns 402)
  */
 
 export const PRODUCER_TICKERS = ['VAL.JO', 'IMP.JO', 'SSW.JO', 'NPH.JO'];
 
-const TICKER_TO_JSE = {
-  'VAL.JO': 'VAL',
-  'IMP.JO': 'IMP',
-  'SSW.JO': 'SSW',
-  'NPH.JO': 'NPH',
+const HISTORY_ALIASES = {
+  // AMS.JO (Anglo American Platinum) delisted on Yahoo — skip to avoid wasted retries
 };
+
+let lastYahooMs = 0;
+const YAHOO_GAP_MS = 12000;
+const YAHOO_429_WAIT_MS = 20000;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 function formatDay(d) {
   return new Date(d).toISOString().slice(0, 10);
 }
 
-function jseCode(ticker) {
-  return TICKER_TO_JSE[ticker] || ticker.replace(/\.JO$/i, '');
+function parsePointsFromDays(points) {
+  return points.sort((a, b) => a.day.localeCompare(b.day));
 }
 
-function parseTwelveDataSeries(data) {
-  const values = data?.values;
-  if (!Array.isArray(values) || !values.length) {
-    throw new Error(data?.message || 'Twelve Data returned no values');
+function parseFmpRows(data) {
+  if (Array.isArray(data) && data.length) {
+    const points = [];
+    for (const row of data) {
+      const close = row.close != null ? Number(row.close) : row.price != null ? Number(row.price) : null;
+      if (close == null || Number.isNaN(close)) continue;
+      const day = String(row.date).slice(0, 10);
+      points.push({ day, price: close, ts: new Date(`${day}T12:00:00Z`).getTime() });
+    }
+    if (points.length) return parsePointsFromDays(points);
   }
-  const points = [];
-  for (const row of values) {
-    const close = row.close != null ? Number(row.close) : null;
-    if (close == null || Number.isNaN(close)) continue;
-    const day = String(row.datetime).slice(0, 10);
-    points.push({ day, price: close, ts: new Date(`${day}T12:00:00Z`).getTime() });
+  if (data?.historical?.length) {
+    const points = [];
+    for (const row of data.historical) {
+      const close = row.close != null ? Number(row.close) : null;
+      if (close == null || Number.isNaN(close)) continue;
+      const day = String(row.date).slice(0, 10);
+      points.push({ day, price: close, ts: new Date(`${day}T12:00:00Z`).getTime() });
+    }
+    if (points.length) return parsePointsFromDays(points);
   }
-  points.sort((a, b) => a.day.localeCompare(b.day));
-  return points;
+  throw new Error(data?.['Error Message'] || data?.message || 'FMP returned no rows');
 }
 
-async function fetchTwelveDataHistory(ticker, apiKey, years = 10) {
-  const code = jseCode(ticker);
-  const end = formatDay(Date.now());
+async function fetchFmpHistory(ticker, apiKey, years = 10) {
   const start = new Date();
   start.setUTCFullYear(start.getUTCFullYear() - years);
-  const startDay = formatDay(start);
+  const from = formatDay(start);
+  const url = new URL('https://financialmodelingprep.com/stable/historical-price-eod/light');
+  url.searchParams.set('symbol', ticker);
+  url.searchParams.set('from', from);
+  url.searchParams.set('apikey', apiKey);
 
-  const attempts = [
-    { symbol: code, exchange: 'JSE' },
-    { symbol: `${code}:JSE` },
-    { symbol: code, exchange: 'XJSE' },
-  ];
-
-  let lastErr;
-  for (const params of attempts) {
-    const url = new URL('https://api.twelvedata.com/time_series');
-    url.searchParams.set('interval', '1day');
-    url.searchParams.set('outputsize', '5000');
-    url.searchParams.set('start_date', startDay);
-    url.searchParams.set('end_date', end);
-    url.searchParams.set('apikey', apiKey);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!res.ok || data?.status === 'error') {
-      lastErr = new Error(data?.message || `Twelve Data HTTP ${res.status}`);
-      continue;
-    }
-    try {
-      return parseTwelveDataSeries(data);
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || new Error(`Twelve Data ${ticker} failed`);
-}
-
-async function fetchTwelveDataQuote(ticker, apiKey) {
-  const code = jseCode(ticker);
-  const attempts = [
-    { symbol: code, exchange: 'JSE' },
-    { symbol: `${code}:JSE` },
-    { symbol: code, exchange: 'XJSE' },
-  ];
-
-  let lastErr;
-  for (const params of attempts) {
-    const url = new URL('https://api.twelvedata.com/quote');
-    url.searchParams.set('apikey', apiKey);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!res.ok || data?.status === 'error') {
-      lastErr = new Error(data?.message || `Twelve Data quote HTTP ${res.status}`);
-      continue;
-    }
-    const price = data.close != null ? Number(data.close) : Number(data.price);
-    if (price == null || Number.isNaN(price)) {
-      lastErr = new Error(`${ticker} no quote price`);
-      continue;
-    }
-    return {
-      price,
-      currency: data.currency || 'ZAR',
-      change_pct: data.percent_change != null ? Number(data.percent_change) : null,
-    };
-  }
-  throw lastErr || new Error(`Twelve Data quote ${ticker} failed`);
-}
-
-function parseFmpHistory(data) {
-  const hist = data?.historical;
-  if (!Array.isArray(hist) || !hist.length) throw new Error('FMP returned no historical rows');
-  const points = [];
-  for (const row of hist) {
-    const close = row.close != null ? Number(row.close) : null;
-    if (close == null || Number.isNaN(close)) continue;
-    const day = String(row.date).slice(0, 10);
-    points.push({ day, price: close, ts: new Date(`${day}T12:00:00Z`).getTime() });
-  }
-  points.sort((a, b) => a.day.localeCompare(b.day));
-  return points;
-}
-
-async function fetchFmpHistory(ticker, apiKey) {
-  const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(ticker)}?apikey=${encodeURIComponent(apiKey)}`;
   const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) throw new Error(`FMP HTTP ${res.status}`);
-  if (data?.['Error Message']) throw new Error(data['Error Message']);
-  return parseFmpHistory(data);
+  const text = await res.text();
+  if (res.status === 402 || res.status === 403) {
+    throw new Error(`FMP ${ticker} not on free plan (HTTP ${res.status})`);
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`FMP HTTP ${res.status}: ${text.slice(0, 120)}`);
+  }
+  if (!res.ok) throw new Error(data?.['Error Message'] || `FMP HTTP ${res.status}`);
+  return parseFmpRows(data);
 }
 
 async function fetchFmpQuote(ticker, apiKey) {
-  const url = `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(ticker)}?apikey=${encodeURIComponent(apiKey)}`;
+  const url = `https://financialmodelingprep.com/stable/quote?symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`;
   const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) throw new Error(`FMP quote HTTP ${res.status}`);
+  const text = await res.text();
+  if (res.status === 402 || res.status === 403) {
+    throw new Error(`FMP quote ${ticker} not on free plan`);
+  }
+  const data = JSON.parse(text);
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.price) throw new Error(`${ticker} no FMP quote`);
   return {
     price: Number(row.price),
-    currency: 'ZAR',
+    currency: row.currency || 'ZAR',
     change_pct: row.changesPercentage != null ? Number(row.changesPercentage) : null,
   };
 }
 
+function parseYahooChart(data, ticker) {
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error(`Yahoo ${ticker} no chart result`);
+  const timestamps = result.timestamp || [];
+  const closes = result.indicators?.quote?.[0]?.close || [];
+  const points = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    if (closes[i] == null) continue;
+    const day = formatDay(timestamps[i] * 1000);
+    points.push({ day, price: closes[i], ts: timestamps[i] * 1000 });
+  }
+  if (!points.length) throw new Error(`Yahoo ${ticker} no close prices`);
+  return parsePointsFromDays(points);
+}
+
+async function fetchYahooHistory(ticker, range = '10y', { retries = 2 } = {}) {
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${encodeURIComponent(range)}&interval=1d`;
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    Accept: 'application/json,text/plain,*/*',
+    Origin: 'https://finance.yahoo.com',
+    Referer: `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}`,
+  };
+
+  let lastErr;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const gap = Date.now() - lastYahooMs;
+    if (gap < YAHOO_GAP_MS) await sleep(YAHOO_GAP_MS - gap);
+    lastYahooMs = Date.now();
+
+    const res = await fetch(url, { headers });
+    if (res.status === 429) {
+      lastErr = new Error(`Yahoo ${ticker} HTTP 429`);
+      await sleep(YAHOO_429_WAIT_MS * (attempt + 1));
+      continue;
+    }
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Yahoo ${ticker} non-JSON HTTP ${res.status}`);
+    }
+    if (!res.ok) {
+      throw new Error(`Yahoo ${ticker} HTTP ${res.status}`);
+    }
+    return parseYahooChart(data, ticker);
+  }
+  throw lastErr || new Error(`Yahoo ${ticker} failed after ${retries} tries`);
+}
+
+async function fetchYahooQuote(ticker) {
+  const points = await fetchYahooHistory(ticker, '5d', { retries: 3 });
+  const latest = points[points.length - 1];
+  const prior = points[points.length - 2];
+  return {
+    price: latest.price,
+    currency: 'ZAR',
+    change_pct: prior ? ((latest.price - prior.price) / prior.price) * 100 : null,
+  };
+}
+
+function mergeHistory(primary, extra) {
+  const byDay = new Map(primary.map((p) => [p.day, p]));
+  for (const p of extra) {
+    if (!byDay.has(p.day)) byDay.set(p.day, p);
+  }
+  return parsePointsFromDays([...byDay.values()]);
+}
+
 /**
- * Daily OHLCV closes for a JSE ticker (e.g. IMP.JO).
- * @returns {{ points: {day:string, price:number, ts:number}[], source: string }}
+ * Daily closes for a JSE ticker (e.g. IMP.JO).
  */
 export async function fetchJseDailyHistory(ticker, { years = 10 } = {}) {
-  const twelveKey = process.env.TWELVE_DATA_API_KEY;
-  const fmpKey = process.env.FMP_API_KEY;
+  const range = years <= 2 ? '2y' : years <= 5 ? '5y' : '10y';
 
-  if (twelveKey) {
-    try {
-      const points = await fetchTwelveDataHistory(ticker, twelveKey, years);
-      if (points.length) return { points, source: 'twelve-data' };
-    } catch (err) {
-      console.warn(`[jse-history] Twelve Data ${ticker}: ${err.message}`);
+  try {
+    let points = await fetchYahooHistory(ticker, range);
+    for (const alt of HISTORY_ALIASES[ticker] || []) {
+      try {
+        points = mergeHistory(points, await fetchYahooHistory(alt, range));
+      } catch (_) {}
     }
+    if (points.length) return { points, source: 'yahoo-finance' };
+  } catch (err) {
+    console.warn(`[jse-history] Yahoo ${ticker}: ${err.message}`);
   }
 
+  const fmpKey = process.env.FMP_API_KEY;
   if (fmpKey) {
     try {
-      const points = await fetchFmpHistory(ticker, fmpKey);
+      let points = await fetchFmpHistory(ticker, fmpKey, years);
+      for (const alt of HISTORY_ALIASES[ticker] || []) {
+        try {
+          points = mergeHistory(points, await fetchFmpHistory(alt, fmpKey, years));
+          await sleep(400);
+        } catch (_) {}
+      }
       if (points.length) return { points, source: 'fmp' };
     } catch (err) {
       console.warn(`[jse-history] FMP ${ticker}: ${err.message}`);
@@ -175,23 +198,18 @@ export async function fetchJseDailyHistory(ticker, { years = 10 } = {}) {
   }
 
   throw new Error(
-    `No JSE history for ${ticker}. Set TWELVE_DATA_API_KEY (free) or FMP_API_KEY in Netlify / .env.seed`
+    `No JSE history for ${ticker}. Yahoo may be rate-limited — wait 15 min and re-run, or upgrade FMP for international.`
   );
 }
 
-/** Latest quote for dashboards / scheduled refresh. */
 export async function fetchJseLatestQuote(ticker) {
-  const twelveKey = process.env.TWELVE_DATA_API_KEY;
-  const fmpKey = process.env.FMP_API_KEY;
-
-  if (twelveKey) {
-    try {
-      return { ...(await fetchTwelveDataQuote(ticker, twelveKey)), source: 'twelve-data' };
-    } catch (err) {
-      console.warn(`[jse-history] Twelve Data quote ${ticker}: ${err.message}`);
-    }
+  try {
+    return { ...(await fetchYahooQuote(ticker)), source: 'yahoo-finance' };
+  } catch (err) {
+    console.warn(`[jse-history] Yahoo quote ${ticker}: ${err.message}`);
   }
 
+  const fmpKey = process.env.FMP_API_KEY;
   if (fmpKey) {
     try {
       return { ...(await fetchFmpQuote(ticker, fmpKey)), source: 'fmp' };
@@ -200,5 +218,5 @@ export async function fetchJseLatestQuote(ticker) {
     }
   }
 
-  throw new Error(`No JSE quote for ${ticker}. Set TWELVE_DATA_API_KEY or FMP_API_KEY`);
+  throw new Error(`No JSE quote for ${ticker}.`);
 }

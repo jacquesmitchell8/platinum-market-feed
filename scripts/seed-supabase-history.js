@@ -395,34 +395,23 @@ async function seedMetals() {
     console.log(`[metals XAU] FAILED: ${err.message}`);
   }
 
-  // Platinum (XPT): try Yahoo daily first (may 429), else monthly open dataset.
+  // Platinum (XPT): Metals.Dev, then monthly open dataset — skip Yahoo (saves quota for JSE producers).
   try {
-    // With Metals.Dev upgraded, prefer it for platinum daily (reliable, no Yahoo 429).
     const md = await seedPlatinumFromMetalsDev(cutoffDay);
     console.log(`[metals XPT] ${md.added} daily rows (Metals.Dev)`);
-    // Skip Yahoo entirely now that we have a paid daily source.
     return;
   } catch (err) {
-    console.log(`[metals XPT] Metals.Dev failed (${err.message}); trying Yahoo daily (may 429)…`);
+    console.log(`[metals XPT] Metals.Dev failed (${err.message}); using monthly platinum.csv`);
   }
 
   try {
-    const pts = await retry(() => fetchYahooDaily('PL=F', '10y')).then(arr => arr.filter(p => p.day >= cutoffDay));
+    const pts = (await fetchDatahubPlatinumMonthly()).filter(p => p.day >= cutoffDay);
     const rows = pts.map(p => mkMetalRow('XPT', p.price, p.day));
     await insertInBatches('metal_price_history', rows);
     added += rows.length;
-    console.log(`[metals XPT] ${rows.length} days (${pts.length} fetched, Yahoo daily)`);
-  } catch (err) {
-    console.log(`[metals XPT] Yahoo failed (${err.message}); falling back to monthly platinum.csv`);
-    try {
-      const pts = (await fetchDatahubPlatinumMonthly()).filter(p => p.day >= cutoffDay);
-      const rows = pts.map(p => mkMetalRow('XPT', p.price, p.day));
-      await insertInBatches('metal_price_history', rows);
-      added += rows.length;
-      console.log(`[metals XPT] ${rows.length} months (${pts.length} fetched, datahub)`);
-    } catch (e2) {
-      console.log(`[metals XPT] FAILED: ${e2.message}`);
-    }
+    console.log(`[metals XPT] ${rows.length} months (${pts.length} fetched, datahub)`);
+  } catch (e2) {
+    console.log(`[metals XPT] FAILED: ${e2.message}`);
   }
 
   const total = await countRows('metal_price_history', 'asset=eq.XAU');
@@ -485,16 +474,17 @@ async function seedCrypto() {
 
 async function seedProducers() {
   const { fetchJseDailyHistory } = await import('../netlify/functions/lib/jse-history.mjs');
-  if (!process.env.TWELVE_DATA_API_KEY && !process.env.FMP_API_KEY) {
-    console.log('\n[producers] SKIP — set TWELVE_DATA_API_KEY (free) or FMP_API_KEY in .env.seed');
-    return;
+  if (!process.env.FMP_API_KEY) {
+    console.log('\n[producers] Using Yahoo Finance for JSE (FMP free tier is US-only).');
   }
 
   for (const ticker of PRODUCERS) {
     const have = await getDays('producer_price_history', `ticker=eq.${encodeURIComponent(ticker)}`);
-    console.log(`\n[producer ${ticker}] ${have.size} days stored — fetching up to 10y from Twelve Data / FMP...`);
+    console.log(`\n[producer ${ticker}] ${have.size} days stored — fetching up to 10y (Yahoo → FMP)...`);
     try {
-      const { points, source } = await retry(() => fetchJseDailyHistory(ticker, { years: 10 }), { tries: 4, baseMs: 2000 });
+      console.log(`[producer ${ticker}] fetching from Yahoo...`);
+      const { points, source } = await fetchJseDailyHistory(ticker, { years: 10 });
+      console.log(`[producer ${ticker}] got ${points.length} days (${source}), uploading to Supabase...`);
       const rows = [];
       for (const p of points) {
         if (!have.has(p.day)) rows.push(mkProducerRow(ticker, p.price, p.day));
@@ -505,7 +495,7 @@ async function seedProducers() {
     } catch (err) {
       console.log(`[producer ${ticker}] FAILED: ${err.message}`);
     }
-    await sleep(1500);
+    await sleep(12000);
   }
 }
 
@@ -514,12 +504,17 @@ function sleep(ms) {
 }
 
 async function main() {
+  const producersOnly = process.argv.includes('--producers-only');
   console.log('=== Platinum Metis — full Supabase history seed ===');
-  console.log(`Target: ${BACKFILL_YEARS}y+ metals (until source limit), all Binance history for crypto, 10y producers (Twelve Data)\n`);
-
-  await seedMetals();
-  await seedCrypto();
-  await seedProducers();
+  if (producersOnly) {
+    console.log('Mode: producers only\n');
+    await seedProducers();
+  } else {
+    console.log(`Target: ${BACKFILL_YEARS}y+ metals, all Binance crypto, 10y JSE producers (FMP → Yahoo)\n`);
+    await seedProducers();
+    await seedMetals();
+    await seedCrypto();
+  }
 
   console.log('\n=== Summary ===');
   for (const asset of METALS) {

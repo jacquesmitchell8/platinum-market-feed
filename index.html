@@ -912,10 +912,10 @@
       'IDX-105': { id:'IDX-105', code:'PM-PT-OZ-OFFER-USD', label:'Perth Mint — 1oz Platinum — Sell (US dollars)', name:'Perth Mint · 1oz Platinum · Sell (USD equiv.)', unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#4A6785', perthMetal:'Platinum', perthField:'offer', usdConv:true, assets:['platinum','perth'], axis:'platinum' },
       'IDX-106': { id:'IDX-106', code:'PM-AU-OZ-OFFER-USD', label:'Perth Mint — 1oz Gold — Sell (US dollars)',     name:'Perth Mint · 1oz Gold · Sell (USD equiv.)',     unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#9A7B1A', perthMetal:'Gold',     perthField:'offer', usdConv:true, assets:['gold','perth'], axis:'gold' },
       'IDX-107': { id:'IDX-107', code:'PM-PT-TA', label:'Platinum — Technical structure (S/R · patterns)', name:'Platinum · Technical overlay', unit:'AUD', source:'Computed · Perth Mint sell', family:'ta', tab:'perth', color:'#7C3AED', assets:['platinum','perth'], axis:'platinum-ta', taOverlay:true, taSource:'IDX-103' },
-      'IDX-201': { id:'IDX-201', code:'VAL-JSE',  label:'Valterra Platinum — VAL.JO',           name:'Valterra Platinum · JSE',             unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#1E40AF', yahoo:'VAL.JO', ticker:'VAL.JO', exchange:'JSE', country:'South Africa', production:'~1.7 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-202': { id:'IDX-202', code:'IMP-JSE',  label:'Impala Platinum — IMP.JO',             name:'Impala Platinum · JSE',               unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#B45309', yahoo:'IMP.JO', ticker:'IMP.JO', exchange:'JSE', country:'South Africa', production:'~1.1 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-203': { id:'IDX-203', code:'SSW-JSE',  label:'Sibanye-Stillwater — SSW.JO',          name:'Sibanye-Stillwater · JSE',            unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#047857', yahoo:'SSW.JO', ticker:'SSW.JO', exchange:'JSE', country:'South Africa / USA', production:'~0.9 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-204': { id:'IDX-204', code:'NPH-JSE',  label:'Northam Platinum — NPH.JO',            name:'Northam Platinum · JSE',              unit:'ZAR', source:'Twelve Data / JSE',       family:'producer', tab:'producers', color:'#6B21A8', yahoo:'NPH.JO', ticker:'NPH.JO', exchange:'JSE', country:'South Africa', production:'~0.5 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-201': { id:'IDX-201', code:'VAL-JSE',  label:'Valterra Platinum — VAL.JO',           name:'Valterra Platinum · JSE',             unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#1E40AF', yahoo:'VAL.JO', ticker:'VAL.JO', exchange:'JSE', country:'South Africa', production:'~1.7 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-202': { id:'IDX-202', code:'IMP-JSE',  label:'Impala Platinum — IMP.JO',             name:'Impala Platinum · JSE',               unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#B45309', yahoo:'IMP.JO', ticker:'IMP.JO', exchange:'JSE', country:'South Africa', production:'~1.1 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-203': { id:'IDX-203', code:'SSW-JSE',  label:'Sibanye-Stillwater — SSW.JO',          name:'Sibanye-Stillwater · JSE',            unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#047857', yahoo:'SSW.JO', ticker:'SSW.JO', exchange:'JSE', country:'South Africa / USA', production:'~0.9 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-204': { id:'IDX-204', code:'NPH-JSE',  label:'Northam Platinum — NPH.JO',            name:'Northam Platinum · JSE',              unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#6B21A8', yahoo:'NPH.JO', ticker:'NPH.JO', exchange:'JSE', country:'South Africa', production:'~0.5 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
     };
 
     const TIMEFRAMES = [
@@ -3491,7 +3491,7 @@
             ))}
           </div>
           <div style={{fontSize:10, color:C.text, marginTop:12}}>
-            Source: Google News (company + production / results queries) · JSE prices via Twelve Data
+            Source: Google News · JSE prices via Financial Modeling Prep / Yahoo Finance
           </div>
         </div>
       );

@@ -10,7 +10,8 @@
 // Required Netlify env vars:
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
-//   TWELVE_DATA_API_KEY  (free — https://twelvedata.com/pricing)
+//   TWELVE_DATA_API_KEY  (optional — JSE requires paid Twelve Data plan)
+//   FMP_API_KEY          (free — recommended for JSE producer history)
 
 import { sbFetchAll } from './lib/supabase-paginate.js';
 import { fetchJseDailyHistory, fetchJseLatestQuote } from './lib/jse-history.mjs';
