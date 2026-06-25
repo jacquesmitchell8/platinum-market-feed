@@ -478,7 +478,13 @@ async function seedProducers() {
     console.log('\n[producers] Using Yahoo Finance for JSE (FMP free tier is US-only).');
   }
 
-  for (const ticker of PRODUCERS) {
+  const onlyArg = process.argv.find((a) => a.startsWith('--producer='));
+  const only = onlyArg ? onlyArg.split('=')[1] : null;
+  const tickers = only ? [only] : PRODUCERS;
+  const gapArg = process.argv.find((a) => a.startsWith('--producer-gap-ms='));
+  const gapMs = gapArg ? Math.max(0, parseInt(gapArg.split('=')[1], 10) || 0) : 60000;
+
+  for (const ticker of tickers) {
     const have = await getDays('producer_price_history', `ticker=eq.${encodeURIComponent(ticker)}`);
     console.log(`\n[producer ${ticker}] ${have.size} days stored — fetching up to 10y (Yahoo → FMP)...`);
     try {
@@ -495,7 +501,7 @@ async function seedProducers() {
     } catch (err) {
       console.log(`[producer ${ticker}] FAILED: ${err.message}`);
     }
-    await sleep(12000);
+    if (gapMs) await sleep(gapMs);
   }
 }
 

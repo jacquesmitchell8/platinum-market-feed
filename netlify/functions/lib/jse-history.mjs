@@ -1,9 +1,12 @@
+import { fetchStooqCsv } from './stooq-history.mjs';
+
 /**
  * JSE producer daily history.
  *
  * Source priority for .JO tickers:
- *   1. Yahoo Finance (free, works for JSE when not rate-limited)
- *   2. FMP stable API (free tier is US-only — JSE returns 402)
+ *   1. Stooq (CSV; behind PoW challenge but automatable)
+ *   2. Yahoo Finance (free, works for JSE when not rate-limited)
+ *   3. FMP stable API (free tier is US-only — JSE returns 402)
  */
 
 export const PRODUCER_TICKERS = ['VAL.JO', 'IMP.JO', 'SSW.JO', 'NPH.JO'];
@@ -26,6 +29,36 @@ function formatDay(d) {
 
 function parsePointsFromDays(points) {
   return points.sort((a, b) => a.day.localeCompare(b.day));
+}
+
+function parseStooqCsv(csvText) {
+  // CSV columns: Date,Open,High,Low,Close,Volume
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error('Stooq CSV empty');
+  const header = lines[0].toLowerCase();
+  if (!header.startsWith('date,')) throw new Error('Stooq CSV missing header');
+  const points = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(',');
+    if (parts.length < 5) continue;
+    const day = parts[0];
+    const close = Number(parts[4]);
+    if (!day || Number.isNaN(close)) continue;
+    points.push({ day, price: close, ts: new Date(`${day}T12:00:00Z`).getTime() });
+  }
+  if (!points.length) throw new Error('Stooq CSV had no rows');
+  return parsePointsFromDays(points);
+}
+
+async function fetchStooqHistory(ticker, years = 10) {
+  // Stooq symbol format is usually lower-case; keep original and try lower.
+  const sym = String(ticker).toLowerCase();
+  const csv = await fetchStooqCsv({ symbol: sym, interval: 'd' });
+  const pts = parseStooqCsv(csv);
+  const cutoff = new Date();
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - years);
+  const cutoffDay = formatDay(cutoff);
+  return pts.filter((p) => p.day >= cutoffDay);
 }
 
 function parseFmpRows(data) {
@@ -168,6 +201,14 @@ function mergeHistory(primary, extra) {
  */
 export async function fetchJseDailyHistory(ticker, { years = 10 } = {}) {
   const range = years <= 2 ? '2y' : years <= 5 ? '5y' : '10y';
+
+  // Stooq first (if available) — avoids Yahoo 429.
+  try {
+    const points = await fetchStooqHistory(ticker, years);
+    if (points.length) return { points, source: 'stooq' };
+  } catch (err) {
+    console.warn(`[jse-history] Stooq ${ticker}: ${err.message}`);
+  }
 
   try {
     let points = await fetchYahooHistory(ticker, range);
