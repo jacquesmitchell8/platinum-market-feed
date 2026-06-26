@@ -2304,25 +2304,32 @@
 
     function yDomainForChart(rows, curveIds, logScale) {
       const range = chartValueRange(rows, curveIds);
-      if (!range) return logScale ? [0.001, 'auto'] : ['auto', 'auto'];
-      const { min, max } = range;
+      if (!range) return logScale ? [0.01, 1] : [0, 1];
+      let { min, max } = range;
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+      if (min === max) {
+        const pad = Math.max(Math.abs(min) * 0.05, min > 0 ? min * 0.02 : 1);
+        min -= pad;
+        max += pad;
+      }
       if (logScale) {
         return [Math.max(min * 0.85, 0.00001), max * 1.1];
       }
-      const pad = Math.max((max - min) * 0.06, max * 0.02);
+      const pad = Math.max((max - min) * 0.06, max * 0.02, 1);
       return [Math.max(0, min - pad), max + pad];
     }
 
     function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale }) {
-      if (!curveIds.length || !rows.length) return null;
-
       const chartRows = useMemo(() => {
+        if (!rows?.length || !curveIds?.length) return [];
         const filtered = filterRowsByTimeframe(rows, timeframe);
         const withData = filtered.filter((r) =>
           curveIds.some((id) => r[id] != null && !isNaN(r[id]))
         );
         return withData.length ? withData : filtered;
       }, [rows, curveIds, timeframe]);
+
+      if (!curveIds?.length || !chartRows.length) return null;
 
       const yDomain = yDomainForChart(chartRows, curveIds, logScale);
       const hasValues = chartRows.some((r) =>
@@ -2385,14 +2392,16 @@
     }
 
     function DualAxisCryptoChart({ title, rows, btcId, ethId, timeframe, showEvents, events }) {
-      if (!rows?.length) return null;
-
       const chartRows = useMemo(() => {
+        if (!rows?.length) return [];
         const filtered = filterRowsByTimeframe(rows, timeframe);
         return filtered.filter((r) =>
           (r[btcId] != null && !isNaN(r[btcId])) || (r[ethId] != null && !isNaN(r[ethId]))
         );
       }, [rows, timeframe, btcId, ethId]);
+
+      const btcHas = chartRows.some((r) => r[btcId] != null && !isNaN(r[btcId]));
+      const ethHas = chartRows.some((r) => r[ethId] != null && !isNaN(r[ethId]));
 
       if (!chartRows.length) {
         return (
@@ -2402,6 +2411,16 @@
               No crypto data for selected period.
             </div>
           </div>
+        );
+      }
+
+      // One series only — single axis avoids Recharts dual-axis invariant crashes
+      if (!btcHas || !ethHas) {
+        const ids = btcHas ? [btcId] : [ethId];
+        return (
+          <SingleTimelineChart
+            title={title} unit="USD" rows={chartRows} curveIds={ids} timeframe={timeframe}
+            showEvents={showEvents} events={events}/>
         );
       }
 
@@ -2433,7 +2452,7 @@
                 const xTs = eventXLabel(e.ts, chartRows);
                 if (xTs == null) return null;
                 return (
-                  <ReferenceLine key={`${e.ts}-dual`} x={xTs} stroke={e.c}
+                  <ReferenceLine key={`${e.ts}-dual`} yAxisId="btc" x={xTs} stroke={e.c}
                     strokeDasharray="4 3" strokeWidth={1.5} label={mkTsLbl(e.s, e.c)}/>
                 );
               })}
@@ -2489,15 +2508,24 @@
             {cryptoMajorIds.length > 0 && cryptoChartRows.length > 0 && (
               <>
                 <TimeframeBar label="Crypto chart period" value={cryptoTimeframe} onChange={onCryptoTimeframeChange} />
-                {cryptoMajorIds.includes('IDX-003') && cryptoMajorIds.includes('IDX-004') ? (
-                  <DualAxisCryptoChart
-                    title={`Bitcoin · Ethereum · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
-                    rows={cryptoChartRows} btcId="IDX-003" ethId="IDX-004" timeframe={cryptoTimeframe}
-                    showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
-                ) : (
+                {cryptoMajorIds.includes('IDX-003') && (
+                  <SingleTimelineChart
+                    title={`Bitcoin · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                    unit="USD" rows={cryptoChartRows} curveIds={['IDX-003']} timeframe={cryptoTimeframe}
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, ['IDX-003'])}/>
+                )}
+                {cryptoMajorIds.includes('IDX-004') && (
+                  <SingleTimelineChart
+                    title={`Ethereum · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                    unit="USD" rows={cryptoChartRows} curveIds={['IDX-004']} timeframe={cryptoTimeframe}
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, ['IDX-004'])}/>
+                )}
+                {cryptoMajorIds.filter(id => id !== 'IDX-003' && id !== 'IDX-004').length > 0 && (
                   <SingleTimelineChart
                     title={`Crypto · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
-                    unit="USD" rows={cryptoChartRows} curveIds={cryptoMajorIds} timeframe={cryptoTimeframe}
+                    unit="USD" rows={cryptoChartRows}
+                    curveIds={cryptoMajorIds.filter(id => id !== 'IDX-003' && id !== 'IDX-004')}
+                    timeframe={cryptoTimeframe}
                     showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
                 )}
               </>
@@ -2516,6 +2544,14 @@
 
       if (tab === 'producers') {
         const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
+        if (!rows?.length || !producerIds.length) {
+          return (
+            <div style={{padding:24, textAlign:'center', color:C.text, fontSize:13, lineHeight:1.5}}>
+              Producer share prices unavailable — JSE data sources are rate-limited.<br/>
+              <span style={{fontSize:12}}>Run <code style={{background:'#F1F5F9',padding:'2px 6px',borderRadius:4}}>node scripts/seed-supabase-history.js --producers-only</code> from a hotspot, or check back later.</span>
+            </div>
+          );
+        }
         return (
           <SingleTimelineChart
             title="Top platinum producers · JSE share price (ZAR)"
