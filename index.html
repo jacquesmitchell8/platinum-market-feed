@@ -2483,7 +2483,7 @@
       );
     }
 
-    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, activeCurves, showEvents, eventsInRange }) {
+    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta }) {
       if (tab === 'index') {
         const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
         const cryptoMajorIds = activeCurves.filter(id =>
@@ -2544,19 +2544,43 @@
 
       if (tab === 'producers') {
         const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
-        if (!rows?.length || !producerIds.length) {
-          return (
-            <div style={{padding:24, textAlign:'center', color:C.text, fontSize:13, lineHeight:1.5}}>
-              Producer share prices unavailable — JSE data sources are rate-limited.<br/>
-              <span style={{fontSize:12}}>Run <code style={{background:'#F1F5F9',padding:'2px 6px',borderRadius:4}}>node scripts/seed-supabase-history.js --producers-only</code> from a hotspot, or check back later.</span>
-            </div>
-          );
-        }
+        if (!producerIds.length) return null;
+        const quotesById = Object.fromEntries((producerMeta?.quotes || []).map(q => [q.id, q]));
         return (
-          <SingleTimelineChart
-            title="Top platinum producers · JSE share price (ZAR)"
-            unit="ZAR" rows={rows} curveIds={producerIds} timeframe={metalTimeframe}
-            showEvents={showEvents} events={eventsForCurves(eventsInRange, producerIds)}/>
+          <>
+            <TimeframeBar label="Producer chart period" value={metalTimeframe} onChange={onMetalTimeframeChange} />
+            {producerIds.map((id) => {
+              const meta = CURVE_INDEX[id];
+              const quote = quotesById[id];
+              const hasHistory = rows?.some((r) => r[id] != null && !isNaN(r[id]));
+              if (hasHistory) {
+                return (
+                  <SingleTimelineChart
+                    key={id}
+                    title={`${meta.name} · ${meta.ticker} · ZAR`}
+                    unit="ZAR" rows={rows} curveIds={[id]} timeframe={metalTimeframe}
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}/>
+                );
+              }
+              return (
+                <div key={id} style={{...cardStyle, marginBottom:8, padding:'16px 18px'}}>
+                  <div style={{fontSize:12, fontWeight:600, color:meta.color, marginBottom:6}}>{meta.label}</div>
+                  <div style={{fontSize:22, fontWeight:600, color:C.textDark, fontVariantNumeric:'tabular-nums'}}>
+                    {quote?.priceZar != null ? fmtZar(quote.priceZar) : '—'}
+                  </div>
+                  {quote?.changePct != null && (
+                    <div style={{fontSize:12, marginTop:4, color: quote.changePct >= 0 ? '#047857' : '#B91C1C'}}>
+                      {fmtPct(quote.changePct)} today
+                    </div>
+                  )}
+                  <div style={{fontSize:11, color:C.text, marginTop:8, lineHeight:1.5}}>
+                    Historical curve pending — JSE backfill blocked by data provider rate limits.
+                    {quote ? ' Live quote above from last successful fetch.' : ' Check back after seeding history.'}
+                  </div>
+                </div>
+              );
+            })}
+          </>
         );
       }
 
@@ -3023,6 +3047,14 @@
                     <li key={i}>{b}</li>
                   ))}
                 </ul>
+                {story.direction && (
+                  <span style={{
+                    display:'inline-block', marginTop:6, fontSize:10, fontWeight:700,
+                    letterSpacing:'0.06em', textTransform:'uppercase', padding:'2px 8px', borderRadius:4,
+                    background: story.direction === 'bullish' ? 'rgba(4,120,87,0.12)' : story.direction === 'bearish' ? 'rgba(185,28,28,0.1)' : 'rgba(100,116,139,0.12)',
+                    color: story.direction === 'bullish' ? '#047857' : story.direction === 'bearish' ? '#B91C1C' : C.text,
+                  }}>{story.direction} for PGM</span>
+                )}
               </div>
             </div>
           </summary>
@@ -3224,7 +3256,7 @@
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            Refreshes once per UTC day · Mining.com · Google News PGM queries
+            Refreshes once per day · Google News PGM & producer feeds
             {digest?.persistNote && ` · ${digest.persistNote}`}
           </div>
         </div>
@@ -3710,16 +3742,26 @@
                 <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>{rows.length} data points</span>
               )}
             </div>
-            {chartLoading && !rows.length && !metalsRows.length && !cryptoRows.length ? (
-              <div style={{padding:40, textAlign:'center', color:C.text, fontSize:13}}>Loading timeline…</div>
-            ) : chartErr && !rows.length && !metalsRows.length && !cryptoRows.length ? (
-              <div style={{padding:20, color:'#B91C1C', fontSize:12}}>
-                Timeline unavailable: {chartErr}
-                {' — metals via Netlify/Yahoo; crypto via Binance; Perth direct from mint API.'}
-              </div>
-            ) : !rows.length && !metalsRows.length && !cryptoRows.length ? (
-              <div style={{padding:20, color:C.text, fontSize:12}}>No data for selected range.</div>
-            ) : (
+            {(() => {
+              const hasChartData =
+                (tab === 'index' && ((metalsRows?.length) || (cryptoRows?.length))) ||
+                (tab === 'producers' && (rows?.length || producerMeta?.quotes?.length)) ||
+                (tab === 'perth' && rows?.length);
+              if (chartLoading && !hasChartData) {
+                return <div style={{padding:40, textAlign:'center', color:C.text, fontSize:13}}>Loading timeline…</div>;
+              }
+              if (chartErr && !hasChartData) {
+                return (
+                  <div style={{padding:20, color:'#B91C1C', fontSize:12}}>
+                    Timeline unavailable: {chartErr}
+                    {tab === 'index' && ' — metals via Netlify; crypto via Binance; Perth direct from mint API.'}
+                  </div>
+                );
+              }
+              if (!hasChartData) {
+                return <div style={{padding:20, color:C.text, fontSize:12}}>No data for selected range.</div>;
+              }
+              return (
               <>
                 {chartWarn && (
                   <div style={{margin:'0 16px 8px', padding:'8px 12px', fontSize:11, color:'#92400E',
@@ -3734,10 +3776,12 @@
                   <TimelineCharts tab={tab} rows={rows} metalsRows={metalsRows} cryptoRows={cryptoRows}
                     metalTimeframe={metalTimeframe} cryptoTimeframe={cryptoTimeframe}
                     onMetalTimeframeChange={setMetalTimeframe} onCryptoTimeframeChange={setCryptoTimeframe}
-                    activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}/>
+                    activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}
+                    producerMeta={producerMeta}/>
                 </ErrorBoundary>
               </>
-            )}
+              );
+            })()}
             {tab === 'producers' ? (
               <ProducerAnnouncements announcements={producerMeta?.announcements} quotes={producerMeta?.quotes} />
             ) : (

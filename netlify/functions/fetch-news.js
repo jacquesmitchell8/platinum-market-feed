@@ -13,9 +13,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const FEEDS = [
-  { url: 'https://news.google.com/rss/search?q=platinum+mining&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'platinum' },
-  { url: 'https://news.google.com/rss/search?q=gold+price&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'gold' },
-  { url: 'https://news.google.com/rss/search?q=palladium+market&hl=en-US&gl=US&ceid=US:en', source: 'google-news', topic: 'palladium' },
+  { url: 'https://news.google.com/rss/search?q=platinum+mining+OR+platinum+deficit+OR+WPIC&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
+  { url: 'https://news.google.com/rss/search?q=Impala+Platinum+OR+Sibanye+Stillwater+OR+Northam+Platinum+OR+Valterra+Platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
+  { url: 'https://news.google.com/rss/search?q=palladium+rhodium+PGM+market&hl=en-AU&gl=AU&ceid=AU:en', topic: 'palladium' },
 ];
 
 function parseRssItems(xml) {
@@ -67,9 +67,9 @@ async function fetchFeed(feed) {
   if (!res.ok) throw new Error(`${feed.source}/${feed.topic} fetch failed: ${res.status}`);
   const xml = await res.text();
   const items = parseRssItems(xml);
-  return items.slice(0, 15).map(item => ({
+  return items.slice(0, 20).map(item => ({
     ...item,
-    source: item.publisher || feed.source,
+    source: item.publisher || 'Google News',
     topic: feed.topic,
   }));
 }
@@ -110,10 +110,10 @@ export default async (req) => {
       for (const item of items) {
         if (await upsertStory(item)) inserted++;
       }
-      results.push({ feed: `${feed.source}/${feed.topic}`, ok: true, found: items.length, inserted });
+      results.push({ feed: feed.topic, ok: true, found: items.length, inserted });
     } catch (err) {
       console.error(err.message);
-      results.push({ feed: `${feed.source}/${feed.topic}`, ok: false, error: err.message });
+      results.push({ feed: feed.topic, ok: false, error: err.message });
     }
   }
 
