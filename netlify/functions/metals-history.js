@@ -49,12 +49,40 @@ function compressToMonthly(rowsAsc) {
   return out;
 }
 
-async function fetchMetalRows(asset, table = 'metal_price_history') {
-  return sbFetchAll(
-    SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY,
-    `${table}?select=price,recorded_at&asset=eq.${encodeURIComponent(asset)}&order=recorded_at.asc`
-  );
+function utcNoonTs(dateLike) {
+  const d = new Date(dateLike);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+}
+
+/** Drop bad rows; forward-fill isolated zero/NaN prints so charts stay continuous. */
+function sanitizeMetalRows(rowsAsc) {
+  let lastGood = null;
+  const out = [];
+  for (const r of rowsAsc) {
+    const p = Number(r.price);
+    const price = p > 0 && Number.isFinite(p) ? p : lastGood;
+    if (price == null) continue;
+    lastGood = price;
+    out.push({
+      recorded_at: new Date(utcNoonTs(r.recorded_at)).toISOString(),
+      price,
+    });
+  }
+  return out;
+}
+
+async function fetchMetalRows(asset, table = 'metal_price_history', days = null) {
+  let path = `${table}?select=price,recorded_at,recorded_day&asset=eq.${encodeURIComponent(asset)}&order=recorded_at.asc`;
+  if (days != null && Number.isFinite(Number(days)) && Number(days) > 0) {
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - Math.ceil(Number(days)));
+    path += `&recorded_day=gte.${asISODate(since)}`;
+  }
+  return sbFetchAll(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, path);
+}
+
+function toPricePairs(rowsAsc) {
+  return rowsAsc.map((r) => [utcNoonTs(r.recorded_at), Number(r.price)]);
 }
 
 async function sbUpsert(table, rows, onConflict) {
@@ -81,6 +109,8 @@ export default async (req) => {
   const symbolMap = { 'GC=F': 'XAU', 'PL=F': 'XPT' };
   const asset = symbolMap[requested] || requested;
   const granularity = (url.searchParams.get('granularity') || 'daily').toLowerCase();
+  const daysParam = url.searchParams.get('days');
+  const days = daysParam != null && daysParam !== '' ? Number(daysParam) : null;
 
   if (!asset) {
     return new Response(JSON.stringify({ ok: false, error: 'Missing symbol parameter' }), {
@@ -95,23 +125,8 @@ export default async (req) => {
 
   try {
     if (granularity === 'monthly') {
-      // 1) Try monthly table first
-      const mRows = await fetchMetalRows(asset, 'metal_price_history_monthly');
-      if (mRows?.length) {
-        const prices = mRows.map(r => [new Date(r.recorded_at).getTime(), Number(r.price)]);
-        return new Response(JSON.stringify({
-          ok: true,
-          prices,
-          count: prices.length,
-          source: 'supabase-metal_price_history_monthly',
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
-        });
-      }
-
-      // 2) Derive monthly from daily and upsert
-      const dRows = await fetchMetalRows(asset);
+      // Always derive from daily so the current (partial) month stays in sync.
+      const dRows = sanitizeMetalRows(await fetchMetalRows(asset, 'metal_price_history', days));
       if (!dRows.length) {
         return new Response(JSON.stringify({ ok: false, error: 'No stored history yet for ' + asset }), {
           status: 200, headers: { 'Content-Type': 'application/json' }
@@ -126,7 +141,7 @@ export default async (req) => {
       }));
       await sbUpsert('metal_price_history_monthly', monthly, 'asset,recorded_day');
 
-      const prices = monthly.map(r => [new Date(r.recorded_at).getTime(), Number(r.price)]);
+      const prices = monthly.map(r => [utcNoonTs(r.recorded_at), Number(r.price)]);
       return new Response(JSON.stringify({
         ok: true,
         prices,
@@ -139,14 +154,14 @@ export default async (req) => {
     }
 
     // daily (default)
-    const rows = await fetchMetalRows(asset);
+    const rows = sanitizeMetalRows(await fetchMetalRows(asset, 'metal_price_history', days));
     if (!rows.length) {
       return new Response(JSON.stringify({ ok: false, error: 'No stored history yet for ' + asset }), {
         status: 200, headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    const prices = rows.map(r => [new Date(r.recorded_at).getTime(), Number(r.price)]);
+    const prices = toPricePairs(rows);
     return new Response(JSON.stringify({
       ok: true,
       prices,

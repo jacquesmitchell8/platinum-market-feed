@@ -1286,9 +1286,30 @@
       return 'monthly';
     }
 
+    /** One row per UTC calendar day at noon — gold/platinum share a ts so merged lines stay continuous. */
+    function bucketMetalPtsByUtcDay(pts) {
+      if (!pts?.length) return [];
+      const byDay = new Map();
+      for (const p of pts) {
+        const d = new Date(p.ts);
+        if (Number.isNaN(d.getTime())) continue;
+        const dayTs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+        byDay.set(dayTs, { ts: dayTs, price: p.price });
+      }
+      return [...byDay.values()].sort((a, b) => a.ts - b.ts);
+    }
+
+    function historyDaysForTf(tf) {
+      if (tf?.cgDays != null) return tf.cgDays;
+      if (tf?.days != null) return tf.days;
+      return null;
+    }
+
     async function fetchMetalProxy(symbol, days) {
       const granularity = granularityForDays(days);
-      const url = `/.netlify/functions/metals-history?symbol=${encodeURIComponent(symbol)}&granularity=${encodeURIComponent(granularity)}`;
+      const qs = new URLSearchParams({ symbol, granularity });
+      if (days != null) qs.set('days', String(Math.ceil(days) + 3));
+      const url = `/.netlify/functions/metals-history?${qs}`;
       try {
         const res = await pmFetch(url, {}, 15000);
         const j = await res.json();
@@ -1339,7 +1360,8 @@
       return pts;
     }
 
-    async function fetchMetalChart(indexId, days, goldPtsForFallback) {
+    async function fetchMetalChart(indexId, tf, goldPtsForFallback) {
+      const days = historyDaysForTf(tf);
       const yahooSym = indexId === 'IDX-002' ? 'PL=F' : indexId === 'IDX-001' ? 'GC=F' : null;
 
       if (yahooSym) {
@@ -1414,8 +1436,8 @@
       let goldPts = null;
       if (metalIds.includes('IDX-001')) {
         try {
-          goldPts = await fetchMetalChart('IDX-001', metalTf.cgDays);
-          goldPts = filterByTimeframe(goldPts, metalTf);
+          goldPts = await fetchMetalChart('IDX-001', metalTf);
+          goldPts = bucketMetalPtsByUtcDay(filterByTimeframe(goldPts, metalTf));
           if (goldPts.length) metalSeries['IDX-001'] = downsample(goldPts, maxPtsFor(metalTf));
         } catch (_) {
           failures.push('IDX-001');
@@ -1424,8 +1446,8 @@
 
       if (metalIds.includes('IDX-002')) {
         try {
-          let pts = await fetchMetalChart('IDX-002', metalTf.cgDays, goldPts);
-          pts = filterByTimeframe(pts, metalTf);
+          let pts = await fetchMetalChart('IDX-002', metalTf, goldPts);
+          pts = bucketMetalPtsByUtcDay(filterByTimeframe(pts, metalTf));
           if (pts.length) metalSeries['IDX-002'] = downsample(pts, maxPtsFor(metalTf));
           else if (goldPts?.length) {
             metalSeries['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(metalTf));
@@ -1443,8 +1465,8 @@
 
       for (const id of metalIds.filter((mid) => mid !== 'IDX-001' && mid !== 'IDX-002')) {
         try {
-          let pts = await fetchMetalChart(id, metalTf.cgDays);
-          pts = filterByTimeframe(pts, metalTf);
+          let pts = await fetchMetalChart(id, metalTf);
+          pts = bucketMetalPtsByUtcDay(filterByTimeframe(pts, metalTf));
           if (pts.length) metalSeries[id] = downsample(pts, maxPtsFor(metalTf));
         } catch (_) {
           failures.push(id);
@@ -1994,17 +2016,36 @@
     }
 
     function mergeSeries(seriesMap, tfId) {
-      const tsSet = new Set();
-      Object.values(seriesMap).forEach(pts => pts.forEach(p => tsSet.add(p.ts)));
-      const sorted = [...tsSet].sort((a, b) => a - b);
-      return sorted.map(ts => {
-        const row = { ts, label: fmtTs(ts, tfId) };
-        Object.entries(seriesMap).forEach(([id, pts]) => {
-          const hit = pts.find(p => p.ts === ts);
-          if (hit) row[id] = hit.price;
+      const byTs = new Map();
+      Object.entries(seriesMap).forEach(([id, pts]) => {
+        pts.forEach((p) => {
+          const d = new Date(p.ts);
+          if (Number.isNaN(d.getTime())) return;
+          const bucketTs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+          const ts = Math.abs(p.ts - bucketTs) < 6 * 3600000 ? bucketTs : p.ts;
+          if (!byTs.has(ts)) byTs.set(ts, { ts, label: fmtTs(ts, tfId) });
+          byTs.get(ts)[id] = p.price;
         });
-        return row;
       });
+      return [...byTs.values()].sort((a, b) => a.ts - b.ts);
+    }
+
+    function applyLiveSpotRows(rows, curveIds, live) {
+      if (!rows?.length || !live) return rows;
+      const tips = { 'IDX-001': live.gold?.price, 'IDX-002': live.platinum?.price };
+      const ids = curveIds.filter((id) => tips[id] != null && Number(tips[id]) > 0);
+      if (!ids.length) return rows;
+      const now = Date.now();
+      const next = rows.map((r) => ({ ...r }));
+      const today = new Date().toISOString().slice(0, 10);
+      const last = next[next.length - 1];
+      const lastDay = new Date(last.ts).toISOString().slice(0, 10);
+      const row = lastDay === today ? last : { ts: now };
+      if (row !== last) next.push(row);
+      row.ts = now;
+      row.label = fmtTs(now, '1w');
+      ids.forEach((id) => { row[id] = Number(tips[id]); });
+      return next;
     }
 
     const TIMELINE_FETCH_TIMEOUT_MS = 25000;
@@ -2140,6 +2181,7 @@
       const [warn, setWarn] = useState(null);
       const [producerMeta, setProducerMeta] = useState(null);
       const hasData = useRef(false);
+      const metalsHasData = useRef(false);
       const cryptoTf = tab === 'index' ? cryptoTimeframe : metalTimeframe;
       const idsKey = [...activeIds].sort().join(',');
 
@@ -2147,10 +2189,11 @@
       useEffect(() => {
         if (tab !== 'index') return undefined;
         let cancelled = false;
-        const cacheKey = `v10:metals:${metalTimeframe}:${idsKey}`;
+        const cacheKey = `v12:metals:${metalTimeframe}:${idsKey}`;
+        const METALS_CACHE_TTL_MS = 30 * 60 * 1000;
 
         async function loadMetals() {
-          if (!hasData.current) setLoading(true);
+          setLoading(true);
           try {
             const data = await Promise.race([
               fetchMetalsTimeline(metalTimeframe, activeIds),
@@ -2160,21 +2203,26 @@
             setMetalsRows(data.metalsRows || []);
             setRows((prev) => (data.metalsRows?.length ? data.metalsRows : prev));
             if (data.warn) setWarn(data.warn);
+            metalsHasData.current = true;
             hasData.current = true;
+            setErr(null);
             try {
               localStorage.setItem(cacheKey, JSON.stringify({ metalsRows: data.metalsRows, savedAt: Date.now() }));
             } catch (_) {}
           } catch (e) {
-            if (!cancelled && !hasData.current) setErr(e.message || 'Metals timeline unavailable');
+            if (!cancelled && !metalsHasData.current) setErr(e.message || 'Metals timeline unavailable');
           } finally {
             if (!cancelled) setLoading(false);
           }
         }
 
+        metalsHasData.current = false;
         try {
           const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
-          if (cached?.metalsRows?.length) {
+          const cacheFresh = cached?.savedAt && Date.now() - cached.savedAt < METALS_CACHE_TTL_MS;
+          if (cacheFresh && cached?.metalsRows?.length) {
             setMetalsRows(cached.metalsRows);
+            metalsHasData.current = true;
             hasData.current = true;
             setLoading(false);
           }
@@ -2319,15 +2367,16 @@
       return [Math.max(0, min - pad), max + pad];
     }
 
-    function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale }) {
+    function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale, liveSpot, connectNulls }) {
       const chartRows = useMemo(() => {
         if (!rows?.length || !curveIds?.length) return [];
-        const filtered = filterRowsByTimeframe(rows, timeframe);
+        let filtered = filterRowsByTimeframe(rows, timeframe);
+        if (liveSpot) filtered = applyLiveSpotRows(filtered, curveIds, liveSpot);
         const withData = filtered.filter((r) =>
           curveIds.some((id) => r[id] != null && !isNaN(r[id]))
         );
         return withData.length ? withData : filtered;
-      }, [rows, curveIds, timeframe]);
+      }, [rows, curveIds, timeframe, liveSpot]);
 
       if (!curveIds?.length || !chartRows.length) return null;
 
@@ -2383,7 +2432,7 @@
               {curveIds.map(id => (
                 <Line key={id} type="monotone" dataKey={id} name={id}
                   stroke={CURVE_INDEX[id].color} strokeWidth={2} dot={false}
-                  connectNulls={false} activeDot={{r:4, strokeWidth:0, fill:CURVE_INDEX[id].color}}/>
+                  connectNulls={connectNulls !== false} activeDot={{r:4, strokeWidth:0, fill:CURVE_INDEX[id].color}}/>
               ))}
             </LineChart>
           </ResponsiveContainer>
@@ -2483,7 +2532,7 @@
       );
     }
 
-    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta }) {
+    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot }) {
       if (tab === 'index') {
         const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
         const cryptoMajorIds = activeCurves.filter(id =>
@@ -2502,7 +2551,8 @@
                 <SingleTimelineChart
                   title={`Precious metals · USD per troy ounce · ${TIMEFRAMES.find(t=>t.id===metalTimeframe)?.label || ''}`}
                   unit="USD" rows={metalChartRows} curveIds={metalIds} timeframe={metalTimeframe}
-                  showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}/>
+                  showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}
+                  liveSpot={liveSpot} connectNulls={true}/>
               </>
             )}
             {cryptoMajorIds.length > 0 && cryptoChartRows.length > 0 && (
@@ -3777,7 +3827,7 @@
                     metalTimeframe={metalTimeframe} cryptoTimeframe={cryptoTimeframe}
                     onMetalTimeframeChange={setMetalTimeframe} onCryptoTimeframeChange={setCryptoTimeframe}
                     activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}
-                    producerMeta={producerMeta}/>
+                    producerMeta={producerMeta} liveSpot={live}/>
                 </ErrorBoundary>
               </>
               );
