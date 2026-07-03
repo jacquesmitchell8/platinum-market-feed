@@ -875,7 +875,7 @@
     }
     const {
       LineChart, Line, ComposedChart, BarChart, Bar, Area,
-      XAxis, YAxis, CartesianGrid, Legend, Cell,
+      XAxis, YAxis, CartesianGrid, Legend, Cell, LabelList,
       Tooltip, ReferenceLine, ReferenceArea, ResponsiveContainer
     } = Recharts;
 
@@ -4202,8 +4202,12 @@
           <ErrorBoundary>
             <NewsPanel />
           </ErrorBoundary>
-          <FundamentalsPanel />
-          <AssetHistory />
+          <ErrorBoundary>
+            <FundamentalsPanel />
+          </ErrorBoundary>
+          <ErrorBoundary>
+            <AssetHistory />
+          </ErrorBoundary>
         </>
       );
     }
