@@ -1119,13 +1119,30 @@
       { year: 2026, monthsCover: 2.9 },
     ];
 
-    const SD_MERGED = platinumSupplyDemand.map(row => {
-      const price = DATA.find(d => d.y === row.year)?.p;
-      const cover = platinumStockCover.find(s => s.year === row.year)?.monthsCover;
-      const prevPrice = DATA.find(d => d.y === row.year - 1)?.p;
+    const SD_YEARS = 20;
+    const SD_END_YEAR = Math.max(...DATA.map(d => d.y));
+    const SD_START_YEAR = SD_END_YEAR - (SD_YEARS - 1);
+
+    function sdRowForYear(year) {
+      const sd = platinumSupplyDemand.find(r => r.year === year) || null;
+      const price = DATA.find(d => d.y === year)?.p ?? null;
+      const prevPrice = DATA.find(d => d.y === year - 1)?.p ?? null;
       const priceChg = price && prevPrice ? ((price - prevPrice) / prevPrice) * 100 : null;
-      return { ...row, price, monthsCover: cover, priceChg };
-    });
+      const cover = platinumStockCover.find(s => s.year === year)?.monthsCover ?? null;
+      return {
+        year,
+        mineSupply: sd?.mineSupply ?? null,
+        recycling: sd?.recycling ?? null,
+        totalSupply: sd?.totalSupply ?? null,
+        totalDemand: sd?.totalDemand ?? null,
+        balance: sd?.balance ?? null,
+        price,
+        monthsCover: cover,
+        priceChg,
+      };
+    }
+
+    const SD_MERGED = Array.from({ length: SD_YEARS }, (_, i) => sdRowForYear(SD_START_YEAR + i));
 
     const SEG_COLORS = {
       automotive: '#6B7F96',
@@ -1763,9 +1780,15 @@
       return events.filter(e => e.assets.some(a => assets.has(a)));
     }
 
-    /* ─── PLATINUM COIN · TECHNICAL ANALYSIS ──────────────────────── */
+    /* ─── TECHNICAL ANALYSIS (timeline + Perth) ───────────────────── */
+    function extractCurveSeries(rows, key, tfId = '3y') {
+      return rows
+        .filter((r) => r[key] != null && !isNaN(r[key]))
+        .map((r) => ({ ts: r.ts, label: r.label || fmtTs(r.ts, tfId), v: r[key] }));
+    }
+
     function extractPtSeries(rows, key = 'IDX-103') {
-      return rows.filter(r => r[key] != null).map(r => ({ ts: r.ts, label: r.label, v: r[key] }));
+      return extractCurveSeries(rows, key);
     }
 
     function findPivots(series, wing) {
@@ -1877,40 +1900,93 @@
       return best;
     }
 
-    function analyzePlatinumTa(rows, priceKey = 'IDX-103') {
-      const series = extractPtSeries(rows, priceKey);
+    function detectDoublePattern(pivots, kind) {
+      const pts = pivots.filter((p) => p.kind === kind).sort((a, b) => a.i - b.i);
+      let best = null;
+      let bestScore = 0;
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          const a = pts[i];
+          const b = pts[j];
+          if (b.i - a.i < 6) continue;
+          const avg = (a.v + b.v) / 2;
+          if (Math.abs(a.v - b.v) / avg > 0.028) continue;
+          const mid = pivots.filter((p) => p.i > a.i && p.i < b.i);
+          if (!mid.length) continue;
+          const neckline = kind === 'high'
+            ? Math.min(...mid.map((p) => p.v))
+            : Math.max(...mid.map((p) => p.v));
+          const depth = kind === 'high' ? (avg - neckline) / avg : (neckline - avg) / avg;
+          if (depth < 0.018 || depth > 0.2) continue;
+          const score = depth * 10 - Math.abs(a.v - b.v) / avg;
+          if (score > bestScore) {
+            bestScore = score;
+            best = {
+              type: kind === 'high' ? 'double_top' : 'double_bottom',
+              a, b, neckline: Math.round(neckline),
+              depthPct: (depth * 100).toFixed(1),
+            };
+          }
+        }
+      }
+      return best;
+    }
+
+    function analyzeAssetTa(rows, priceKey, tfId = '3y') {
+      const series = extractCurveSeries(rows, priceKey, tfId);
       if (series.length < 12) {
-        return { series: [], support: [], resistance: [], markers: [], invertedCup: null, chartRows: [] };
+        return { series: [], support: [], resistance: [], markers: [], invertedCup: null, doublePattern: null, chartRows: [] };
       }
       const wing = Math.max(2, Math.floor(series.length / 35));
       const pivots = findPivots(series, wing);
       const { support, resistance } = pickSupportResistance(series, pivots);
       const breakMarkers = detectBreakouts(series, support, resistance);
       const invertedCup = detectInvertedCup(series);
-      const markerByLabel = {};
-      breakMarkers.forEach(m => { markerByLabel[m.label] = m.type; });
+      const doublePattern = detectDoublePattern(pivots, 'high') || detectDoublePattern(pivots, 'low');
+      const markerByTs = {};
+      breakMarkers.forEach((m) => { markerByTs[m.ts] = m.type; });
       if (invertedCup) {
-        markerByLabel[invertedCup.leftPt.label] = 'inv_left';
-        markerByLabel[invertedCup.botPt.label] = 'inv_bottom';
-        markerByLabel[invertedCup.rightPt.label] = 'inv_right';
+        markerByTs[invertedCup.leftPt.ts] = 'inv_left';
+        markerByTs[invertedCup.botPt.ts] = 'inv_bottom';
+        markerByTs[invertedCup.rightPt.ts] = 'inv_right';
       }
-      const chartRows = series.map(p => ({
+      if (doublePattern) {
+        markerByTs[doublePattern.a.ts] = doublePattern.type;
+        markerByTs[doublePattern.b.ts] = doublePattern.type;
+      }
+      const chartRows = series.map((p) => ({
         ...p,
         price: p.v,
-        taMarker: markerByLabel[p.label] || null,
+        taMarker: markerByTs[p.ts] || null,
       }));
       const last = series[series.length - 1].v;
-      const nearestRes = resistance.find(r => r >= last) || resistance[0];
-      const nearestSup = [...support].reverse().find(s => s <= last) || support[0];
+      const nearestRes = resistance.find((r) => r >= last) || resistance[0];
+      const nearestSup = [...support].reverse().find((s) => s <= last) || support[0];
       let bias = 'neutral';
       if (nearestRes && last > nearestRes * 1.002) bias = 'bullish';
       else if (nearestSup && last < nearestSup * 0.998) bias = 'bearish';
       else if (invertedCup && last < invertedCup.neckline * 0.995) bias = 'bearish';
+      else if (doublePattern?.type === 'double_top' && last < doublePattern.neckline * 0.998) bias = 'bearish';
+      else if (doublePattern?.type === 'double_bottom' && last > doublePattern.neckline * 1.002) bias = 'bullish';
       return {
-        series, support, resistance, markers: breakMarkers, invertedCup, chartRows, bias, last,
+        series, support, resistance, markers: breakMarkers, invertedCup, doublePattern, chartRows, bias, last,
         nearestRes, nearestSup,
       };
     }
+
+    function analyzePlatinumTa(rows, priceKey = 'IDX-103') {
+      return analyzeAssetTa(rows, priceKey);
+    }
+
+    const TA_MARKER_LABELS = {
+      breakout: '▲ Resistance breakout',
+      breakdown: '▼ Support breakdown',
+      inv_left: 'Inverted cup · left rim',
+      inv_bottom: 'Inverted cup · base',
+      inv_right: 'Inverted cup · right rim',
+      double_top: 'Double top',
+      double_bottom: 'Double bottom',
+    };
 
     const TA_MARKER_DOT = (props) => {
       const { cx, cy, payload } = props;
@@ -1923,27 +1999,43 @@
         return <polygon points={`${cx},${cy + 7} ${cx - 6},${cy - 5} ${cx + 6},${cy - 5}`}
           fill="#B91C1C" stroke="#fff" strokeWidth={1}/>;
       }
+      if (payload.taMarker === 'double_top') {
+        return <rect x={cx - 5} y={cy - 5} width={10} height={10} fill="#B45309" stroke="#fff" strokeWidth={1} transform={`rotate(45 ${cx} ${cy})`}/>;
+      }
+      if (payload.taMarker === 'double_bottom') {
+        return <rect x={cx - 5} y={cy - 5} width={10} height={10} fill="#047857" stroke="#fff" strokeWidth={1} transform={`rotate(45 ${cx} ${cy})`}/>;
+      }
       const fill = payload.taMarker.startsWith('inv') ? '#7C3AED' : C.plat;
       return <circle cx={cx} cy={cy} r={4} fill={fill} stroke="#fff" strokeWidth={1.5}/>;
     };
 
-    function PlatinumTaChart({ rows, timeframe }) {
-      const ta = useMemo(() => analyzePlatinumTa(rows, 'IDX-103'), [rows]);
-      if (!ta.chartRows.length) return null;
-      const fmtY = v => `$${Math.round(v).toLocaleString()}`;
-
+    function AssetTaChart({ rows, curveId, timeframe, title, color, unit = 'USD' }) {
+      const ta = useMemo(() => analyzeAssetTa(rows, curveId, timeframe), [rows, curveId, timeframe]);
+      if (!ta.chartRows.length) {
+        return (
+          <div style={{padding:20, fontSize:12, color:C.text, textAlign:'center'}}>
+            Not enough data for technical structure — try a longer period.
+          </div>
+        );
+      }
+      const fmtY = (v) => {
+        if (unit === 'AUD') return `$${Math.round(v).toLocaleString()}`;
+        if (unit === 'ZAR') return fmtZar(v);
+        if (v < 10) return `$${v.toFixed(4)}`;
+        return fmtUsd(v);
+      };
       const biasColor = { bullish: '#047857', bearish: '#B91C1C', neutral: C.text };
-      const tfLabel = TIMEFRAMES.find(t => t.id === timeframe)?.label || '';
+      const tfLabel = TIMEFRAMES.find((t) => t.id === timeframe)?.label || '';
 
       return (
         <div style={{marginBottom:8, borderTop:`1px solid ${C.borderLight}`, paddingTop:8}}>
           <div style={{...panelHdr, paddingTop:10}}>
-            <span>Platinum 1oz · Technical structure · {tfLabel}</span>
+            <span>{title || 'Technical structure'} · {tfLabel}</span>
             <span style={{fontWeight:500, textTransform:'capitalize', letterSpacing:0,
               color: biasColor[ta.bias] || C.text}}>{ta.bias} bias</span>
           </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart data={ta.chartRows} margin={{top:24, right:16, left:8, bottom:4}}>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={ta.chartRows} margin={{top:28, right:16, left:8, bottom:4}}>
               <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
               <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
                 tickFormatter={(ts) => fmtTs(ts, timeframe)}
@@ -1955,37 +2047,38 @@
                 return (
                   <div style={tipStyle}>
                     <div style={{color:C.textDark, marginBottom:4, fontWeight:600}}>{d.label}</div>
-                    <div style={{color:C.plat}}>Sell · {fmtY(d.price)}</div>
+                    <div style={{color: color || C.plat}}>{fmtY(d.price)}</div>
                     {d.taMarker && (
                       <div style={{marginTop:6, fontSize:11, color:'#7C3AED', fontWeight:600}}>
-                        {d.taMarker === 'breakout' && '▲ Resistance breakout'}
-                        {d.taMarker === 'breakdown' && '▼ Support breakdown'}
-                        {d.taMarker === 'inv_left' && 'Inverted cup · left rim'}
-                        {d.taMarker === 'inv_bottom' && 'Inverted cup · base'}
-                        {d.taMarker === 'inv_right' && 'Inverted cup · right rim'}
+                        {TA_MARKER_LABELS[d.taMarker] || d.taMarker}
                       </div>
                     )}
                   </div>
                 );
               }} cursor={{stroke:C.border}}/>
               {ta.invertedCup && (
-                <ReferenceArea x1={ta.invertedCup.startLabel} x2={ta.invertedCup.endLabel}
+                <ReferenceArea x1={ta.invertedCup.leftPt.ts} x2={ta.invertedCup.rightPt.ts}
                   fill="rgba(124,58,237,0.06)" stroke="rgba(124,58,237,0.25)" strokeDasharray="4 4"/>
               )}
+              {ta.doublePattern && (
+                <ReferenceLine y={ta.doublePattern.neckline} stroke="#B45309" strokeDasharray="5 3" strokeWidth={1.5}
+                  label={{ value: `Neckline ${fmtY(ta.doublePattern.neckline)}`, position: 'insideTopRight', fill: '#B45309', fontSize: 9 }}/>
+              )}
               {ta.support.map((lvl, i) => (
-                <ReferenceLine key={`sup-${i}`} y={lvl} stroke="#047857" strokeDasharray="6 4" strokeWidth={1.5}
-                  label={{ value: `Support ${fmtY(lvl)}`, position: 'insideTopLeft', fill: '#047857', fontSize: 9 }}/>
+                <ReferenceLine key={`sup-${i}`} y={lvl} stroke="#047857" strokeDasharray="6 4" strokeWidth={2}
+                  label={{ value: `S ${fmtY(lvl)}`, position: 'insideTopLeft', fill: '#047857', fontSize: 9 }}/>
               ))}
               {ta.resistance.map((lvl, i) => (
-                <ReferenceLine key={`res-${i}`} y={lvl} stroke="#B91C1C" strokeDasharray="6 4" strokeWidth={1.5}
-                  label={{ value: `Resistance ${fmtY(lvl)}`, position: 'insideBottomLeft', fill: '#B91C1C', fontSize: 9 }}/>
+                <ReferenceLine key={`res-${i}`} y={lvl} stroke="#B91C1C" strokeDasharray="6 4" strokeWidth={2}
+                  label={{ value: `R ${fmtY(lvl)}`, position: 'insideBottomLeft', fill: '#B91C1C', fontSize: 9 }}/>
               ))}
               {ta.invertedCup && (
                 <ReferenceLine y={ta.invertedCup.neckline} stroke="#7C3AED" strokeDasharray="3 3" strokeWidth={1.5}
-                  label={{ value: `Neckline ${fmtY(ta.invertedCup.neckline)}`, position: 'insideTopRight', fill: '#7C3AED', fontSize: 9 }}/>
+                  label={{ value: `Cup ${fmtY(ta.invertedCup.neckline)}`, position: 'insideTopRight', fill: '#7C3AED', fontSize: 9 }}/>
               )}
-              <Line type="monotone" dataKey="price" name="IDX-103"
-                stroke={C.plat} strokeWidth={2} dot={TA_MARKER_DOT} activeDot={{ r: 5, strokeWidth: 0, fill: C.plat }}/>
+              <Line type="monotone" dataKey="price" name={curveId}
+                stroke={color || C.plat} strokeWidth={2.5} dot={TA_MARKER_DOT}
+                activeDot={{ r: 5, strokeWidth: 0, fill: color || C.plat }}/>
             </ComposedChart>
           </ResponsiveContainer>
           <div style={{padding:'0 18px 14px', display:'grid', gap:10}}>
@@ -1995,23 +2088,42 @@
               <span><span style={{color:'#047857'}}>▲</span> Breakout</span>
               <span><span style={{color:'#B91C1C'}}>▼</span> Breakdown</span>
               <span><span style={{color:'#7C3AED'}}>◆</span> Inverted cup</span>
+              <span><span style={{color:'#B45309'}}>◇</span> Double top/bottom</span>
             </div>
             {ta.invertedCup && (
               <div style={{fontSize:12, color:C.textSecondary, lineHeight:1.55,
                 padding:'10px 12px', background:C.surface2, borderRadius:8, border:`1px solid ${C.borderLight}`}}>
-                <span style={{fontWeight:600, color:'#7C3AED'}}>Inverted cup &amp; handle · </span>
+                <span style={{fontWeight:600, color:'#7C3AED'}}>Inverted cup · </span>
                 {ta.invertedCup.depthPct}% depth · neckline {fmtY(ta.invertedCup.neckline)}.
-                {ta.last < ta.invertedCup.neckline
-                  ? ' Price below neckline — bearish continuation risk until reclaim.'
-                  : ' Price at/above neckline — watch for failed breakdown or breakout confirmation.'}
+              </div>
+            )}
+            {ta.doublePattern && (
+              <div style={{fontSize:12, color:C.textSecondary, lineHeight:1.55,
+                padding:'10px 12px', background:C.surface2, borderRadius:8, border:`1px solid ${C.borderLight}`}}>
+                <span style={{fontWeight:600, color:'#B45309'}}>
+                  {ta.doublePattern.type === 'double_top' ? 'Double top' : 'Double bottom'} ·
+                </span>
+                {' '}{ta.doublePattern.depthPct}% depth · neckline {fmtY(ta.doublePattern.neckline)}.
               </div>
             )}
             <div style={{fontSize:11, color:C.text, lineHeight:1.55}}>
-              IDX-107 · computed from Perth Mint platinum sell (IDX-103). Pivot-based S/R, cross detection for breaks,
-              and heuristic inverted-cup scan — not financial advice.
+              Pivot-based support/resistance, breakout crosses, inverted-cup and double-top/bottom heuristics — not financial advice.
             </div>
           </div>
         </div>
+      );
+    }
+
+    function PlatinumTaChart({ rows, timeframe }) {
+      return (
+        <AssetTaChart
+          rows={rows}
+          curveId="IDX-103"
+          timeframe={timeframe}
+          title="Platinum 1oz · Technical structure"
+          color={C.plat}
+          unit="AUD"
+        />
       );
     }
 
@@ -2532,7 +2644,18 @@
       );
     }
 
-    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot }) {
+    function ChartViewToggle({ value, onChange }) {
+      return (
+        <div className="price-tabs" style={{marginBottom:12}}>
+          <button type="button" className={`price-tab ${value === 'timeline' ? 'active' : ''}`}
+            onClick={() => onChange('timeline')}>Timeline</button>
+          <button type="button" className={`price-tab ${value === 'technical' ? 'active' : ''}`}
+            onClick={() => onChange('technical')}>Technical structure</button>
+        </div>
+      );
+    }
+
+    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot, chartView = 'timeline' }) {
       if (tab === 'index') {
         const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
         const cryptoMajorIds = activeCurves.filter(id =>
@@ -2543,48 +2666,90 @@
         const hasMetals = metalChartRows.length && metalIds.length;
         const hasCrypto = cryptoChartRows.length && (cryptoMajorIds.length || cfxIds.length);
         if (!hasMetals && !hasCrypto) return null;
+        const technical = chartView === 'technical';
         return (
           <>
             {hasMetals && (
               <>
                 <TimeframeBar label="Metals chart period" value={metalTimeframe} onChange={onMetalTimeframeChange} />
-                <SingleTimelineChart
-                  title={`Precious metals · USD per troy ounce · ${TIMEFRAMES.find(t=>t.id===metalTimeframe)?.label || ''}`}
-                  unit="USD" rows={metalChartRows} curveIds={metalIds} timeframe={metalTimeframe}
-                  showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}
-                  liveSpot={liveSpot} connectNulls={true}/>
+                {technical ? (
+                  metalIds.map((id) => (
+                    <AssetTaChart
+                      key={id}
+                      rows={metalChartRows}
+                      curveId={id}
+                      timeframe={metalTimeframe}
+                      title={`${CURVE_INDEX[id]?.label || id} · Technical structure`}
+                      color={CURVE_INDEX[id]?.color}
+                      unit="USD"
+                    />
+                  ))
+                ) : (
+                  <SingleTimelineChart
+                    title={`Precious metals · USD per troy ounce · ${TIMEFRAMES.find(t=>t.id===metalTimeframe)?.label || ''}`}
+                    unit="USD" rows={metalChartRows} curveIds={metalIds} timeframe={metalTimeframe}
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}
+                    liveSpot={liveSpot} connectNulls={true}/>
+                )}
               </>
             )}
             {cryptoMajorIds.length > 0 && cryptoChartRows.length > 0 && (
               <>
                 <TimeframeBar label="Crypto chart period" value={cryptoTimeframe} onChange={onCryptoTimeframeChange} />
-                {cryptoMajorIds.includes('IDX-003') && (
-                  <SingleTimelineChart
-                    title={`Bitcoin · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
-                    unit="USD" rows={cryptoChartRows} curveIds={['IDX-003']} timeframe={cryptoTimeframe}
-                    showEvents={showEvents} events={eventsForCurves(eventsInRange, ['IDX-003'])}/>
-                )}
-                {cryptoMajorIds.includes('IDX-004') && (
-                  <SingleTimelineChart
-                    title={`Ethereum · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
-                    unit="USD" rows={cryptoChartRows} curveIds={['IDX-004']} timeframe={cryptoTimeframe}
-                    showEvents={showEvents} events={eventsForCurves(eventsInRange, ['IDX-004'])}/>
-                )}
-                {cryptoMajorIds.filter(id => id !== 'IDX-003' && id !== 'IDX-004').length > 0 && (
-                  <SingleTimelineChart
-                    title={`Crypto · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
-                    unit="USD" rows={cryptoChartRows}
-                    curveIds={cryptoMajorIds.filter(id => id !== 'IDX-003' && id !== 'IDX-004')}
-                    timeframe={cryptoTimeframe}
-                    showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+                {technical ? (
+                  cryptoMajorIds.map((id) => (
+                    <AssetTaChart
+                      key={id}
+                      rows={cryptoChartRows}
+                      curveId={id}
+                      timeframe={cryptoTimeframe}
+                      title={`${CURVE_INDEX[id]?.label || id} · Technical structure`}
+                      color={CURVE_INDEX[id]?.color}
+                      unit="USD"
+                    />
+                  ))
+                ) : (
+                  <>
+                    {cryptoMajorIds.includes('IDX-003') && (
+                      <SingleTimelineChart
+                        title={`Bitcoin · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                        unit="USD" rows={cryptoChartRows} curveIds={['IDX-003']} timeframe={cryptoTimeframe}
+                        showEvents={showEvents} events={eventsForCurves(eventsInRange, ['IDX-003'])}/>
+                    )}
+                    {cryptoMajorIds.includes('IDX-004') && (
+                      <SingleTimelineChart
+                        title={`Ethereum · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                        unit="USD" rows={cryptoChartRows} curveIds={['IDX-004']} timeframe={cryptoTimeframe}
+                        showEvents={showEvents} events={eventsForCurves(eventsInRange, ['IDX-004'])}/>
+                    )}
+                    {cryptoMajorIds.filter(id => id !== 'IDX-003' && id !== 'IDX-004').length > 0 && (
+                      <SingleTimelineChart
+                        title={`Crypto · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                        unit="USD" rows={cryptoChartRows}
+                        curveIds={cryptoMajorIds.filter(id => id !== 'IDX-003' && id !== 'IDX-004')}
+                        timeframe={cryptoTimeframe}
+                        showEvents={showEvents} events={eventsForCurves(eventsInRange, cryptoMajorIds)}/>
+                    )}
+                  </>
                 )}
               </>
             )}
             {cfxIds.length > 0 && cryptoChartRows.length > 0 && (
-              <SingleTimelineChart
-                title={`Conflux (CFX) · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
-                unit="USD" rows={cryptoChartRows} curveIds={cfxIds} timeframe={cryptoTimeframe}
-                showEvents={showEvents} events={eventsForCurves(eventsInRange, cfxIds)}/>
+              technical ? (
+                <AssetTaChart
+                  rows={cryptoChartRows}
+                  curveId="IDX-005"
+                  timeframe={cryptoTimeframe}
+                  title={`${CURVE_INDEX['IDX-005']?.label || 'CFX'} · Technical structure`}
+                  color={CURVE_INDEX['IDX-005']?.color}
+                  unit="USD"
+                />
+              ) : (
+                <SingleTimelineChart
+                  title={`Conflux (CFX) · USD spot · ${TIMEFRAMES.find(t=>t.id===cryptoTimeframe)?.label || ''}`}
+                  unit="USD" rows={cryptoChartRows} curveIds={cfxIds} timeframe={cryptoTimeframe}
+                  showEvents={showEvents} events={eventsForCurves(eventsInRange, cfxIds)}/>
+              )
             )}
           </>
         );
@@ -3402,23 +3567,29 @@
           {view === 'balance' && (
             <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
               <div style={panelHdr}>
-                <span>Market balance vs platinum price · 2022–2026</span>
+                <span>Market balance vs platinum price · {SD_START_YEAR}–{SD_END_YEAR}</span>
                 <span style={{color:'#DC2626', fontWeight:500, textTransform:'none', letterSpacing:0}}>— Deficit (koz)</span>
                 <span style={{color:C.plat, fontWeight:500, textTransform:'none', letterSpacing:0}}>— Pt USD/oz</span>
               </div>
               <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart data={SD_MERGED} margin={{top:20, right:48, bottom:4, left:8}}>
+                <ComposedChart data={SD_MERGED} margin={{top:20, right:52, bottom:4, left:8}}>
                   <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
                   <XAxis dataKey="year" {...axP} />
-                  <YAxis yAxisId="left" {...axP} tickFormatter={v => `${v}`} width={48}
+                  <YAxis yAxisId="left" {...axP} tickFormatter={v => `${v}`} width={52}
                     label={{ value:'koz', angle:-90, position:'insideLeft', fill:C.text, fontSize:10 }}/>
                   <YAxis yAxisId="right" orientation="right" {...axP} tickFormatter={v => `$${v}`} width={52}/>
                   <Tooltip content={<FundTip label="balance"/>} cursor={{fill:'rgba(107,127,150,0.06)'}}/>
                   <ReferenceLine yAxisId="left" y={0} stroke={C.border} strokeWidth={1.5}/>
-                  <Bar yAxisId="left" dataKey="balance" radius={[4,4,0,0]}>
+                  <Bar yAxisId="left" dataKey="balance" radius={[5,5,0,0]} barSize={26} minPointSize={4}>
                     {SD_MERGED.map((e,i) => (
-                      <Cell key={i} fill={e.balance < 0 ? '#DC2626' : '#059669'} fillOpacity={0.75}/>
+                      <Cell key={i} fill={(e.balance ?? 0) < 0 ? '#DC2626' : '#059669'} fillOpacity={0.80}/>
                     ))}
+                    <LabelList
+                      dataKey="balance"
+                      position="top"
+                      formatter={(v) => (v == null ? '' : `${v}`)}
+                      style={{ fill: C.text, fontSize: 10, fontFamily: 'Inter,sans-serif' }}
+                    />
                   </Bar>
                   <Line yAxisId="right" type="monotone" dataKey="price" stroke={C.plat}
                     strokeWidth={2.5} dot={{r:4, fill:C.plat, strokeWidth:0}}/>
@@ -3427,6 +3598,9 @@
               <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
                 2024: −930 koz deficit but annual avg price <em>fell</em> — investment hoarding (+520 koz YoY) reversed in H2.
                 Price tracks the marginal buyer, not headline industrial demand.
+              </div>
+              <div style={{fontSize:10, color:C.text, padding:'0 18px 6px', lineHeight:1.55}}>
+                Note: WPIC balance/cover series is only available for the most recent years in this dashboard; older years show price only.
               </div>
             </div>
           )}
@@ -3621,6 +3795,7 @@
       const [tab, setTab] = useState('index');
       const [metalTimeframe, setMetalTimeframe] = useState('3y');
       const [cryptoTimeframe, setCryptoTimeframe] = useState('3y');
+      const [indexChartView, setIndexChartView] = useState('timeline');
       const [activeCurves, setActiveCurves] = useState(DEFAULT_CURVES.index);
 
       useEffect(() => {
@@ -3778,7 +3953,8 @@
           <div style={{...cardStyle, marginBottom:14, paddingBottom:0}}>
             <div style={panelHdr}>
               <span>{
-                tab === 'index' ? 'Index price timeline'
+                tab === 'index'
+                  ? (indexChartView === 'technical' ? 'Index · Technical structure' : 'Index price timeline')
                   : tab === 'producers' ? 'Platinum producer share prices · JSE'
                     : 'Perth Mint 1oz coin timeline'
               }{tab === 'index'
@@ -3792,6 +3968,11 @@
                 <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>{rows.length} data points</span>
               )}
             </div>
+            {tab === 'index' && (
+              <div style={{padding:'0 18px 12px'}}>
+                <ChartViewToggle value={indexChartView} onChange={setIndexChartView} />
+              </div>
+            )}
             {(() => {
               const hasChartData =
                 (tab === 'index' && ((metalsRows?.length) || (cryptoRows?.length))) ||
@@ -3822,12 +4003,12 @@
                 {chartLoading && (
                   <div style={{padding:'4px 18px 8px', fontSize:11, color:C.text}}>Updating charts…</div>
                 )}
-                <ErrorBoundary key={`${tab}-${metalTimeframe}-${cryptoTimeframe}`}>
+                <ErrorBoundary key={`${tab}-${metalTimeframe}-${cryptoTimeframe}-${indexChartView}`}>
                   <TimelineCharts tab={tab} rows={rows} metalsRows={metalsRows} cryptoRows={cryptoRows}
                     metalTimeframe={metalTimeframe} cryptoTimeframe={cryptoTimeframe}
                     onMetalTimeframeChange={setMetalTimeframe} onCryptoTimeframeChange={setCryptoTimeframe}
                     activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}
-                    producerMeta={producerMeta} liveSpot={live}/>
+                    producerMeta={producerMeta} liveSpot={live} chartView={indexChartView}/>
                 </ErrorBoundary>
               </>
               );
@@ -3851,7 +4032,7 @@
                 ? 'Separate charts for gold and platinum 1oz coins (AUD, estimated). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
                 : tab === 'producers'
                   ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Prices in ZAR · announcements via Google News.'
-                  : 'Separate charts for precious metals and cryptocurrency — each with its own price scale so no curve is flattened.'}
+                  : 'Separate charts for precious metals and cryptocurrency — each with its own price scale so no curve is flattened. Toggle Technical structure for support/resistance, breakouts, and chart patterns on the same history.'}
             </div>
           </div>
 
