@@ -1147,7 +1147,24 @@
     ];
 
     /* ─── PLATINUM FUNDAMENTALS (WPIC, koz) ───────────────────────── */
+    // Annual market balance (koz). Negative = deficit. Pre-2022 from WPIC historical series;
+    // 2022+ include full S&D breakdown used by other fundamentals views.
     const platinumSupplyDemand = [
+      { year: 2007, balance: 240 },
+      { year: 2008, balance: -415 },
+      { year: 2009, balance: 365 },
+      { year: 2010, balance: 20 },
+      { year: 2011, balance: -470 },
+      { year: 2012, balance: -40 },
+      { year: 2013, balance: 545 },
+      { year: 2014, balance: 180 },
+      { year: 2015, balance: 335 },
+      { year: 2016, balance: 390 },
+      { year: 2017, balance: 265 },
+      { year: 2018, balance: 530 },
+      { year: 2019, balance: 365 },
+      { year: 2020, balance: -885 },
+      { year: 2021, balance: -769 },
       { year: 2022, mineSupply: 5740, recycling: 1500, totalSupply: 7240, totalDemand: 7770, balance: -530 },
       { year: 2023, mineSupply: 5550, recycling: 1500, totalSupply: 7050, totalDemand: 8050, balance: -1000 },
       { year: 2024, mineSupply: 5530, recycling: 1490, totalSupply: 7020, totalDemand: 7950, balance: -930 },
@@ -1211,6 +1228,24 @@
     }
 
     const SD_MERGED = Array.from({ length: SD_YEARS }, (_, i) => sdRowForYear(SD_START_YEAR + i));
+
+    /** Cumulative balance (koz) + continuous price — one visual language for the full range. */
+    const SCARCITY_THRESHOLD = -3000;
+    const SD_SCARCITY = (() => {
+      let cumBalance = 0;
+      let firstCrossYear = null;
+      return SD_MERGED.map((row) => {
+        if (row.balance != null) cumBalance += row.balance;
+        if (firstCrossYear == null && cumBalance <= SCARCITY_THRESHOLD) firstCrossYear = row.year;
+        return {
+          ...row,
+          cumBalance,
+          annualLabel: row.balance == null ? '' : String(row.balance),
+          scarcityZone: cumBalance <= SCARCITY_THRESHOLD,
+        };
+      });
+    })();
+    const SCARCITY_CROSS_YEAR = SD_SCARCITY.find((r) => r.scarcityZone)?.year ?? null;
 
     const SEG_COLORS = {
       automotive: '#6B7F96',
@@ -3234,11 +3269,12 @@
           <div style={{color:C.textDark, marginBottom:6, fontSize:12, fontWeight:600}}>{d.year ?? d.region}</div>
           {label === 'balance' && (
             <>
-              <div style={{color:'#DC2626'}}>Balance · {fmtKoz(d.balance)}</div>
+              <div style={{color:'#DC2626'}}>Annual balance · {fmtKoz(d.balance)}</div>
+              <div style={{color:'#991B1B', fontWeight:600}}>Cumulative · {fmtKoz(d.cumBalance)}</div>
               <div style={{color:C.plat}}>Pt price · ${d.price?.toLocaleString()}/oz</div>
               {d.priceChg != null && <div style={{color:C.text}}>YoY price · {fmtPct(d.priceChg)}</div>}
-              <div style={{color:C.text}}>Demand · {d.totalDemand?.toLocaleString()} koz</div>
-              <div style={{color:C.text}}>Supply · {d.totalSupply?.toLocaleString()} koz</div>
+              {d.totalDemand != null && <div style={{color:C.text}}>Demand · {d.totalDemand?.toLocaleString()} koz</div>}
+              {d.totalSupply != null && <div style={{color:C.text}}>Supply · {d.totalSupply?.toLocaleString()} koz</div>}
             </>
           )}
           {label === 'cover' && (
@@ -4725,40 +4761,111 @@
           {view === 'balance' && (
             <div style={{...cardStyle, marginBottom:14, paddingBottom:8}}>
               <div style={panelHdr}>
-                <span>Market balance vs platinum price · {SD_START_YEAR}–{SD_END_YEAR}</span>
-                <span style={{color:'#DC2626', fontWeight:500, textTransform:'none', letterSpacing:0}}>— Deficit (koz)</span>
+                <span>Cumulative scarcity vs platinum price · {SD_START_YEAR}–{SD_END_YEAR}</span>
+                <span style={{color:'#991B1B', fontWeight:500, textTransform:'none', letterSpacing:0}}>— Cumulative balance (koz)</span>
                 <span style={{color:C.plat, fontWeight:500, textTransform:'none', letterSpacing:0}}>— Pt USD/oz</span>
               </div>
-              <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart data={SD_MERGED} margin={{top:20, right:52, bottom:4, left:8}}>
+              <ResponsiveContainer width="100%" height={340}>
+                <ComposedChart data={SD_SCARCITY} margin={{top:28, right:52, bottom:4, left:8}}>
+                  <defs>
+                    <linearGradient id="cumScarcityFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#FECACA" stopOpacity={0.15}/>
+                      <stop offset="45%" stopColor="#F87171" stopOpacity={0.45}/>
+                      <stop offset="100%" stopColor="#7F1D1D" stopOpacity={0.88}/>
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
                   <XAxis dataKey="year" {...axP} />
-                  <YAxis yAxisId="left" {...axP} tickFormatter={v => `${v}`} width={52}
-                    label={{ value:'koz', angle:-90, position:'insideLeft', fill:C.text, fontSize:10 }}/>
-                  <YAxis yAxisId="right" orientation="right" {...axP} tickFormatter={v => `$${v}`} width={52}/>
-                  <Tooltip content={<FundTip label="balance"/>} cursor={{fill:'rgba(107,127,150,0.06)'}}/>
-                  <ReferenceLine yAxisId="left" y={0} stroke={C.border} strokeWidth={1.5}/>
-                  <Bar yAxisId="left" dataKey="balance" radius={[5,5,0,0]} barSize={26} minPointSize={4}>
-                    {SD_MERGED.map((e,i) => (
-                      <Cell key={i} fill={(e.balance ?? 0) < 0 ? '#DC2626' : '#059669'} fillOpacity={0.80}/>
-                    ))}
-                    <LabelList
-                      dataKey="balance"
-                      position="top"
-                      formatter={(v) => (v == null ? '' : `${v}`)}
-                      style={{ fill: C.text, fontSize: 10, fontFamily: 'Inter,sans-serif' }}
+                  <YAxis
+                    yAxisId="left"
+                    {...axP}
+                    width={58}
+                    tickFormatter={(v) => `${v}`}
+                    label={{ value: 'Cumulative koz', angle: -90, position: 'insideLeft', fill: C.text, fontSize: 10 }}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    {...axP}
+                    width={52}
+                    tickFormatter={(v) => `$${v}`}
+                    domain={['auto', 'auto']}
+                  />
+                  <Tooltip content={<FundTip label="balance"/>} cursor={{stroke: C.border, strokeDasharray: '4 4'}}/>
+                  {SCARCITY_CROSS_YEAR != null && (
+                    <ReferenceArea
+                      yAxisId="left"
+                      x1={SCARCITY_CROSS_YEAR}
+                      x2={SD_END_YEAR}
+                      fill="rgba(185,28,28,0.07)"
+                      stroke="rgba(185,28,28,0.2)"
+                      strokeDasharray="4 4"
+                      label={{
+                        value: 'Scarcity repricing zone',
+                        position: 'insideTopLeft',
+                        fill: '#991B1B',
+                        fontSize: 10,
+                        fontWeight: 600,
+                      }}
                     />
-                  </Bar>
-                  <Line yAxisId="right" type="monotone" dataKey="price" stroke={C.plat}
-                    strokeWidth={2.5} dot={{r:4, fill:C.plat, strokeWidth:0}}/>
+                  )}
+                  <ReferenceLine yAxisId="left" y={0} stroke={C.border} strokeWidth={1.5}/>
+                  <ReferenceLine
+                    yAxisId="left"
+                    y={SCARCITY_THRESHOLD}
+                    stroke="#B91C1C"
+                    strokeDasharray="5 4"
+                    strokeWidth={1}
+                    label={{
+                      value: '−3,000 koz cumulative',
+                      position: 'insideBottomLeft',
+                      fill: '#B91C1C',
+                      fontSize: 9,
+                    }}
+                  />
+                  <Area
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="cumBalance"
+                    name="Cumulative balance"
+                    stroke="#991B1B"
+                    strokeWidth={2}
+                    fill="url(#cumScarcityFill)"
+                    connectNulls
+                    dot={false}
+                    activeDot={{ r: 4, fill: '#991B1B', strokeWidth: 0 }}
+                  >
+                    <LabelList
+                      dataKey="annualLabel"
+                      position="top"
+                      style={{ fill: C.text, fontSize: 9, fontFamily: 'Inter,sans-serif' }}
+                    />
+                  </Area>
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="price"
+                    name="Pt USD/oz"
+                    stroke={C.plat}
+                    strokeWidth={2.5}
+                    connectNulls
+                    dot={{ r: 3, fill: C.plat, strokeWidth: 0 }}
+                    activeDot={{ r: 5, fill: C.plat, strokeWidth: 0 }}
+                  />
                 </ComposedChart>
               </ResponsiveContainer>
-              <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
-                2024: −930 koz deficit but annual avg price <em>fell</em> — investment hoarding (+520 koz YoY) reversed in H2.
-                Price tracks the marginal buyer, not headline industrial demand.
+              <div style={{padding:'4px 18px 10px', display:'flex', flexWrap:'wrap', gap:14, fontSize:11, color:C.text}}>
+                <span><span style={{color:'#991B1B', fontWeight:700}}>▁</span> Cumulative balance (running total of annual koz)</span>
+                <span><span style={{color:C.plat, fontWeight:700}}>—</span> Platinum price (USD/oz)</span>
+                <span>Labels = annual balance that year</span>
+                {SCARCITY_CROSS_YEAR != null && (
+                  <span style={{color:'#991B1B'}}>Shaded band from {SCARCITY_CROSS_YEAR}: cumulative deficit past 3,000 koz</span>
+                )}
               </div>
-              <div style={{fontSize:10, color:C.text, padding:'0 18px 6px', lineHeight:1.55}}>
-                Note: WPIC balance/cover series is only available for the most recent years in this dashboard; older years show price only.
+              <div style={{fontSize:11, color:C.text, padding:'0 18px 14px', lineHeight:1.55}}>
+                One visual language across the full range: scarcity accumulates as the red area deepens, while the platinum
+                line stays continuous. Surpluses in the 2010s kept the cumulative near balance; the post-2020 deficit streak
+                pulls the running total through −3,000 koz — the scarcity-repricing zone.
               </div>
             </div>
           )}
