@@ -13,13 +13,9 @@ const ASSET_PROFILES = {
     curveId: 'IDX-002',
     unit: 'USD/oz',
     queries: [
-      'platinum price LBMA OR spot platinum when:30d',
-      'platinum deficit OR WPIC OR PGM supply when:30d',
-      'Impala OR Sibanye OR Amplats OR Northam platinum when:30d',
-      'platinum hydrogen fuel cell OR auto catalyst demand when:30d',
-      'South Africa PGM mining Eskom OR strike when:30d',
-      'platinum investment ETF OR jewellery China when:30d',
-      'palladium rhodium PGM basket platinum when:30d',
+      'platinum price OR deficit OR WPIC when:30d',
+      'Impala OR Sibanye OR Amplats platinum when:30d',
+      'platinum hydrogen OR auto catalyst OR ETF when:30d',
     ],
     entities: [
       { label: 'WPIC', re: /\bwpic\b/i },
@@ -47,13 +43,9 @@ const ASSET_PROFILES = {
     curveId: 'IDX-005',
     unit: 'USD',
     queries: [
-      'Conflux Network CFX price OR token when:30d',
-      'Conflux eSpace OR Tree-Graph OR CFX blockchain when:30d',
-      'Conflux China blockchain OR regulatory when:30d',
-      'CFX crypto rally OR listing OR partnership when:30d',
-      'Conflux Network DeFi OR NFT OR ecosystem when:30d',
-      'altcoin Layer 1 China CFX when:30d',
-      'Conflux Foundation OR CFX unlock OR tokenomics when:30d',
+      'Conflux Network OR CFX crypto when:30d',
+      'Conflux eSpace OR partnership OR listing when:30d',
+      'CFX token unlock OR China blockchain when:30d',
     ],
     entities: [
       { label: 'Conflux / CFX', re: /\bconflux\b|\bcfx\b/i },
@@ -205,15 +197,14 @@ function buildAssetNarrative(profile, headlines, mentions, newsBias, netScore) {
 }
 
 export async function researchBuyAssets(assetKeys = ['platinum', 'cfx']) {
-  const results = await Promise.allSettled(
-    assetKeys.map((k) => researchAssetIntel(k))
-  );
+  // Sequential — fewer concurrent outbound RSS calls (avoids provider / host quotas).
   const assets = {};
-  for (let i = 0; i < assetKeys.length; i++) {
-    const r = results[i];
-    assets[assetKeys[i]] = r.status === 'fulfilled'
-      ? r.value
-      : { asset: assetKeys[i], error: r.reason?.message || 'Research failed', articleCount: 0 };
+  for (const key of assetKeys) {
+    try {
+      assets[key] = await researchAssetIntel(key, { perQuery: 8, maxArticles: 14 });
+    } catch (err) {
+      assets[key] = { asset: key, error: err.message || 'Research failed', articleCount: 0 };
+    }
   }
   return assets;
 }

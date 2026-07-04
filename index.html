@@ -3520,19 +3520,114 @@
       return fmtUsd(v);
     }
 
+    function rowsFromTimelineCache(curveId) {
+      // Prefer curves already loaded by LiveDashboard — no extra function calls.
+      const metalKeys = [];
+      const cryptoKeys = [];
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k) continue;
+          if (k.startsWith('v12:metals:')) metalKeys.push(k);
+          if (k.startsWith('v10:crypto:')) cryptoKeys.push(k);
+        }
+      } catch (_) { return null; }
+
+      const preferTf = ['3y', '1y', '5y', '3m', '1m'];
+      const sortKeys = (keys) => keys.sort((a, b) => {
+        const ta = preferTf.findIndex((t) => a.includes(`:${t}:`));
+        const tb = preferTf.findIndex((t) => b.includes(`:${t}:`));
+        return (ta === -1 ? 99 : ta) - (tb === -1 ? 99 : tb);
+      });
+
+      const tryKeys = curveId === 'IDX-002' ? sortKeys(metalKeys) : sortKeys(cryptoKeys);
+      for (const key of tryKeys) {
+        try {
+          const cached = JSON.parse(localStorage.getItem(key) || 'null');
+          const rows = cached?.metalsRows || cached?.cryptoRows || [];
+          if (!rows.length) continue;
+          const has = rows.some((r) => r[curveId] != null && !isNaN(r[curveId]));
+          if (!has) continue;
+          return rows.map((r) => ({
+            ts: r.ts,
+            label: r.label || fmtTs(r.ts, '3y'),
+            [curveId]: r[curveId],
+          })).filter((r) => r[curveId] != null);
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    function platinumAnnualFallbackRows() {
+      return DATA.filter((d) => d.p != null && d.y >= 2015).map((d) => ({
+        ts: Date.UTC(d.y, 6, 1, 12, 0, 0, 0),
+        label: String(d.y),
+        'IDX-002': d.p,
+      }));
+    }
+
     async function loadBuyDiveCurve(curveId) {
+      const fromCache = rowsFromTimelineCache(curveId);
+      if (fromCache?.length >= 12) return fromCache;
+
       const tf3y = TIMEFRAMES.find((t) => t.id === '3y');
+      try {
+        if (curveId === 'IDX-002') {
+          let pts = await fetchMetalChart('IDX-002', tf3y);
+          pts = bucketMetalPtsByUtcDay(filterByTimeframe(pts, tf3y));
+          if (pts?.length) return ptsToRows(pts, curveId, '3y');
+        }
+        if (curveId === 'IDX-005') {
+          const pts = await fetchChartSeries('conflux-token', historyDaysForTf(tf3y));
+          const filtered = filterByTimeframe(pts, tf3y);
+          if (filtered?.length) return ptsToRows(filtered, curveId, '3y');
+        }
+      } catch (_) {
+        // Network / host quota — fall through to static / partial data.
+      }
+
       if (curveId === 'IDX-002') {
-        let pts = await fetchMetalChart('IDX-002', tf3y);
-        pts = bucketMetalPtsByUtcDay(filterByTimeframe(pts, tf3y));
-        return ptsToRows(pts, curveId, '3y');
+        const annual = platinumAnnualFallbackRows();
+        if (annual.length) return annual;
       }
-      if (curveId === 'IDX-005') {
-        const pts = await fetchChartSeries('conflux-token', historyDaysForTf(tf3y));
-        const filtered = filterByTimeframe(pts, tf3y);
-        return ptsToRows(filtered, curveId, '3y');
+      if (fromCache?.length) return fromCache;
+      return [];
+    }
+
+    async function fetchBuyDiveIntel() {
+      try {
+        const cached = JSON.parse(localStorage.getItem(BUY_DIVE_CACHE_KEY) || 'null');
+        if (cached?.intelMap && cached?.savedAt && Date.now() - cached.savedAt < 2 * 60 * 60 * 1000) {
+          const hasArticles = ['platinum', 'cfx'].some((k) => (cached.intelMap[k]?.articleCount || 0) > 0);
+          if (hasArticles) return { intel: cached.intelMap, fromCache: true };
+        }
+      } catch (_) {}
+
+      try {
+        const res = await fetch(`/.netlify/functions/asset-deep-dive?assets=platinum,cfx`, { cache: 'default' });
+        const text = await res.text();
+        let json = null;
+        try { json = JSON.parse(text); } catch (_) {}
+        if (!res.ok || !json?.ok) {
+          const msg = json?.error || text.slice(0, 120) || `HTTP ${res.status}`;
+          return {
+            intel: {
+              platinum: { error: msg, articleCount: 0 },
+              cfx: { error: msg, articleCount: 0 },
+            },
+            fromCache: false,
+          };
+        }
+        return { intel: json.assets, fromCache: false };
+      } catch (e) {
+        return {
+          intel: {
+            platinum: { error: e.message, articleCount: 0 },
+            cfx: { error: e.message, articleCount: 0 },
+          },
+          fromCache: false,
+        };
       }
-      throw new Error('Unsupported curve ' + curveId);
     }
 
     function BuyAssetCard({ decision, intel, color }) {
@@ -3619,10 +3714,10 @@
               ))}
             </div>
 
-            {intel && !intel.error && (
+            {intel && !intel.error && intel.articleCount > 0 && (
               <div className="news-research-box" style={{marginTop:0}}>
                 <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:6}}>
-                  Web deep dive · {intel.articleCount} articles · {intel.newsBias}
+                  Web · {intel.articleCount} articles · {intel.newsBias}
                 </div>
                 <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.55, margin:'0 0 8px'}}>
                   {intel.narrative}
@@ -3662,6 +3757,11 @@
                 )}
               </div>
             )}
+            {intel?.error && !(intel.articleCount > 0) && (
+              <div style={{fontSize:11, color:C.text, marginTop:4}}>
+                Web coverage offline — verdict uses curve structure & fundamentals only.
+              </div>
+            )}
           </div>
         </div>
       );
@@ -3669,22 +3769,68 @@
 
     function BuyDeepDivePanel() {
       const { live } = useLivePrices();
+      const liveRef = useRef(live);
+      liveRef.current = live;
       const [loading, setLoading] = useState(true);
-      const [error, setError] = useState(null);
+      const [intelLoading, setIntelLoading] = useState(false);
+      const [warn, setWarn] = useState(null);
       const [decisions, setDecisions] = useState(null);
       const [intelMap, setIntelMap] = useState(null);
       const [updatedAt, setUpdatedAt] = useState(null);
+      const ranRef = useRef(false);
+
+      const buildDecisions = useCallback((ptRows, cfxRows, intel, liveSpot) => {
+        const ptRowsLive = tipLivePrice(ptRows || [], 'IDX-002', liveSpot?.platinum?.price);
+        const cfxRowsLive = tipLivePrice(cfxRows || [], 'IDX-005', liveSpot?.cfx?.price);
+        const notes = [];
+        if (!(ptRowsLive?.length >= 8)) notes.push('Platinum curve thin — using available history / annuals');
+        if (!(cfxRowsLive?.length >= 8)) notes.push('CFX curve thin — structure score limited');
+
+        return {
+          decisions: {
+            platinum: scoreBuyDecision({
+              curveId: 'IDX-002',
+              label: 'Platinum · LBMA spot',
+              unit: 'USD/oz',
+              livePrice: liveSpot?.platinum?.price,
+              liveChg: liveSpot?.platinum?.chg,
+              rows: ptRowsLive,
+              intel: intel?.platinum,
+            }),
+            cfx: scoreBuyDecision({
+              curveId: 'IDX-005',
+              label: 'Conflux Network · CFX',
+              unit: 'USD',
+              livePrice: liveSpot?.cfx?.price,
+              liveChg: liveSpot?.cfx?.chg,
+              rows: cfxRowsLive,
+              intel: intel?.cfx,
+            }),
+          },
+          notes,
+        };
+      }, []);
 
       const runDive = useCallback(async (force) => {
         setLoading(true);
-        setError(null);
+        setWarn(null);
         try {
           if (!force) {
             try {
               const cached = JSON.parse(localStorage.getItem(BUY_DIVE_CACHE_KEY) || 'null');
-              if (cached?.decisions && cached?.savedAt && Date.now() - cached.savedAt < 30 * 60 * 1000) {
-                setDecisions(cached.decisions);
-                setIntelMap(cached.intelMap);
+              if (cached?.decisions && cached?.savedAt && Date.now() - cached.savedAt < 2 * 60 * 60 * 1000) {
+                if (cached.ptRows || cached.cfxRows) {
+                  const refreshed = buildDecisions(
+                    cached.ptRows || [],
+                    cached.cfxRows || [],
+                    cached.intelMap,
+                    liveRef.current
+                  );
+                  setDecisions(refreshed.decisions);
+                } else {
+                  setDecisions(cached.decisions);
+                }
+                setIntelMap(cached.intelMap || null);
                 setUpdatedAt(cached.savedAt);
                 setLoading(false);
                 return;
@@ -3692,90 +3838,108 @@
             } catch (_) {}
           }
 
-          const [ptRows, cfxRows, intelRes] = await Promise.all([
+          // Curves first (prefer dashboard cache — no function quota burn).
+          const [ptSettled, cfxSettled] = await Promise.allSettled([
             loadBuyDiveCurve('IDX-002'),
             loadBuyDiveCurve('IDX-005'),
-            fetch(`/.netlify/functions/asset-deep-dive?assets=platinum,cfx&t=${Date.now()}`, { cache: 'no-store' })
-              .then((r) => r.json())
-              .catch((e) => ({ ok: false, error: e.message })),
           ]);
+          const ptRows = ptSettled.status === 'fulfilled' ? ptSettled.value : [];
+          const cfxRows = cfxSettled.status === 'fulfilled' ? cfxSettled.value : [];
 
-          const intel = intelRes?.ok ? intelRes.assets : {
-            platinum: { error: intelRes?.error || 'Web intel unavailable' },
-            cfx: { error: intelRes?.error || 'Web intel unavailable' },
-          };
-
-          const ptRowsLive = tipLivePrice(ptRows, 'IDX-002', live?.platinum?.price);
-          const cfxRowsLive = tipLivePrice(cfxRows, 'IDX-005', live?.cfx?.price);
-
-          const ptDecision = scoreBuyDecision({
-            curveId: 'IDX-002',
-            label: 'Platinum · LBMA spot',
-            unit: 'USD/oz',
-            livePrice: live?.platinum?.price,
-            liveChg: live?.platinum?.chg,
-            rows: ptRowsLive,
-            intel: intel.platinum,
-          });
-          const cfxDecision = scoreBuyDecision({
-            curveId: 'IDX-005',
-            label: 'Conflux Network · CFX',
-            unit: 'USD',
-            livePrice: live?.cfx?.price,
-            liveChg: live?.cfx?.chg,
-            rows: cfxRowsLive,
-            intel: intel.cfx,
-          });
-
-          const next = { platinum: ptDecision, cfx: cfxDecision };
+          const { decisions: next, notes } = buildDecisions(ptRows, cfxRows, null, liveRef.current);
           setDecisions(next);
+          setUpdatedAt(Date.now());
+          if (notes.length) setWarn(notes.join(' · '));
+          setLoading(false);
+
+          // Web intel second — optional; never blocks the cards.
+          setIntelLoading(true);
+          const { intel } = await fetchBuyDiveIntel();
           setIntelMap(intel);
+          const withIntel = buildDecisions(ptRows, cfxRows, intel, liveRef.current);
+          setDecisions(withIntel.decisions);
+          const webFail = [intel?.platinum, intel?.cfx].some((x) => x?.error && !(x.articleCount > 0));
+          if (webFail) {
+            const msg = intel?.platinum?.error || intel?.cfx?.error || 'Web coverage unavailable';
+            setWarn((w) => [w, `Web scan skipped (${msg}) — structure score still active`].filter(Boolean).join(' · '));
+          }
           const now = Date.now();
           setUpdatedAt(now);
-          localStorage.setItem(BUY_DIVE_CACHE_KEY, JSON.stringify({
-            decisions: next,
-            intelMap: intel,
-            savedAt: now,
-          }));
+          try {
+            localStorage.setItem(BUY_DIVE_CACHE_KEY, JSON.stringify({
+              decisions: withIntel.decisions,
+              intelMap: intel,
+              ptRows,
+              cfxRows,
+              savedAt: now,
+            }));
+          } catch (_) {}
         } catch (e) {
-          setError(e.message);
+          setWarn(e.message || 'Deep dive incomplete');
         } finally {
           setLoading(false);
+          setIntelLoading(false);
         }
-      }, [live?.platinum?.price, live?.platinum?.chg, live?.cfx?.price, live?.cfx?.chg]);
+      }, [buildDecisions]);
 
       useEffect(() => {
-        runDive(false);
+        if (ranRef.current) return;
+        ranRef.current = true;
+        // Wait a beat so LiveDashboard can populate timeline caches first.
+        const t = setTimeout(() => runDive(false), 600);
+        return () => clearTimeout(t);
       }, [runDive]);
+
+      // Keep live prices on cards without re-fetching curves / web.
+      useEffect(() => {
+        if (!live) return;
+        setDecisions((prev) => {
+          if (!prev) return prev;
+          return {
+            platinum: {
+              ...prev.platinum,
+              last: live.platinum?.price ?? prev.platinum.last,
+              liveChg: live.platinum?.chg ?? prev.platinum.liveChg,
+            },
+            cfx: {
+              ...prev.cfx,
+              last: live.cfx?.price ?? prev.cfx.last,
+              liveChg: live.cfx?.chg ?? prev.cfx.liveChg,
+            },
+          };
+        });
+      }, [live?.platinum?.price, live?.platinum?.chg, live?.cfx?.price, live?.cfx?.chg]);
 
       return (
         <div style={{marginBottom:24}}>
           <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap', marginBottom:10}}>
             <div>
               <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>
-                Buy deep dive · Platinum & Conflux
+                Buy deep dive
               </div>
               <div style={{fontSize:11, color:C.text, marginTop:3}}>
-                Multi-timeframe trends, breakouts, support/resistance, patterns, fundamentals & web coverage
-                {updatedAt && (
+                Platinum & Conflux · structure, breakouts, fundamentals
+                {intelLoading ? ' · scanning web…' : ''}
+                {updatedAt && !intelLoading && (
                   <span> · {new Date(updatedAt).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</span>
                 )}
               </div>
             </div>
             <button
-              onClick={() => runDive(true)}
+              onClick={() => { ranRef.current = true; runDive(true); }}
               disabled={loading}
               style={{
                 fontSize:10, fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
                 padding:'6px 12px', borderRadius:6, border:`1px solid ${C.border}`,
                 background:C.surface, color:C.textDark, cursor: loading ? 'wait' : 'pointer',
               }}
-            >{loading ? 'Digging…' : 'Re-run deep dive'}</button>
+            >{loading ? 'Working…' : 'Refresh'}</button>
           </div>
 
-          {error && (
-            <div style={{...cardStyle, padding:12, marginBottom:10, color:'#B91C1C', fontSize:12}}>
-              Deep dive failed: {error}
+          {warn && (
+            <div style={{...cardStyle, padding:'10px 12px', marginBottom:10, fontSize:11, color:C.textSecondary,
+              background:C.surface2, border:`1px solid ${C.borderLight}`}}>
+              {warn}
             </div>
           )}
 
@@ -3783,9 +3947,9 @@
             <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
               <span className="news-search-icon">⛏</span>
               <div>
-                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Running buy deep dive…</div>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Reading curves…</div>
                 <div style={{fontSize:11, color:C.text, marginTop:4}}>
-                  Studying curves across 1m–3y, detecting breakouts, scanning the web for Platinum & CFX
+                  Using chart history already on the page, then optional web coverage
                 </div>
               </div>
             </div>
@@ -3799,7 +3963,7 @@
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            Heuristic score from price structure + open-web coverage — not financial advice. Always size risk yourself.
+            Heuristic score from price structure + open-web coverage — not financial advice.
           </div>
         </div>
       );
@@ -4136,7 +4300,8 @@
           return;
         }
 
-        const url = `/.netlify/functions/news-digest?deep=1&force=1&t=${Date.now()}`;
+        // deep=0: list stories only. Per-story web dive runs on expand (story-research).
+        const url = `/.netlify/functions/news-digest?deep=0&force=1&t=${Date.now()}`;
         let data = null;
         try {
           const res = await fetch(url, { cache: 'no-store' });
