@@ -372,6 +372,74 @@
       color: var(--platinum);
       margin-bottom: 8px;
     }
+    .news-research-box {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-light);
+    }
+    .news-research-phase {
+      position: relative;
+      padding-left: 14px;
+      margin-bottom: 10px;
+      border-left: 2px solid var(--platinum);
+    }
+    .news-research-phase:last-child { margin-bottom: 0; }
+    .news-mention-tag {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 5px;
+      background: var(--surface);
+      border: 1px solid var(--border-light);
+      color: var(--text-secondary);
+    }
+    .news-timeline-item {
+      font-size: 11px;
+      line-height: 1.5;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .news-timeline-item:last-child { border-bottom: none; }
+    .news-research-loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 8px 0;
+    }
+    .buy-dive-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 14px;
+    }
+    .buy-verdict {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border-radius: 6px;
+    }
+    .buy-factor {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 11px;
+      line-height: 1.45;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .buy-factor:last-child { border-bottom: none; }
+    .buy-tf-chip {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 5px;
+      border: 1px solid var(--border-light);
+      background: var(--surface);
+    }
     .factor-drop {
       border-top: 1px solid var(--border-light);
     }
@@ -1820,14 +1888,21 @@
       return clusters.sort((a, b) => b.count - a.count || b.price - a.price);
     }
 
+    function levelRound(v) {
+      if (v == null || isNaN(v)) return v;
+      if (Math.abs(v) < 1) return Math.round(v * 1e6) / 1e6;
+      if (Math.abs(v) < 100) return Math.round(v * 100) / 100;
+      return Math.round(v);
+    }
+
     function pickSupportResistance(series, pivots) {
       const last = series[series.length - 1].v;
       const highs = clusterLevels(pivots, 'high');
       const lows = clusterLevels(pivots, 'low');
-      let resistance = highs.filter(c => c.price >= last * 0.97).slice(0, 2).map(c => Math.round(c.price));
-      let support = lows.filter(c => c.price <= last * 1.03).sort((a, b) => b.price - a.price).slice(0, 2).map(c => Math.round(c.price));
-      if (!resistance.length && highs.length) resistance = [Math.round(highs[0].price)];
-      if (!support.length && lows.length) support = [Math.round(lows[lows.length - 1].price)];
+      let resistance = highs.filter(c => c.price >= last * 0.97).slice(0, 2).map(c => levelRound(c.price));
+      let support = lows.filter(c => c.price <= last * 1.03).sort((a, b) => b.price - a.price).slice(0, 2).map(c => levelRound(c.price));
+      if (!resistance.length && highs.length) resistance = [levelRound(highs[0].price)];
+      if (!support.length && lows.length) support = [levelRound(lows[lows.length - 1].price)];
       const uniq = (arr) => [...new Set(arr)].sort((a, b) => a - b);
       return { support: uniq(support), resistance: uniq(resistance).reverse() };
     }
@@ -1891,7 +1966,7 @@
           best = {
             startLabel: win[0].label,
             endLabel: win[win.length - 1].label,
-            neckline: Math.round(rim),
+            neckline: levelRound(rim),
             leftPt, botPt, rightPt,
             depthPct: (depth * 100).toFixed(1),
           };
@@ -1923,7 +1998,7 @@
             bestScore = score;
             best = {
               type: kind === 'high' ? 'double_top' : 'double_bottom',
-              a, b, neckline: Math.round(neckline),
+              a, b, neckline: levelRound(neckline),
               depthPct: (depth * 100).toFixed(1),
             };
           }
@@ -3190,9 +3265,550 @@
       );
     };
 
+    /* ─── BUY DEEP DIVE · PLATINUM + CONFLUX ─────────────────────── */
+    const BUY_DIVE_CACHE_KEY = 'pm_metis_buy_dive_v1';
+    const BUY_DIVE_TFS = ['1m', '3m', '1y', '3y'];
+    const BUY_DIVE_TF_WEIGHT = { '1m': 1, '3m': 1.5, '1y': 2, '3y': 2.5 };
+
+    function ptsToRows(pts, curveId, tfId = '3y') {
+      return (pts || []).map((p) => ({
+        ts: p.ts,
+        label: fmtTs(p.ts, tfId),
+        [curveId]: p.price,
+      }));
+    }
+
+    function tipLivePrice(rows, curveId, price) {
+      if (!rows?.length || price == null || !(Number(price) > 0)) return rows;
+      const next = rows.map((r) => ({ ...r }));
+      const now = Date.now();
+      const today = new Date().toISOString().slice(0, 10);
+      const last = next[next.length - 1];
+      const lastDay = new Date(last.ts).toISOString().slice(0, 10);
+      const row = lastDay === today ? last : { ts: now, label: fmtTs(now, '1w') };
+      if (row !== last) next.push(row);
+      row.ts = now;
+      row.label = fmtTs(now, '1w');
+      row[curveId] = Number(price);
+      return next;
+    }
+
+    function trendFromSeries(series) {
+      if (!series?.length || series.length < 2) return null;
+      const a = series[0].v;
+      const b = series[series.length - 1].v;
+      if (!a || !b) return null;
+      return ((b - a) / a) * 100;
+    }
+
+    function recentMarkers(ta, frac = 0.2) {
+      if (!ta?.markers?.length || !ta.series?.length) return { breakouts: 0, breakdowns: 0 };
+      const cut = ta.series[Math.floor(ta.series.length * (1 - frac))]?.ts || 0;
+      const recent = ta.markers.filter((m) => m.ts >= cut);
+      return {
+        breakouts: recent.filter((m) => m.type === 'breakout').length,
+        breakdowns: recent.filter((m) => m.type === 'breakdown').length,
+      };
+    }
+
+    function distancePct(price, level) {
+      if (price == null || level == null || !level) return null;
+      return ((price - level) / level) * 100;
+    }
+
+    function scoreBuyDecision({ curveId, label, unit, livePrice, liveChg, rows, intel }) {
+      const factors = [];
+      let score = 0;
+      const tfSummaries = [];
+
+      for (const tfId of BUY_DIVE_TFS) {
+        const tfRows = filterRowsByTimeframe(rows, tfId);
+        const ta = analyzeAssetTa(tfRows, curveId, tfId);
+        const w = BUY_DIVE_TF_WEIGHT[tfId] || 1;
+        const trend = trendFromSeries(ta.series);
+        const recent = recentMarkers(ta);
+        const tfLabel = TIMEFRAMES.find((t) => t.id === tfId)?.label || tfId;
+
+        let tfScore = 0;
+        if (trend != null) {
+          if (trend >= 8) { tfScore += w; factors.push({ label: `${tfLabel} trend +${trend.toFixed(1)}%`, impact: +w, side: 'bull' }); }
+          else if (trend >= 3) { tfScore += w * 0.5; factors.push({ label: `${tfLabel} trend +${trend.toFixed(1)}%`, impact: +(w * 0.5), side: 'bull' }); }
+          else if (trend <= -8) { tfScore -= w; factors.push({ label: `${tfLabel} trend ${trend.toFixed(1)}%`, impact: -w, side: 'bear' }); }
+          else if (trend <= -3) { tfScore -= w * 0.5; factors.push({ label: `${tfLabel} trend ${trend.toFixed(1)}%`, impact: -(w * 0.5), side: 'bear' }); }
+        }
+
+        if (ta.bias === 'bullish') {
+          tfScore += w * 0.45;
+          factors.push({ label: `${tfLabel} structure bias bullish`, impact: +(w * 0.45), side: 'bull' });
+        } else if (ta.bias === 'bearish') {
+          tfScore -= w * 0.45;
+          factors.push({ label: `${tfLabel} structure bias bearish`, impact: -(w * 0.45), side: 'bear' });
+        }
+
+        if (recent.breakouts) {
+          const imp = Math.min(1.5, recent.breakouts * 0.7);
+          tfScore += imp;
+          factors.push({ label: `${tfLabel}: ${recent.breakouts} recent resistance breakout(s)`, impact: +imp, side: 'bull' });
+        }
+        if (recent.breakdowns) {
+          const imp = Math.min(1.5, recent.breakdowns * 0.7);
+          tfScore -= imp;
+          factors.push({ label: `${tfLabel}: ${recent.breakdowns} recent support breakdown(s)`, impact: -imp, side: 'bear' });
+        }
+
+        if (ta.doublePattern?.type === 'double_bottom') {
+          tfScore += 1.2;
+          factors.push({ label: `${tfLabel}: double bottom (neckline ${fmtPriceLevel(ta.doublePattern.neckline, unit)})`, impact: +1.2, side: 'bull' });
+        } else if (ta.doublePattern?.type === 'double_top') {
+          tfScore -= 1.2;
+          factors.push({ label: `${tfLabel}: double top (neckline ${fmtPriceLevel(ta.doublePattern.neckline, unit)})`, impact: -1.2, side: 'bear' });
+        }
+
+        if (ta.invertedCup && ta.last != null && ta.last < ta.invertedCup.neckline * 0.995) {
+          tfScore -= 0.9;
+          factors.push({ label: `${tfLabel}: inverted cup — price under neckline`, impact: -0.9, side: 'bear' });
+        }
+
+        score += tfScore;
+        tfSummaries.push({
+          tfId,
+          label: tfLabel,
+          trend,
+          bias: ta.bias || 'neutral',
+          support: ta.nearestSup,
+          resistance: ta.nearestRes,
+          last: ta.last,
+          breakouts: recent.breakouts,
+          breakdowns: recent.breakdowns,
+          pattern: ta.doublePattern?.type || (ta.invertedCup ? 'inverted_cup' : null),
+        });
+      }
+
+      // Primary structure (3y) for entry quality
+      const primary = analyzeAssetTa(rows, curveId, '3y');
+      const last = livePrice ?? primary.last;
+      if (last != null && primary.nearestSup != null) {
+        const dSup = distancePct(last, primary.nearestSup);
+        if (dSup != null && dSup >= -1 && dSup <= 3) {
+          score += 1.2;
+          factors.push({ label: `Price near support ${fmtPriceLevel(primary.nearestSup, unit)} (entry zone)`, impact: +1.2, side: 'bull' });
+        } else if (dSup != null && dSup < -4) {
+          score -= 0.8;
+          factors.push({ label: `Price ${Math.abs(dSup).toFixed(1)}% below support — breakdown risk`, impact: -0.8, side: 'bear' });
+        }
+      }
+      if (last != null && primary.nearestRes != null) {
+        const dRes = distancePct(last, primary.nearestRes);
+        if (dRes != null && dRes >= -2 && dRes <= 1) {
+          score -= 0.7;
+          factors.push({ label: `Price pressed into resistance ${fmtPriceLevel(primary.nearestRes, unit)}`, impact: -0.7, side: 'bear' });
+        } else if (dRes != null && dRes > 2) {
+          score += 0.6;
+          factors.push({ label: `Trading above resistance ${fmtPriceLevel(primary.nearestRes, unit)}`, impact: +0.6, side: 'bull' });
+        }
+      }
+
+      // News / web intel
+      if (intel && !intel.error) {
+        const newsImp = intel.newsBias === 'bullish' ? 2.2
+          : intel.newsBias === 'bearish' ? -2.2
+          : intel.newsBias === 'mixed' ? (intel.netScore || 0) * 0.15
+          : 0;
+        const cappedNews = Math.max(-2.5, Math.min(2.5, newsImp + Math.max(-1.5, Math.min(1.5, (intel.netScore || 0) * 0.12))));
+        if (Math.abs(cappedNews) > 0.05) {
+          score += cappedNews;
+          factors.push({
+            label: `Web coverage ${intel.newsBias} (${intel.articleCount} articles, score ${intel.netScore > 0 ? '+' : ''}${intel.netScore})`,
+            impact: cappedNews,
+            side: cappedNews >= 0 ? 'bull' : 'bear',
+          });
+        }
+        if (intel.mentions?.length) {
+          factors.push({
+            label: `Major mentions: ${intel.mentions.slice(0, 4).map((m) => m.label).join(', ')}`,
+            impact: 0,
+            side: 'neutral',
+          });
+        }
+      } else if (intel?.error) {
+        factors.push({ label: `Web intel incomplete: ${intel.error}`, impact: 0, side: 'neutral' });
+      }
+
+      if (liveChg != null) {
+        if (liveChg >= 2) {
+          score += 0.4;
+          factors.push({ label: `24h momentum +${liveChg.toFixed(2)}%`, impact: +0.4, side: 'bull' });
+        } else if (liveChg <= -2) {
+          score -= 0.4;
+          factors.push({ label: `24h momentum ${liveChg.toFixed(2)}%`, impact: -0.4, side: 'bear' });
+        }
+      }
+
+      // Platinum-specific fundamental tilt from WPIC balance + stock cover
+      if (curveId === 'IDX-002') {
+        const recentYears = platinumSupplyDemand.filter((d) => d.year >= 2023);
+        const deficits = recentYears.filter((d) => d.balance < 0);
+        if (deficits.length >= 2) {
+          score += 1.0;
+          factors.push({
+            label: `WPIC balance: deficit in ${deficits.length} of last ${recentYears.length} years`,
+            impact: +1.0,
+            side: 'bull',
+          });
+        }
+        const cover = platinumStockCover[platinumStockCover.length - 1];
+        if (cover?.monthsCover != null && cover.monthsCover < 4) {
+          score += 0.8;
+          factors.push({
+            label: `Above-ground stock cover ~${cover.monthsCover} months (${cover.year}) — historically tight`,
+            impact: +0.8,
+            side: 'bull',
+          });
+        }
+        const h2 = platinumHydrogenDemand;
+        if (h2.length >= 2 && h2[h2.length - 1].hydrogenDemand > h2[0].hydrogenDemand) {
+          score += 0.4;
+          factors.push({
+            label: `Hydrogen/PEM demand path rising (${h2[0].hydrogenDemand}→${h2[h2.length - 1].hydrogenDemand} koz)`,
+            impact: +0.4,
+            side: 'bull',
+          });
+        }
+      }
+
+      score = Math.round(score * 10) / 10;
+      let verdict = 'WAIT';
+      let verdictNote = 'Mixed signals — wait for clearer structure or a better entry.';
+      if (score >= 4.5) {
+        verdict = 'BUY';
+        verdictNote = 'Multi-timeframe structure, breakouts, and web coverage align constructively.';
+      } else if (score >= 1.8) {
+        verdict = 'ACCUMULATE';
+        verdictNote = 'Bias constructive — scale in on dips toward support rather than chase.';
+      } else if (score <= -4) {
+        verdict = 'AVOID';
+        verdictNote = 'Structure and coverage lean negative — capital preservation first.';
+      } else if (score <= -1.8) {
+        verdict = 'REDUCE';
+        verdictNote = 'Headwinds dominate — trim risk or wait for a base to form.';
+      }
+
+      // Rank factors by |impact|
+      const ranked = factors
+        .filter((f) => f.impact !== 0)
+        .sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact))
+        .slice(0, 10);
+      const neutrals = factors.filter((f) => f.impact === 0).slice(0, 3);
+
+      return {
+        curveId, label, unit, score, verdict, verdictNote,
+        last, liveChg,
+        support: primary.nearestSup,
+        resistance: primary.nearestRes,
+        bias: primary.bias,
+        tfSummaries,
+        factors: [...ranked, ...neutrals],
+        primary,
+      };
+    }
+
+    function fmtPriceLevel(v, unit) {
+      if (v == null || isNaN(v)) return '—';
+      if (unit === 'USD/oz' || (v >= 10 && unit !== 'USD')) return fmtUsd(v);
+      if (v < 1) return '$' + Number(v).toFixed(4);
+      if (v < 100) return '$' + Number(v).toFixed(2);
+      return fmtUsd(v);
+    }
+
+    async function loadBuyDiveCurve(curveId) {
+      const tf3y = TIMEFRAMES.find((t) => t.id === '3y');
+      if (curveId === 'IDX-002') {
+        let pts = await fetchMetalChart('IDX-002', tf3y);
+        pts = bucketMetalPtsByUtcDay(filterByTimeframe(pts, tf3y));
+        return ptsToRows(pts, curveId, '3y');
+      }
+      if (curveId === 'IDX-005') {
+        const pts = await fetchChartSeries('conflux-token', historyDaysForTf(tf3y));
+        const filtered = filterByTimeframe(pts, tf3y);
+        return ptsToRows(filtered, curveId, '3y');
+      }
+      throw new Error('Unsupported curve ' + curveId);
+    }
+
+    function BuyAssetCard({ decision, intel, color }) {
+      const verdictColor = {
+        BUY: '#047857',
+        ACCUMULATE: '#0F766E',
+        WAIT: '#B8860B',
+        REDUCE: '#C2410C',
+        AVOID: '#B91C1C',
+      };
+      const vc = verdictColor[decision.verdict] || C.text;
+      const unit = decision.unit;
+
+      return (
+        <div style={{...cardStyle, padding:0, overflow:'hidden'}}>
+          <div style={{padding:'14px 16px', borderBottom:`1px solid ${C.borderLight}`,
+            background:'linear-gradient(135deg, #F8FAFC 0%, #EDF1F6 100%)'}}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10}}>
+              <div>
+                <div style={{fontSize:14, fontWeight:700, color:C.textDark}}>{decision.label}</div>
+                <div style={{fontSize:20, fontWeight:700, color: color || C.textDark, marginTop:4, fontVariantNumeric:'tabular-nums'}}>
+                  {fmtPriceLevel(decision.last, unit)}
+                  {decision.liveChg != null && (
+                    <span style={{fontSize:12, fontWeight:600, marginLeft:8}} className={chgClass(decision.liveChg)}>
+                      {fmtPct(decision.liveChg)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <span className="buy-verdict" style={{
+                  background: vc + '18', color: vc, border:`1px solid ${vc}44`,
+                }}>{decision.verdict}</span>
+                <div style={{fontSize:11, color:C.text, marginTop:6}}>
+                  Score {decision.score > 0 ? '+' : ''}{decision.score}
+                </div>
+              </div>
+            </div>
+            <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.55, margin:'10px 0 0'}}>
+              {decision.verdictNote}
+            </p>
+          </div>
+
+          <div style={{padding:'12px 16px'}}>
+            <div style={{display:'flex', flexWrap:'wrap', gap:6, marginBottom:12}}>
+              {decision.tfSummaries.map((tf) => (
+                <span key={tf.tfId} className="buy-tf-chip" style={{
+                  color: tf.bias === 'bullish' ? '#047857' : tf.bias === 'bearish' ? '#B91C1C' : C.text,
+                }}>
+                  {tf.label}: {tf.trend != null ? `${tf.trend >= 0 ? '+' : ''}${tf.trend.toFixed(1)}%` : '—'} · {tf.bias}
+                  {tf.breakouts ? ` · ▲${tf.breakouts}` : ''}
+                  {tf.breakdowns ? ` · ▼${tf.breakdowns}` : ''}
+                </span>
+              ))}
+            </div>
+
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12, fontSize:11}}>
+              <div style={{padding:'8px 10px', background:C.surface2, borderRadius:6}}>
+                <div style={{color:C.text, fontSize:10, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.05em'}}>Support</div>
+                <div style={{color:'#047857', fontWeight:700, marginTop:3}}>{fmtPriceLevel(decision.support, unit)}</div>
+              </div>
+              <div style={{padding:'8px 10px', background:C.surface2, borderRadius:6}}>
+                <div style={{color:C.text, fontSize:10, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.05em'}}>Resistance</div>
+                <div style={{color:'#B91C1C', fontWeight:700, marginTop:3}}>{fmtPriceLevel(decision.resistance, unit)}</div>
+              </div>
+            </div>
+
+            <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:6}}>
+              Decision factors
+            </div>
+            <div style={{marginBottom:12}}>
+              {decision.factors.map((f, i) => (
+                <div key={i} className="buy-factor">
+                  <span style={{color:C.textSecondary, flex:1}}>{f.label}</span>
+                  {f.impact !== 0 && (
+                    <span style={{
+                      fontWeight:700, flexShrink:0,
+                      color: f.impact > 0 ? '#047857' : '#B91C1C',
+                    }}>
+                      {f.impact > 0 ? '+' : ''}{f.impact.toFixed(1)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {intel && !intel.error && (
+              <div className="news-research-box" style={{marginTop:0}}>
+                <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:6}}>
+                  Web deep dive · {intel.articleCount} articles · {intel.newsBias}
+                </div>
+                <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.55, margin:'0 0 8px'}}>
+                  {intel.narrative}
+                </p>
+                {intel.mentions?.length > 0 && (
+                  <div style={{display:'flex', flexWrap:'wrap', gap:5, marginBottom:8}}>
+                    {intel.mentions.map((m) => (
+                      <span key={m.label} className="news-mention-tag">
+                        {m.label}{m.count > 1 ? ` ×${m.count}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {intel.headlines?.length > 0 && (
+                  <details>
+                    <summary style={{fontSize:10, fontWeight:600, color:C.plat, cursor:'pointer'}}>
+                      Headlines ({intel.headlines.length})
+                    </summary>
+                    <div style={{marginTop:6}}>
+                      {intel.headlines.slice(0, 8).map((h, i) => (
+                        <div key={i} className="news-timeline-item">
+                          <span style={{
+                            fontWeight:600, marginRight:6,
+                            color: h.direction === 'bullish' ? '#047857' : h.direction === 'bearish' ? '#B91C1C' : C.text,
+                          }}>
+                            {h.direction === 'bullish' ? '▲' : h.direction === 'bearish' ? '▼' : '·'}
+                          </span>
+                          <a href={h.url} target="_blank" rel="noopener noreferrer"
+                            style={{color:C.textDark, textDecoration:'none', fontWeight:500}}>
+                            {h.headline}
+                          </a>
+                          <span style={{color:C.text, marginLeft:6}}>· {h.source}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function BuyDeepDivePanel() {
+      const { live } = useLivePrices();
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [decisions, setDecisions] = useState(null);
+      const [intelMap, setIntelMap] = useState(null);
+      const [updatedAt, setUpdatedAt] = useState(null);
+
+      const runDive = useCallback(async (force) => {
+        setLoading(true);
+        setError(null);
+        try {
+          if (!force) {
+            try {
+              const cached = JSON.parse(localStorage.getItem(BUY_DIVE_CACHE_KEY) || 'null');
+              if (cached?.decisions && cached?.savedAt && Date.now() - cached.savedAt < 30 * 60 * 1000) {
+                setDecisions(cached.decisions);
+                setIntelMap(cached.intelMap);
+                setUpdatedAt(cached.savedAt);
+                setLoading(false);
+                return;
+              }
+            } catch (_) {}
+          }
+
+          const [ptRows, cfxRows, intelRes] = await Promise.all([
+            loadBuyDiveCurve('IDX-002'),
+            loadBuyDiveCurve('IDX-005'),
+            fetch(`/.netlify/functions/asset-deep-dive?assets=platinum,cfx&t=${Date.now()}`, { cache: 'no-store' })
+              .then((r) => r.json())
+              .catch((e) => ({ ok: false, error: e.message })),
+          ]);
+
+          const intel = intelRes?.ok ? intelRes.assets : {
+            platinum: { error: intelRes?.error || 'Web intel unavailable' },
+            cfx: { error: intelRes?.error || 'Web intel unavailable' },
+          };
+
+          const ptRowsLive = tipLivePrice(ptRows, 'IDX-002', live?.platinum?.price);
+          const cfxRowsLive = tipLivePrice(cfxRows, 'IDX-005', live?.cfx?.price);
+
+          const ptDecision = scoreBuyDecision({
+            curveId: 'IDX-002',
+            label: 'Platinum · LBMA spot',
+            unit: 'USD/oz',
+            livePrice: live?.platinum?.price,
+            liveChg: live?.platinum?.chg,
+            rows: ptRowsLive,
+            intel: intel.platinum,
+          });
+          const cfxDecision = scoreBuyDecision({
+            curveId: 'IDX-005',
+            label: 'Conflux Network · CFX',
+            unit: 'USD',
+            livePrice: live?.cfx?.price,
+            liveChg: live?.cfx?.chg,
+            rows: cfxRowsLive,
+            intel: intel.cfx,
+          });
+
+          const next = { platinum: ptDecision, cfx: cfxDecision };
+          setDecisions(next);
+          setIntelMap(intel);
+          const now = Date.now();
+          setUpdatedAt(now);
+          localStorage.setItem(BUY_DIVE_CACHE_KEY, JSON.stringify({
+            decisions: next,
+            intelMap: intel,
+            savedAt: now,
+          }));
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [live?.platinum?.price, live?.platinum?.chg, live?.cfx?.price, live?.cfx?.chg]);
+
+      useEffect(() => {
+        runDive(false);
+      }, [runDive]);
+
+      return (
+        <div style={{marginBottom:24}}>
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap', marginBottom:10}}>
+            <div>
+              <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>
+                Buy deep dive · Platinum & Conflux
+              </div>
+              <div style={{fontSize:11, color:C.text, marginTop:3}}>
+                Multi-timeframe trends, breakouts, support/resistance, patterns, fundamentals & web coverage
+                {updatedAt && (
+                  <span> · {new Date(updatedAt).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => runDive(true)}
+              disabled={loading}
+              style={{
+                fontSize:10, fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
+                padding:'6px 12px', borderRadius:6, border:`1px solid ${C.border}`,
+                background:C.surface, color:C.textDark, cursor: loading ? 'wait' : 'pointer',
+              }}
+            >{loading ? 'Digging…' : 'Re-run deep dive'}</button>
+          </div>
+
+          {error && (
+            <div style={{...cardStyle, padding:12, marginBottom:10, color:'#B91C1C', fontSize:12}}>
+              Deep dive failed: {error}
+            </div>
+          )}
+
+          {loading && !decisions && (
+            <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
+              <span className="news-search-icon">⛏</span>
+              <div>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Running buy deep dive…</div>
+                <div style={{fontSize:11, color:C.text, marginTop:4}}>
+                  Studying curves across 1m–3y, detecting breakouts, scanning the web for Platinum & CFX
+                </div>
+              </div>
+            </div>
+          )}
+
+          {decisions && (
+            <div className="buy-dive-grid">
+              <BuyAssetCard decision={decisions.platinum} intel={intelMap?.platinum} color={C.plat} />
+              <BuyAssetCard decision={decisions.cfx} intel={intelMap?.cfx} color={C.cfx} />
+            </div>
+          )}
+
+          <div style={{fontSize:10, color:C.text, marginTop:8}}>
+            Heuristic score from price structure + open-web coverage — not financial advice. Always size risk yourself.
+          </div>
+        </div>
+      );
+    }
+
     /* ─── COMMODITY NEWS · TOP 3 + PROGRESSION ───────────────────── */
     const NEWS_CACHE_KEY = 'pm_metis_news_history';
     const NEWS_LAST_DATE_KEY = 'pm_metis_news_last_date';
+    const NEWS_RESEARCH_CACHE_KEY = 'pm_metis_news_research_v1';
 
     function digestDateLocal() {
       return new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
@@ -3236,14 +3852,181 @@
         stories: digest.stories,
         pastStories: digest.pastStories,
         progression: digest.progression,
+        dailyBrief: digest.dailyBrief,
         fetchedAt: Date.now(),
       });
       localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify(hist.slice(0, 60)));
     }
 
-    function NewsStoryCard({ story, rank }) {
+    function loadResearchCache() {
+      try {
+        return JSON.parse(localStorage.getItem(NEWS_RESEARCH_CACHE_KEY) || '{}');
+      } catch { return {}; }
+    }
+
+    function saveResearchCache(key, research) {
+      const cache = loadResearchCache();
+      cache[key] = { research, savedAt: Date.now() };
+      const keys = Object.keys(cache);
+      if (keys.length > 80) {
+        keys.sort((a, b) => (cache[a].savedAt || 0) - (cache[b].savedAt || 0));
+        for (let i = 0; i < keys.length - 80; i++) delete cache[keys[i]];
+      }
+      localStorage.setItem(NEWS_RESEARCH_CACHE_KEY, JSON.stringify(cache));
+    }
+
+    function roleLabel(role) {
+      const map = {
+        origin: 'Breaks',
+        followup: 'Follow-up',
+        coverage: 'Coverage',
+        analysis: 'Analysis',
+        latest: 'Latest',
+      };
+      return map[role] || role;
+    }
+
+    function NewsResearchBlock({ research, loading, error }) {
+      if (loading) {
+        return (
+          <div className="news-research-loading">
+            <span className="news-search-icon" style={{fontSize:16, animation:'news-spin 2.4s linear infinite'}}>⛏</span>
+            Deep-diving the web — cross-checking outlets, timeline, major mentions…
+          </div>
+        );
+      }
+      if (error) {
+        return (
+          <div style={{fontSize:11, color:'#B91C1C', padding:'6px 0'}}>
+            Research unavailable: {error}
+          </div>
+        );
+      }
+      if (!research) return null;
+
       return (
-        <details className="news-story-card" style={{...cardStyle, marginBottom: 0}}>
+        <div className="news-research-box">
+          <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:8}}>
+            Web progression · {research.articleCount} related article{research.articleCount !== 1 ? 's' : ''}
+            {research.progression?.coverageDepth && (
+              <span style={{marginLeft:8, fontWeight:500, textTransform:'none', letterSpacing:0, color:C.text}}>
+                · {research.progression.coverageDepth} coverage
+              </span>
+            )}
+          </div>
+
+          {research.progression?.narrative && (
+            <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.6, margin:'0 0 10px'}}>
+              {research.progression.narrative}
+            </p>
+          )}
+
+          {research.progression?.phases?.length > 0 && (
+            <div style={{marginBottom:10}}>
+              {research.progression.phases.map((ph, i) => (
+                <div key={i} className="news-research-phase">
+                  <div style={{fontSize:10, fontWeight:700, color:C.plat, textTransform:'uppercase', letterSpacing:'0.05em'}}>
+                    {ph.phase}
+                    {ph.when && (
+                      <span style={{fontWeight:500, color:C.text, textTransform:'none', marginLeft:6}}>
+                        {new Date(ph.when).toLocaleDateString([], { month:'short', day:'numeric' })}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{fontSize:11, color:C.textSecondary, lineHeight:1.5, marginTop:3}}>{ph.summary}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {research.mentions?.length > 0 && (
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:10, fontWeight:600, color:C.textDark, marginBottom:6}}>Major mentions</div>
+              <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
+                {research.mentions.map((m) => (
+                  <span key={m.label} className="news-mention-tag" title={(m.contexts || []).join(' · ')}>
+                    {m.label}{m.count > 1 ? ` ×${m.count}` : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {research.timeline?.length > 0 && (
+            <details style={{marginTop:4}}>
+              <summary style={{fontSize:10, fontWeight:600, color:C.plat, cursor:'pointer', marginBottom:6}}>
+                Full timeline ({research.timeline.length})
+              </summary>
+              <div>
+                {research.timeline.map((ev, i) => (
+                  <div key={i} className="news-timeline-item">
+                    <span style={{fontWeight:600, color:C.plat, marginRight:6}}>{roleLabel(ev.role)}</span>
+                    {ev.publishedAt && (
+                      <span style={{color:C.text, marginRight:6}}>
+                        {new Date(ev.publishedAt).toLocaleDateString([], { month:'short', day:'numeric' })}
+                      </span>
+                    )}
+                    <a href={ev.url} target="_blank" rel="noopener noreferrer"
+                      style={{color:C.textDark, textDecoration:'none', fontWeight:500}}>
+                      {ev.headline}
+                    </a>
+                    <span style={{color:C.text, marginLeft:6}}>· {ev.source}</span>
+                    {ev.snippet && (
+                      <div style={{color:C.text, marginTop:3, fontSize:10, lineHeight:1.45}}>{ev.snippet}…</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      );
+    }
+
+    function NewsStoryCard({ story, rank }) {
+      const [research, setResearch] = useState(story.research || null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [opened, setOpened] = useState(false);
+
+      const fetchResearch = useCallback(async () => {
+        if (research || loading) return;
+        const cacheKey = storyKey(story);
+        const cached = loadResearchCache()[cacheKey];
+        if (cached?.research && Date.now() - (cached.savedAt || 0) < 86400000) {
+          setResearch(cached.research);
+          return;
+        }
+        setLoading(true);
+        setError(null);
+        try {
+          const qs = new URLSearchParams({
+            headline: story.headline || story.title || '',
+            url: story.url || '',
+            topic: story.topic || 'platinum',
+            source: story.source || '',
+          });
+          if (story.publishedAt) qs.set('publishedAt', story.publishedAt);
+          const res = await fetch(`/.netlify/functions/story-research?${qs}`, { cache: 'no-store' });
+          const json = await res.json();
+          if (!json.ok) throw new Error(json.error || 'Research failed');
+          setResearch(json.research);
+          saveResearchCache(cacheKey, json.research);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [story, research, loading]);
+
+      const onToggle = (e) => {
+        const isOpen = e.target.open;
+        setOpened(isOpen);
+        if (isOpen) fetchResearch();
+      };
+
+      return (
+        <details className="news-story-card" style={{...cardStyle, marginBottom: 0}} onToggle={onToggle}>
           <summary>
             <div style={{display:'flex', gap:10, alignItems:'flex-start'}}>
               {rank != null && (
@@ -3269,6 +4052,14 @@
                     background: story.direction === 'bullish' ? 'rgba(4,120,87,0.12)' : story.direction === 'bearish' ? 'rgba(185,28,28,0.1)' : 'rgba(100,116,139,0.12)',
                     color: story.direction === 'bullish' ? '#047857' : story.direction === 'bearish' ? '#B91C1C' : C.text,
                   }}>{story.direction} for PGM</span>
+                )}
+                {(story.research?.articleCount || research?.articleCount) > 0 && (
+                  <span style={{
+                    display:'inline-block', marginTop:6, marginLeft:6, fontSize:10, fontWeight:600,
+                    padding:'2px 8px', borderRadius:4, background:C.surface2, color:C.plat,
+                  }}>
+                    {(story.research || research).articleCount} web sources · open for progression
+                  </span>
                 )}
               </div>
             </div>
@@ -3312,6 +4103,11 @@
               Read source →
             </a>
           </div>
+          {(opened || research) && (
+            <div style={{padding:'0 14px 12px 32px'}}>
+              <NewsResearchBlock research={research} loading={loading} error={error} />
+            </div>
+          )}
         </details>
       );
     }
@@ -3340,7 +4136,7 @@
           return;
         }
 
-        const url = `/.netlify/functions/news-digest?force=1&t=${Date.now()}`;
+        const url = `/.netlify/functions/news-digest?deep=1&force=1&t=${Date.now()}`;
         let data = null;
         try {
           const res = await fetch(url, { cache: 'no-store' });
@@ -3406,7 +4202,7 @@
                 padding:'6px 12px', borderRadius:6, border:`1px solid ${C.border}`,
                 background:C.surface, color:C.textDark, cursor: loading ? 'wait' : 'pointer',
               }}
-            >{loading ? 'Searching…' : 'Refresh'}</button>
+            >{loading ? 'Deep-diving…' : 'Refresh'}</button>
           </div>
 
           {error && (
@@ -3419,13 +4215,82 @@
             <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
               <span className="news-search-icon" title="Searching">⛏</span>
               <div>
-                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Searching for news…</div>
-                <div style={{fontSize:11, color:C.text, marginTop:4}}>Scanning mining & PGM feeds — may take a minute</div>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Deep-diving PGM news…</div>
+                <div style={{fontSize:11, color:C.text, marginTop:4}}>
+                  Scanning mining feeds, cross-checking web coverage, building daily progression — may take up to a minute
+                </div>
               </div>
             </div>
           )}
 
-          {digest?.progression && (
+          {digest?.dailyBrief && (
+            <details open style={{...cardStyle, padding:'12px 14px', marginBottom:10,
+              background:'linear-gradient(135deg, #F8FAFC 0%, #EDF1F6 100%)'}}>
+              <summary style={{cursor:'pointer', fontSize:11, fontWeight:600, color:C.plat, letterSpacing:'0.06em', textTransform:'uppercase'}}>
+                Daily brief · {digest.dailyBrief.direction}
+                <span style={{marginLeft:8, fontWeight:500, color:C.textDark, textTransform:'none', letterSpacing:0}}>
+                  ({digest.dailyBrief.bullishScore > 0 ? '+' : ''}{digest.dailyBrief.bullishScore})
+                  · {digest.dailyBrief.totalArticlesScanned || 0} web articles scanned
+                </span>
+              </summary>
+              <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.65, margin:'10px 0 10px'}}>
+                {digest.dailyBrief.dayNarrative}
+              </p>
+
+              {digest.dailyBrief.topMentions?.length > 0 && (
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:10, fontWeight:600, color:C.textDark, marginBottom:6}}>Major mentions today</div>
+                  <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
+                    {digest.dailyBrief.topMentions.map((m) => (
+                      <span key={m.label} className="news-mention-tag">
+                        {m.label}{m.count > 1 ? ` ×${m.count}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {digest.dailyBrief.uniqueAngles?.length > 0 && (
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:10, fontWeight:600, color:C.textDark, marginBottom:6}}>Three unique angles</div>
+                  {digest.dailyBrief.uniqueAngles.map((a) => (
+                    <div key={a.rank} style={{fontSize:11, color:C.textSecondary, lineHeight:1.5, marginBottom:5}}>
+                      <span style={{fontWeight:700, color:C.plat}}>#{a.rank}</span>
+                      {' '}{a.headline}
+                      <span style={{color:C.text}}> · {a.source}</span>
+                      {a.articleCount > 0 && (
+                        <span style={{color:C.text}}> · {a.articleCount} related pieces ({a.coverageDepth})</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {digest.dailyBrief.chronology?.length > 0 && (
+                <details>
+                  <summary style={{fontSize:10, fontWeight:600, color:C.plat, cursor:'pointer', marginBottom:6}}>
+                    Day chronology ({digest.dailyBrief.chronology.length})
+                  </summary>
+                  <div>
+                    {digest.dailyBrief.chronology.map((ev, i) => (
+                      <div key={i} className="news-timeline-item">
+                        {ev.when && (
+                          <span style={{color:C.text, marginRight:6}}>
+                            {new Date(ev.when).toLocaleDateString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}
+                          </span>
+                        )}
+                        {ev.tiedTo && <span style={{fontWeight:600, color:C.plat, marginRight:6}}>{ev.tiedTo}</span>}
+                        <span style={{color:C.textDark}}>{ev.headline}</span>
+                        <span style={{color:C.text, marginLeft:6}}>· {ev.source}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </details>
+          )}
+
+          {!digest?.dailyBrief && digest?.progression && (
             <details style={{...cardStyle, padding:'12px 14px', marginBottom:10,
               background:'linear-gradient(135deg, #F8FAFC 0%, #EDF1F6 100%)'}}>
               <summary style={{cursor:'pointer', fontSize:11, fontWeight:600, color:C.plat, letterSpacing:'0.06em', textTransform:'uppercase'}}>
@@ -3471,7 +4336,7 @@
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            Refreshes once per day · Google News PGM & producer feeds
+            Refreshes once per day · multi-source Google News PGM sweep with on-click deep dive
             {digest?.persistNote && ` · ${digest.persistNote}`}
           </div>
         </div>
@@ -4198,6 +5063,9 @@
         <>
           <ErrorBoundary>
             <LiveDashboard />
+          </ErrorBoundary>
+          <ErrorBoundary>
+            <BuyDeepDivePanel />
           </ErrorBoundary>
           <ErrorBoundary>
             <NewsPanel />

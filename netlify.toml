@@ -13,6 +13,15 @@
 [functions."fetch-news"]
   schedule = "0 9,21 * * *"
 
+[functions."news-digest"]
+  timeout = 26
+
+[functions."story-research"]
+  timeout = 26
+
+[functions."asset-deep-dive"]
+  timeout = 26
+
 [functions."fetch-producers"]
   schedule = "0 9,21 * * *"
 

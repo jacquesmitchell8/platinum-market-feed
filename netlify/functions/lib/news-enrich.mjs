@@ -31,6 +31,17 @@ function normTitle(title) {
     .trim();
 }
 
+const TITLE_STOP = new Set(['the', 'a', 'an', 'and', 'or', 'in', 'on', 'for', 'of', 'to', 'says', 'after']);
+
+export function titleSimilarity(a, b) {
+  const wa = new Set(normTitle(a).split(' ').filter((w) => w.length > 2 && !TITLE_STOP.has(w)));
+  const wb = new Set(normTitle(b).split(' ').filter((w) => w.length > 2 && !TITLE_STOP.has(w)));
+  if (!wa.size || !wb.size) return 0;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  return inter / (wa.size + wb.size - inter);
+}
+
 export function storyDedupeKey(story) {
   const t = normTitle(story.title || story.headline);
   return t.slice(0, 72) || (story.url || '').split('?')[0].toLowerCase();
@@ -97,16 +108,29 @@ export function pickTopStories(rows, limit = 3) {
 
   const top = [];
   const usedPublishers = new Set();
+  const usedThemes = new Set();
+
+  function tooSimilarToTop(candidate) {
+    return top.some((t) => {
+      if (storyDedupeKey(t) === storyDedupeKey(candidate)) return true;
+      return titleSimilarity(t.title, candidate.title) > 0.55;
+    });
+  }
+
   for (const s of scored) {
     if (top.length >= limit) break;
+    if (tooSimilarToTop(s)) continue;
     const pub = (s.source || '').toLowerCase();
-    if (top.length < limit - 1 && usedPublishers.has(pub) && scored.length > limit) continue;
+    const themeKey = (s.themeLabels || [])[0] || s.topic || 'general';
+    if (top.length < limit - 1 && usedPublishers.has(pub) && scored.length > limit + 2) continue;
+    if (top.length < limit - 1 && usedThemes.has(themeKey) && scored.length > limit + 3) continue;
     usedPublishers.add(pub);
+    usedThemes.add(themeKey);
     top.push({ ...s, rank: top.length + 1 });
   }
   for (const s of scored) {
     if (top.length >= limit) break;
-    if (top.some((t) => storyDedupeKey(t) === storyDedupeKey(s))) continue;
+    if (tooSimilarToTop(s)) continue;
     top.push({ ...s, rank: top.length + 1 });
   }
   return { top, rest: scored.filter((s) => !top.some((t) => storyDedupeKey(t) === storyDedupeKey(s))) };
