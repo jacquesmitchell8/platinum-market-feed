@@ -4050,19 +4050,156 @@
       return map[role] || role;
     }
 
+    const STORY_MENTION_PATTERNS = [
+      { label: 'Nornickel', re: /\bnornickel\b|\bnorilsk\b/i },
+      { label: 'Impala / Implats', re: /\bimpala\b|\bimplats\b/i },
+      { label: 'Sibanye', re: /\bsibanye\b/i },
+      { label: 'Amplats', re: /\bamplats\b|\banglo american platinum\b/i },
+      { label: 'Northam', re: /\bnortham\b/i },
+      { label: 'WPIC', re: /\bwpic\b/i },
+      { label: 'Platinum', re: /\bplatinum\b/i },
+      { label: 'Palladium', re: /\bpalladium\b/i },
+      { label: 'Rhodium', re: /\brhodium\b/i },
+      { label: 'Nickel', re: /\bnickel\b/i },
+      { label: 'Surplus / deficit', re: /\bsurplus\b|\bdeficit\b|\bshortage\b/i },
+      { label: 'Hydrogen / PEM', re: /\bhydrogen\b|\bfuel cell\b|\bpem\b/i },
+      { label: 'Auto / catalyst', re: /\bcatalyst\b|\bautomotive\b|\bvehicle\b/i },
+      { label: 'South Africa', re: /\bsouth africa\b|\beskom\b/i },
+      { label: 'China', re: /\bchina\b|\bchinese\b/i },
+      { label: 'ETF / investment', re: /\betf\b|\binvestment\b/i },
+    ];
+
+    function storyWords(text) {
+      return String(text || '').toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter((w) => w.length > 3);
+    }
+
+    function storyOverlap(a, b) {
+      const wa = new Set(storyWords(a));
+      const wb = storyWords(b);
+      if (!wa.size || !wb.length) return 0;
+      let n = 0;
+      for (const w of wb) if (wa.has(w)) n++;
+      return n / Math.max(wa.size, 1);
+    }
+
+    /** Progression from on-page news corpus — no Netlify function, no host quota. */
+    function buildLocalStoryResearch(story, relatedPool = []) {
+      const headline = story.headline || story.title || '';
+      const origin = {
+        headline,
+        url: story.url || '',
+        source: story.source || 'Source',
+        publishedAt: story.publishedAt || null,
+        snippet: (story.bullets || []).join(' '),
+        role: 'origin',
+      };
+
+      const related = (relatedPool || [])
+        .filter((s) => storyKey(s) !== storyKey(story))
+        .map((s) => ({
+          s,
+          score: storyOverlap(headline, s.headline || s.title || ''),
+        }))
+        .filter((x) => x.score >= 0.18)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+        .map(({ s }) => ({
+          headline: s.headline || s.title,
+          url: s.url || '',
+          source: s.source || 'Archive',
+          publishedAt: s.publishedAt || null,
+          snippet: (s.bullets || []).slice(0, 2).join(' '),
+          role: 'coverage',
+        }));
+
+      const timeline = [origin, ...related].sort((a, b) => {
+        const ta = new Date(a.publishedAt || 0).getTime();
+        const tb = new Date(b.publishedAt || 0).getTime();
+        return ta - tb;
+      });
+      if (timeline.length) {
+        timeline[0].role = timeline[0].url === origin.url ? 'origin' : timeline[0].role;
+        timeline[timeline.length - 1].role = timeline.length === 1 ? 'origin' : 'latest';
+      }
+
+      const mentionMap = new Map();
+      for (const ev of timeline) {
+        const blob = `${ev.headline} ${ev.snippet || ''}`;
+        for (const pat of STORY_MENTION_PATTERNS) {
+          if (!pat.re.test(blob)) continue;
+          const ex = mentionMap.get(pat.label) || { label: pat.label, count: 0, contexts: [] };
+          ex.count += 1;
+          if (ex.contexts.length < 3) ex.contexts.push(ev.headline.slice(0, 80));
+          mentionMap.set(pat.label, ex);
+        }
+      }
+      const mentions = [...mentionMap.values()].sort((a, b) => b.count - a.count).slice(0, 10);
+
+      const phases = [{
+        phase: 'Breaks',
+        when: origin.publishedAt,
+        summary: `Story surfaces via ${origin.source}: "${headline.slice(0, 100)}${headline.length > 100 ? '…' : ''}"`,
+      }];
+      if (related.length) {
+        phases.push({
+          phase: 'Related coverage',
+          when: related[0].publishedAt,
+          summary: `${related.length} related piece${related.length > 1 ? 's' : ''} in today's digest / archive share themes with this headline.`,
+        });
+      }
+      if (story.direction) {
+        phases.push({
+          phase: 'PGM read',
+          when: origin.publishedAt,
+          summary: `Directional lean for the PGM complex: ${story.direction}` +
+            (story.platinumImpact != null ? ` (Pt impact ${story.platinumImpact > 0 ? '+' : ''}${story.platinumImpact}).` : '.'),
+        });
+      }
+      if (story.themeLabels?.length) {
+        phases.push({
+          phase: 'Themes',
+          when: null,
+          summary: story.themeLabels.join(' · '),
+        });
+      }
+
+      const narrativeParts = [
+        `Progression built from on-page coverage (${timeline.length} item${timeline.length !== 1 ? 's' : ''}) — no live host scan.`,
+      ];
+      if (story.bullets?.length) narrativeParts.push(story.bullets.join(' '));
+      else if (story.direction) narrativeParts.push(`Net read: ${story.direction} for PGM.`);
+      if (mentions.length) narrativeParts.push(`Major mentions: ${mentions.slice(0, 4).map((m) => m.label).join(', ')}.`);
+
+      return {
+        headline,
+        articleCount: timeline.length,
+        timeline,
+        mentions,
+        highlights: timeline.slice(0, 5),
+        progression: {
+          phases,
+          narrative: narrativeParts.join(' '),
+          coverageDepth: related.length >= 3 ? 'moderate' : 'local',
+          sourceCount: new Set(timeline.map((t) => t.source)).size,
+        },
+        localOnly: true,
+        researchedAt: new Date().toISOString(),
+      };
+    }
+
     function NewsResearchBlock({ research, loading, error }) {
       if (loading) {
         return (
           <div className="news-research-loading">
             <span className="news-search-icon" style={{fontSize:16, animation:'news-spin 2.4s linear infinite'}}>⛏</span>
-            Deep-diving the web — cross-checking outlets, timeline, major mentions…
+            Building progression…
           </div>
         );
       }
-      if (error) {
+      if (!research && error) {
         return (
-          <div style={{fontSize:11, color:'#B91C1C', padding:'6px 0'}}>
-            Research unavailable: {error}
+          <div style={{fontSize:11, color:C.text, padding:'6px 0'}}>
+            Progression limited — {error}
           </div>
         );
       }
@@ -4071,8 +4208,9 @@
       return (
         <div className="news-research-box">
           <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:8}}>
-            Web progression · {research.articleCount} related article{research.articleCount !== 1 ? 's' : ''}
-            {research.progression?.coverageDepth && (
+            Progression · {research.articleCount} related
+            {research.localOnly ? ' · on-page' : ''}
+            {research.progression?.coverageDepth && !research.localOnly && (
               <span style={{marginLeft:8, fontWeight:500, textTransform:'none', letterSpacing:0, color:C.text}}>
                 · {research.progression.coverageDepth} coverage
               </span>
@@ -4147,46 +4285,29 @@
       );
     }
 
-    function NewsStoryCard({ story, rank }) {
-      const [research, setResearch] = useState(story.research || null);
-      const [loading, setLoading] = useState(false);
-      const [error, setError] = useState(null);
+    function NewsStoryCard({ story, rank, relatedPool = [] }) {
+      const [research, setResearch] = useState(null);
       const [opened, setOpened] = useState(false);
 
-      const fetchResearch = useCallback(async () => {
-        if (research || loading) return;
+      const ensureResearch = useCallback(() => {
+        if (research) return;
         const cacheKey = storyKey(story);
         const cached = loadResearchCache()[cacheKey];
-        if (cached?.research && Date.now() - (cached.savedAt || 0) < 86400000) {
+        // Prefer full prior research only if it isn't a failed/empty payload.
+        if (cached?.research?.timeline?.length && !cached.research.error) {
           setResearch(cached.research);
           return;
         }
-        setLoading(true);
-        setError(null);
-        try {
-          const qs = new URLSearchParams({
-            headline: story.headline || story.title || '',
-            url: story.url || '',
-            topic: story.topic || 'platinum',
-            source: story.source || '',
-          });
-          if (story.publishedAt) qs.set('publishedAt', story.publishedAt);
-          const res = await fetch(`/.netlify/functions/story-research?${qs}`, { cache: 'no-store' });
-          const json = await res.json();
-          if (!json.ok) throw new Error(json.error || 'Research failed');
-          setResearch(json.research);
-          saveResearchCache(cacheKey, json.research);
-        } catch (e) {
-          setError(e.message);
-        } finally {
-          setLoading(false);
-        }
-      }, [story, research, loading]);
+        // Always build on-page — never call Netlify (host free-tier quota).
+        const local = buildLocalStoryResearch(story, relatedPool);
+        setResearch(local);
+        saveResearchCache(cacheKey, local);
+      }, [story, research, relatedPool]);
 
       const onToggle = (e) => {
         const isOpen = e.target.open;
         setOpened(isOpen);
-        if (isOpen) fetchResearch();
+        if (isOpen) ensureResearch();
       };
 
       return (
@@ -4217,14 +4338,12 @@
                     color: story.direction === 'bullish' ? '#047857' : story.direction === 'bearish' ? '#B91C1C' : C.text,
                   }}>{story.direction} for PGM</span>
                 )}
-                {(story.research?.articleCount || research?.articleCount) > 0 && (
-                  <span style={{
-                    display:'inline-block', marginTop:6, marginLeft:6, fontSize:10, fontWeight:600,
-                    padding:'2px 8px', borderRadius:4, background:C.surface2, color:C.plat,
-                  }}>
-                    {(story.research || research).articleCount} web sources · open for progression
-                  </span>
-                )}
+                <span style={{
+                  display:'inline-block', marginTop:6, marginLeft:6, fontSize:10, fontWeight:600,
+                  padding:'2px 8px', borderRadius:4, background:C.surface2, color:C.plat,
+                }}>
+                  Open for progression
+                </span>
               </div>
             </div>
           </summary>
@@ -4267,9 +4386,9 @@
               Read source →
             </a>
           </div>
-          {(opened || research) && (
+          {opened && (
             <div style={{padding:'0 14px 12px 32px'}}>
-              <NewsResearchBlock research={research} loading={loading} error={error} />
+              <NewsResearchBlock research={research} loading={!research} error={null} />
             </div>
           )}
         </details>
@@ -4485,7 +4604,12 @@
 
           <div style={{display:'grid', gap:8}}>
             {(digest?.stories || []).map((story) => (
-              <NewsStoryCard key={story.url || story.title} story={story} rank={story.rank} />
+              <NewsStoryCard
+                key={story.url || story.title}
+                story={story}
+                rank={story.rank}
+                relatedPool={[...(digest?.stories || []), ...pastStories]}
+              />
             ))}
           </div>
 
@@ -4494,7 +4618,11 @@
               <summary>Past stories · {pastStories.length} archived (no repeats)</summary>
               <div style={{display:'grid', gap:6, marginTop:8}}>
                 {pastStories.map((story) => (
-                  <NewsStoryCard key={(story.digestDate || '') + storyKey(story)} story={story} />
+                  <NewsStoryCard
+                    key={(story.digestDate || '') + storyKey(story)}
+                    story={story}
+                    relatedPool={[...(digest?.stories || []), ...pastStories]}
+                  />
                 ))}
               </div>
             </details>
