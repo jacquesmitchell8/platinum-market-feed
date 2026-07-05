@@ -78,6 +78,36 @@ create table if not exists news_stories (
   created_at timestamptz default now()
 );
 
+-- ─── Technical analysis pattern library & observations ─────────────────────
+
+create table if not exists ta_pattern_library (
+  slug text primary key,
+  title text not null,
+  bias text,
+  summary text,
+  theory text,
+  diagram text,
+  updated_at timestamptz default now()
+);
+
+create table if not exists ta_observations (
+  id bigserial primary key,
+  pattern_slug text not null references ta_pattern_library(slug),
+  curve_id text,
+  timeframe text,
+  fingerprint text not null,
+  event_start_ts timestamptz,
+  event_end_ts timestamptz,
+  price_snapshot jsonb,
+  story_narrative text,
+  story_sources jsonb default '[]'::jsonb,
+  detected_at timestamptz default now(),
+  unique (fingerprint)
+);
+
+create index if not exists ta_observations_curve_tf
+  on ta_observations (curve_id, timeframe, detected_at desc);
+
 -- ─── 2. Add recorded_day (dedupe key — avoids timestamptz::date index error) ─
 
 alter table metal_price_history add column if not exists recorded_day date;
@@ -152,6 +182,8 @@ alter table crypto_price_history enable row level security;
 alter table producer_price_history enable row level security;
 alter table producer_quotes enable row level security;
 alter table news_stories enable row level security;
+alter table ta_pattern_library enable row level security;
+alter table ta_observations enable row level security;
 alter table metal_price_history_monthly enable row level security;
 alter table crypto_price_history_monthly enable row level security;
 alter table producer_price_history_monthly enable row level security;
@@ -159,6 +191,8 @@ alter table producer_price_history_monthly enable row level security;
 drop policy if exists "Public read market snapshots" on market_snapshots;
 drop policy if exists "Public read metal history" on metal_price_history;
 drop policy if exists "Public read news" on news_stories;
+drop policy if exists "Public read ta patterns" on ta_pattern_library;
+drop policy if exists "Public read ta observations" on ta_observations;
 drop policy if exists "Public read metal history monthly" on metal_price_history_monthly;
 
 create policy "Public read market snapshots"
@@ -178,5 +212,15 @@ create policy "Public read metal history monthly"
 
 create policy "Public read news"
   on news_stories for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read ta patterns"
+  on ta_pattern_library for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read ta observations"
+  on ta_observations for select
   to anon, authenticated
   using (true);

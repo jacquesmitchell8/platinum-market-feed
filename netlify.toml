@@ -22,6 +22,9 @@
 [functions."asset-deep-dive"]
   timeout = 26
 
+[functions."ta-intelligence"]
+  timeout = 15
+
 [functions."fetch-producers"]
   schedule = "0 9,21 * * *"
 

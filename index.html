@@ -943,7 +943,7 @@
     }
     const {
       LineChart, Line, ComposedChart, BarChart, Bar, Area,
-      XAxis, YAxis, CartesianGrid, Legend, Cell, LabelList,
+      XAxis, YAxis, CartesianGrid, Legend, Cell, LabelList, Customized,
       Tooltip, ReferenceLine, ReferenceArea, ResponsiveContainer
     } = Recharts;
 
@@ -2098,6 +2098,325 @@
       double_bottom: 'Double bottom',
     };
 
+    const TA_INTEL_CACHE = 'pm_metis_ta_intel_v1';
+
+    function renderTaMarkdown(text) {
+      if (!text) return null;
+      return String(text).split(/\n\n+/).map((block, i) => {
+        const html = block
+          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+          .replace(/\n/g, ' ');
+        return <p key={i} style={{margin:'0 0 8px', lineHeight:1.6}} dangerouslySetInnerHTML={{__html: html}} />;
+      });
+    }
+
+    function TaPatternDiagram({ type, width = 140, height = 88 }) {
+      const vb = '0 0 140 88';
+      const common = { width, height, viewBox: vb, style: { display: 'block', borderRadius: 6 } };
+      if (type === 'inverted_cup') {
+        return (
+          <svg {...common} aria-label="Inverted cup schematic">
+            <rect width="140" height="88" fill="#F8FAFC"/>
+            <path d="M18 28 L18 28 Q70 72 122 28" fill="none" stroke="#7C3AED" strokeWidth="2.5"/>
+            <line x1="18" y1="28" x2="122" y2="28" stroke="#7C3AED" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.7"/>
+            <text x="12" y="18" fontSize="9" fill="#64748B">rim</text>
+            <text x="62" y="80" fontSize="9" fill="#64748B">base</text>
+            <path d="M70 78 L70 86 M65 86 L75 86" stroke="#B91C1C" strokeWidth="1.5"/>
+            <text x="78" y="86" fontSize="8" fill="#B91C1C">break</text>
+          </svg>
+        );
+      }
+      if (type === 'double_top') {
+        return (
+          <svg {...common} aria-label="Double top schematic">
+            <rect width="140" height="88" fill="#F8FAFC"/>
+            <path d="M12 58 L35 22 L58 48 L82 22 L105 48 L128 58" fill="none" stroke="#B45309" strokeWidth="2"/>
+            <line x1="12" y1="48" x2="128" y2="48" stroke="#B45309" strokeWidth="1.5" strokeDasharray="4 3"/>
+            <text x="8" y="46" fontSize="8" fill="#64748B">neck</text>
+          </svg>
+        );
+      }
+      if (type === 'double_bottom') {
+        return (
+          <svg {...common} aria-label="Double bottom schematic">
+            <rect width="140" height="88" fill="#F8FAFC"/>
+            <path d="M12 30 L35 66 L58 40 L82 66 L105 40 L128 30" fill="none" stroke="#047857" strokeWidth="2"/>
+            <line x1="12" y1="40" x2="128" y2="40" stroke="#047857" strokeWidth="1.5" strokeDasharray="4 3"/>
+          </svg>
+        );
+      }
+      if (type === 'breakout') {
+        return (
+          <svg {...common} aria-label="Breakout schematic">
+            <rect width="140" height="88" fill="#F8FAFC"/>
+            <line x1="10" y1="38" x2="130" y2="38" stroke="#B91C1C" strokeWidth="1.5" strokeDasharray="5 4"/>
+            <path d="M20 52 L45 52 L45 38 L70 38 L70 52 L95 28 L120 18" fill="none" stroke="#047857" strokeWidth="2"/>
+            <polygon points="118,16 124,22 112,22" fill="#047857"/>
+          </svg>
+        );
+      }
+      if (type === 'breakdown') {
+        return (
+          <svg {...common} aria-label="Breakdown schematic">
+            <rect width="140" height="88" fill="#F8FAFC"/>
+            <line x1="10" y1="50" x2="130" y2="50" stroke="#047857" strokeWidth="1.5" strokeDasharray="5 4"/>
+            <path d="M20 36 L45 36 L45 50 L70 50 L70 36 L95 60 L120 70" fill="none" stroke="#B91C1C" strokeWidth="2"/>
+          </svg>
+        );
+      }
+      if (type === 'support' || type === 'resistance') {
+        const col = type === 'support' ? '#047857' : '#B91C1C';
+        return (
+          <svg {...common} aria-label={`${type} schematic`}>
+            <rect width="140" height="88" fill="#F8FAFC"/>
+            <path d="M12 44 Q40 28 70 44 T128 44" fill="none" stroke={C.plat} strokeWidth="2"/>
+            <line x1="10" y1="56" x2="130" y2="56" stroke={col} strokeWidth="2" strokeDasharray="6 4"/>
+            <text x="10" y="72" fontSize="9" fill={col}>{type}</text>
+          </svg>
+        );
+      }
+      return null;
+    }
+
+    function makeTaChartOverlay(ta) {
+      return function TaChartOverlayInner({ xAxisMap, yAxisMap }) {
+        const xAxis = Object.values(xAxisMap || {})[0];
+        const yAxis = Object.values(yAxisMap || {})[0];
+        if (!xAxis?.scale || !yAxis?.scale) return null;
+        const sx = (ts) => xAxis.scale(ts);
+        const sy = (v) => yAxis.scale(v);
+        const els = [];
+
+        if (ta.invertedCup) {
+          const { leftPt, botPt, rightPt, neckline } = ta.invertedCup;
+          const x0 = sx(leftPt.ts), y0 = sy(leftPt.v);
+          const x1 = sx(botPt.ts), y1 = sy(botPt.v);
+          const x2 = sx(rightPt.ts), y2 = sy(rightPt.v);
+          const yN = sy(neckline);
+          els.push(
+            <path key="cup"
+              d={`M ${x0} ${y0} Q ${x0} ${y1} ${x1} ${y1} Q ${x2} ${y1} ${x2} ${y2}`}
+              fill="rgba(124,58,237,0.08)" stroke="#7C3AED" strokeWidth={2.5} strokeDasharray="7 4"/>
+          );
+          els.push(
+            <line key="cup-neck" x1={x0} y1={yN} x2={x2} y2={yN}
+              stroke="#7C3AED" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.75}/>
+          );
+        }
+
+        if (ta.doublePattern) {
+          const { a, b, neckline } = ta.doublePattern;
+          const xa = sx(a.ts), ya = sy(a.v);
+          const xb = sx(b.ts), yb = sy(b.v);
+          const yN = sy(neckline);
+          els.push(
+            <path key="dbl" d={`M ${xa} ${ya} L ${xb} ${yb}`} fill="none" stroke="#B45309" strokeWidth={1.5} opacity={0.5}/>
+          );
+          els.push(
+            <circle key="pa" cx={xa} cy={ya} r={5} fill="#B45309" stroke="#fff" strokeWidth={1}/>
+          );
+          els.push(
+            <circle key="pb" cx={xb} cy={yb} r={5} fill="#B45309" stroke="#fff" strokeWidth={1}/>
+          );
+          els.push(
+            <line key="dbl-neck" x1={xa} y1={yN} x2={xb} y2={yN}
+              stroke="#B45309" strokeWidth={1.5} strokeDasharray="5 3"/>
+          );
+        }
+
+        return <g>{els}</g>;
+      };
+    }
+
+    function collectTaDetections(ta, curveId, timeframe) {
+      const out = [];
+      if (ta.invertedCup) {
+        out.push({
+          slug: 'inverted_cup',
+          fingerprint: `${curveId}:${timeframe}:inverted_cup:${ta.invertedCup.leftPt.ts}`,
+          eventStartTs: ta.invertedCup.leftPt.ts,
+          eventEndTs: ta.invertedCup.rightPt.ts,
+          levels: { neckline: ta.invertedCup.neckline, depthPct: ta.invertedCup.depthPct },
+        });
+      }
+      if (ta.doublePattern) {
+        const slug = ta.doublePattern.type;
+        out.push({
+          slug,
+          fingerprint: `${curveId}:${timeframe}:${slug}:${ta.doublePattern.a.ts}`,
+          eventStartTs: ta.doublePattern.a.ts,
+          eventEndTs: ta.doublePattern.b.ts,
+          levels: { neckline: ta.doublePattern.neckline, depthPct: ta.doublePattern.depthPct },
+        });
+      }
+      const recentBreak = [...(ta.markers || [])].sort((a, b) => b.ts - a.ts)[0];
+      if (recentBreak) {
+        out.push({
+          slug: recentBreak.type,
+          fingerprint: `${curveId}:${timeframe}:${recentBreak.type}:${recentBreak.ts}`,
+          eventStartTs: recentBreak.ts,
+          eventEndTs: recentBreak.ts,
+          levels: { level: recentBreak.level },
+        });
+      }
+      return out;
+    }
+
+    function TaPatternCard({ detection, libraryEntry, observation, assetLabel, timeframe, fmtY, livePrice, bias }) {
+      const [theoryOpen, setTheoryOpen] = useState(false);
+      const entry = libraryEntry || {};
+      const story = observation?.story_narrative || null;
+      const biasColor = { bullish: '#047857', bearish: '#B91C1C', neutral: C.text };
+
+      return (
+        <div style={{
+          ...cardStyle, padding: 0, overflow: 'hidden', marginBottom: 10,
+        }}>
+          <div style={{display:'flex', gap:14, padding:'12px 14px', flexWrap:'wrap'}}>
+            <TaPatternDiagram type={entry.diagram || detection.slug} />
+            <div style={{flex:1, minWidth:200}}>
+              <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                <span style={{fontSize:13, fontWeight:700, color:C.textDark}}>{entry.title || detection.slug}</span>
+                {entry.bias && (
+                  <span style={{
+                    fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em',
+                    padding:'2px 8px', borderRadius:4,
+                    background: (biasColor[entry.bias] || C.text) + '18',
+                    color: biasColor[entry.bias] || C.text,
+                  }}>{entry.bias}</span>
+                )}
+              </div>
+              <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.55, margin:'6px 0 0'}}>
+                {entry.summary}
+              </p>
+              {detection.levels?.neckline != null && (
+                <div style={{fontSize:11, color:C.text, marginTop:6}}>
+                  Neckline {fmtY(detection.levels.neckline)}
+                  {detection.levels.depthPct != null && ` · ${detection.levels.depthPct}% depth`}
+                </div>
+              )}
+              {detection.levels?.level != null && (
+                <div style={{fontSize:11, color:C.text, marginTop:6}}>Level {fmtY(detection.levels.level)}</div>
+              )}
+            </div>
+          </div>
+
+          {story && (
+            <div style={{
+              padding:'10px 14px', margin:'0 14px 10px', borderRadius:8,
+              background:C.surface2, border:`1px solid ${C.borderLight}`,
+            }}>
+              <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:6}}>
+                Event story · {assetLabel} · {timeframe}
+              </div>
+              <div style={{fontSize:12, color:C.textSecondary, lineHeight:1.6}}>
+                {renderTaMarkdown(story)}
+              </div>
+            </div>
+          )}
+
+          <div style={{padding:'0 14px 12px'}}>
+            <button type="button" onClick={() => setTheoryOpen(!theoryOpen)}
+              style={{
+                fontSize:11, fontWeight:600, color:C.plat, background:'none', border:'none',
+                cursor:'pointer', padding:0, textDecoration:'underline',
+              }}>
+              {theoryOpen ? 'Hide' : 'Read'} Metis theory · {entry.title || detection.slug}
+            </button>
+            {theoryOpen && entry.theory && (
+              <div id={`ta-theory-${detection.slug}`} style={{
+                marginTop:10, padding:'12px 14px', borderRadius:8,
+                background:'linear-gradient(135deg, #F8FAFC 0%, #EDF1F6 100%)',
+                border:`1px solid ${C.borderLight}`, fontSize:12, color:C.textSecondary,
+              }}>
+                {renderTaMarkdown(entry.theory)}
+                <div style={{fontSize:10, color:C.text, marginTop:8}}>
+                  Platinum Metis · internal technical observation framework · not financial advice
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function useTaIntelligence(curveId, timeframe, ta, assetLabel, fmtY) {
+      const [library, setLibrary] = useState([]);
+      const [observations, setObservations] = useState([]);
+      const savedRef = useRef(new Set());
+
+      useEffect(() => {
+        let cancelled = false;
+        const cacheKey = `${TA_INTEL_CACHE}:${curveId}:${timeframe}`;
+        try {
+          const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+          if (cached?.library?.length && Date.now() - (cached.savedAt || 0) < 86400000) {
+            setLibrary(cached.library);
+            setObservations(cached.observations || []);
+          }
+        } catch (_) {}
+
+        fetch(`/.netlify/functions/ta-intelligence?curveId=${encodeURIComponent(curveId)}&timeframe=${encodeURIComponent(timeframe)}`)
+          .then((r) => r.json())
+          .then((json) => {
+            if (cancelled || !json.ok) return;
+            setLibrary(json.library || []);
+            setObservations(json.observations || []);
+            try {
+              localStorage.setItem(cacheKey, JSON.stringify({
+                library: json.library,
+                observations: json.observations,
+                savedAt: Date.now(),
+              }));
+            } catch (_) {}
+          })
+          .catch(() => {});
+        return () => { cancelled = true; };
+      }, [curveId, timeframe]);
+
+      useEffect(() => {
+        if (!ta?.chartRows?.length || !library.length) return;
+        const detections = collectTaDetections(ta, curveId, timeframe);
+        for (const d of detections) {
+          if (savedRef.current.has(d.fingerprint)) continue;
+          savedRef.current.add(d.fingerprint);
+          const lib = library.find((l) => l.slug === d.slug);
+          fetch('/.netlify/functions/ta-intelligence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              patternSlug: d.slug,
+              curveId,
+              timeframe,
+              fingerprint: d.fingerprint,
+              eventStartTs: d.eventStartTs ? new Date(d.eventStartTs).toISOString() : null,
+              eventEndTs: d.eventEndTs ? new Date(d.eventEndTs).toISOString() : null,
+              context: {
+                assetLabel,
+                timeframe,
+                bias: ta.bias,
+                livePrice: ta.last,
+                dates: { start: d.eventStartTs, end: d.eventEndTs },
+                levels: d.levels,
+              },
+            }),
+          }).then((r) => r.json()).then((json) => {
+            if (json.ok && json.observation) {
+              setObservations((prev) => {
+                const rest = prev.filter((o) => o.fingerprint !== d.fingerprint);
+                return [json.observation, ...rest].slice(0, 20);
+              });
+            }
+          }).catch(() => {});
+        }
+      }, [ta, curveId, timeframe, library, assetLabel]);
+
+      const libBySlug = useMemo(() => Object.fromEntries(library.map((l) => [l.slug, l])), [library]);
+      const obsByFp = useMemo(() => Object.fromEntries(observations.map((o) => [o.fingerprint, o])), [observations]);
+
+      return { library, libBySlug, obsByFp, detections: ta ? collectTaDetections(ta, curveId, timeframe) : [] };
+    }
+
     const TA_MARKER_DOT = (props) => {
       const { cx, cy, payload } = props;
       if (!payload?.taMarker || cx == null || cy == null) return null;
@@ -2121,6 +2440,15 @@
 
     function AssetTaChart({ rows, curveId, timeframe, title, color, unit = 'USD' }) {
       const ta = useMemo(() => analyzeAssetTa(rows, curveId, timeframe), [rows, curveId, timeframe]);
+      const assetLabel = CURVE_INDEX[curveId]?.label || curveId;
+      const fmtY = (v) => {
+        if (unit === 'AUD') return `$${Math.round(v).toLocaleString()}`;
+        if (unit === 'ZAR') return fmtZar(v);
+        if (v < 10) return `$${v.toFixed(4)}`;
+        return fmtUsd(v);
+      };
+      const { libBySlug, obsByFp, detections } = useTaIntelligence(curveId, timeframe, ta, assetLabel, fmtY);
+
       if (!ta.chartRows.length) {
         return (
           <div style={{padding:20, fontSize:12, color:C.text, textAlign:'center'}}>
@@ -2128,12 +2456,6 @@
           </div>
         );
       }
-      const fmtY = (v) => {
-        if (unit === 'AUD') return `$${Math.round(v).toLocaleString()}`;
-        if (unit === 'ZAR') return fmtZar(v);
-        if (v < 10) return `$${v.toFixed(4)}`;
-        return fmtUsd(v);
-      };
       const biasColor = { bullish: '#047857', bearish: '#B91C1C', neutral: C.text };
       const tfLabel = TIMEFRAMES.find((t) => t.id === timeframe)?.label || '';
 
@@ -2166,9 +2488,10 @@
                   </div>
                 );
               }} cursor={{stroke:C.border}}/>
+              <Customized component={makeTaChartOverlay(ta)} />
               {ta.invertedCup && (
                 <ReferenceArea x1={ta.invertedCup.leftPt.ts} x2={ta.invertedCup.rightPt.ts}
-                  fill="rgba(124,58,237,0.06)" stroke="rgba(124,58,237,0.25)" strokeDasharray="4 4"/>
+                  fill="rgba(124,58,237,0.04)" stroke="none"/>
               )}
               {ta.doublePattern && (
                 <ReferenceLine y={ta.doublePattern.neckline} stroke="#B45309" strokeDasharray="5 3" strokeWidth={1.5}
@@ -2184,7 +2507,7 @@
               ))}
               {ta.invertedCup && (
                 <ReferenceLine y={ta.invertedCup.neckline} stroke="#7C3AED" strokeDasharray="3 3" strokeWidth={1.5}
-                  label={{ value: `Cup ${fmtY(ta.invertedCup.neckline)}`, position: 'insideTopRight', fill: '#7C3AED', fontSize: 9 }}/>
+                  label={{ value: `Rim ${fmtY(ta.invertedCup.neckline)}`, position: 'insideTopRight', fill: '#7C3AED', fontSize: 9 }}/>
               )}
               <Line type="monotone" dataKey="price" name={curveId}
                 stroke={color || C.plat} strokeWidth={2.5} dot={TA_MARKER_DOT}
@@ -2197,27 +2520,37 @@
               <span><span style={{color:'#B91C1C', fontWeight:600}}>—</span> Resistance</span>
               <span><span style={{color:'#047857'}}>▲</span> Breakout</span>
               <span><span style={{color:'#B91C1C'}}>▼</span> Breakdown</span>
-              <span><span style={{color:'#7C3AED'}}>◆</span> Inverted cup</span>
+              <span><span style={{color:'#7C3AED'}}>◆</span> Inverted cup trace</span>
               <span><span style={{color:'#B45309'}}>◇</span> Double top/bottom</span>
             </div>
-            {ta.invertedCup && (
-              <div style={{fontSize:12, color:C.textSecondary, lineHeight:1.55,
-                padding:'10px 12px', background:C.surface2, borderRadius:8, border:`1px solid ${C.borderLight}`}}>
-                <span style={{fontWeight:600, color:'#7C3AED'}}>Inverted cup · </span>
-                {ta.invertedCup.depthPct}% depth · neckline {fmtY(ta.invertedCup.neckline)}.
+
+            {detections.length > 0 ? (
+              <div>
+                <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:8}}>
+                  Detected structures · theory & event story
+                </div>
+                {detections.map((d) => (
+                  <TaPatternCard
+                    key={d.fingerprint}
+                    detection={d}
+                    libraryEntry={libBySlug[d.slug]}
+                    observation={obsByFp[d.fingerprint]}
+                    assetLabel={assetLabel}
+                    timeframe={tfLabel}
+                    fmtY={fmtY}
+                    livePrice={ta.last}
+                    bias={ta.bias}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div style={{fontSize:12, color:C.text, lineHeight:1.55}}>
+                No cup, double-top/bottom, or recent breakout/breakdown on this timeframe — try 3m or 1y.
               </div>
             )}
-            {ta.doublePattern && (
-              <div style={{fontSize:12, color:C.textSecondary, lineHeight:1.55,
-                padding:'10px 12px', background:C.surface2, borderRadius:8, border:`1px solid ${C.borderLight}`}}>
-                <span style={{fontWeight:600, color:'#B45309'}}>
-                  {ta.doublePattern.type === 'double_top' ? 'Double top' : 'Double bottom'} ·
-                </span>
-                {' '}{ta.doublePattern.depthPct}% depth · neckline {fmtY(ta.doublePattern.neckline)}.
-              </div>
-            )}
+
             <div style={{fontSize:11, color:C.text, lineHeight:1.55}}>
-              Pivot-based support/resistance, breakout crosses, inverted-cup and double-top/bottom heuristics — not financial advice.
+              Pattern shapes drawn on curve · schematic + Metis theory stored in Supabase · event narratives from our TA engine.
             </div>
           </div>
         </div>
