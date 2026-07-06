@@ -4423,7 +4423,7 @@
     }
 
     /* ─── COMMODITY NEWS · TOP 3 + PROGRESSION ───────────────────── */
-    const NEWS_CACHE_KEY = 'pm_metis_news_history_v3';
+    const NEWS_CACHE_KEY = 'pm_metis_news_history_v4';
     const NEWS_LAST_DATE_KEY = 'pm_metis_news_last_date';
     const NEWS_RESEARCH_CACHE_KEY = 'pm_metis_news_research_v1';
 
@@ -4486,6 +4486,244 @@
         fetchedAt: Date.now(),
       });
       localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify(hist.slice(0, 60)));
+    }
+
+    /* Client-side news — Google News RSS + Supabase read. No Netlify functions (avoids host quota). */
+    const NEWS_RSS_FEEDS = [
+      { url: 'https://news.google.com/rss/search?q=platinum+mining+OR+platinum+deficit+OR+WPIC&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
+      { url: 'https://news.google.com/rss/search?q=Impala+Platinum+OR+Sibanye+Stillwater+OR+Northam+Platinum+OR+Valterra+Platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
+      { url: 'https://news.google.com/rss/search?q=palladium+rhodium+PGM+market&hl=en-AU&gl=AU&ceid=AU:en', topic: 'palladium' },
+      { url: 'https://news.google.com/rss/search?q=platinum+price+LBMA+OR+spot+platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
+      { url: 'https://news.google.com/rss/search?q=hydrogen+platinum+fuel+cell+PGM&hl=en-AU&gl=AU&ceid=AU:en', topic: 'demand' },
+      { url: 'https://news.google.com/rss/search?q=South+Africa+PGM+mining+strike+OR+Eskom&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
+    ];
+
+    const NEWS_BULLISH = ['surge','rally','rise','gain','jump','soar','record high','tight supply','deficit','shortage','strike ends','production up','demand growth','hydrogen','bullish','upgrade'];
+    const NEWS_BEARISH = ['fall','drop','decline','slump','crash','weak demand','surplus','oversupply','layoff','shutdown','strike','load shedding','downgrade','bearish','cut production'];
+    const NEWS_THEMES = [
+      { label: 'Supply / mine output', words: ['mine','production','output','shaft','smelter','strike','shutdown'] },
+      { label: 'Auto / industrial demand', words: ['automotive','catalyst','vehicle','industrial','demand'] },
+      { label: 'Market balance', words: ['deficit','surplus','wpic','inventory','stockpile'] },
+      { label: 'PGM basket', words: ['platinum','palladium','rhodium','pgm'] },
+      { label: 'South Africa / JSE', words: ['south africa','jse','rand','eskom','implats','impala','sibanye','northam'] },
+    ];
+    const NEWS_TITLE_STOP = new Set(['the','a','an','and','or','in','on','for','of','to','says','after']);
+
+    function normNewsTitle(title) {
+      return String(title || '')
+        .replace(/\s+by\s+[a-z0-9][\w\s.&'-]*$/i, '')
+        .replace(/\s+-\s+[^-]+$/, '')
+        .toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function newsTitleSimilarity(a, b) {
+      const wa = new Set(normNewsTitle(a).split(' ').filter((w) => w.length > 2 && !NEWS_TITLE_STOP.has(w)));
+      const wb = new Set(normNewsTitle(b).split(' ').filter((w) => w.length > 2 && !NEWS_TITLE_STOP.has(w)));
+      if (!wa.size || !wb.size) return 0;
+      let inter = 0;
+      for (const w of wa) if (wb.has(w)) inter++;
+      return inter / (wa.size + wb.size - inter);
+    }
+
+    function newsDedupeKey(story) {
+      const t = normNewsTitle(story.title || story.headline);
+      return t.slice(0, 72) || (story.url || '').split('?')[0].toLowerCase();
+    }
+
+    function clientDedupeStories(rows) {
+      const out = [];
+      for (const row of rows) {
+        const title = row.title || row.headline || '';
+        const dup = out.some((o) => {
+          if (newsDedupeKey(o) === newsDedupeKey(row)) return true;
+          return newsTitleSimilarity(o.title || o.headline, title) > 0.72;
+        });
+        if (!dup) out.push(row);
+      }
+      return out;
+    }
+
+    function clientAnalyzeStory(story) {
+      const title = story.title || '';
+      const text = `${title} ${story.topic || ''}`.toLowerCase();
+      let score = 0;
+      for (const w of NEWS_BULLISH) if (text.includes(w)) score += 1;
+      for (const w of NEWS_BEARISH) if (text.includes(w)) score -= 1;
+      if (story.topic === 'platinum' || story.topic === 'producers') score += 0.5;
+      const platinumImpact = score > 1 ? 2 : score === 1 ? 1 : score === 0 ? 0 : score === -1 ? -1 : -2;
+      const direction = platinumImpact > 0 ? 'bullish' : platinumImpact < 0 ? 'bearish' : 'neutral';
+      const themeLabels = NEWS_THEMES
+        .filter((th) => th.words.some((w) => text.includes(w)))
+        .map((th) => th.label)
+        .slice(0, 3);
+      const bullets = [];
+      if (platinumImpact > 0) bullets.push(`Net read for PGM complex: supportive (${direction}).`);
+      else if (platinumImpact < 0) bullets.push(`Net read for PGM complex: headwind (${direction}).`);
+      else bullets.push('Mixed or indirect read for platinum — watch PGM basket and auto demand.');
+      if (themeLabels.length) bullets.push(`Themes: ${themeLabels.join(' · ')}.`);
+      const relevanceScore = Math.min(100, Math.round(
+        40 + (story.topic === 'platinum' ? 25 : story.topic === 'producers' ? 30 : story.topic === 'palladium' ? 15 : 5) + Math.abs(score) * 8
+      ));
+      return { headline: title, bullets, platinumImpact, direction, themeLabels, relevanceScore };
+    }
+
+    function clientPickTopStories(rows, limit = 3) {
+      const scored = clientDedupeStories(rows).map((row) => ({ ...row, ...clientAnalyzeStory(row) }));
+      scored.sort((a, b) => {
+        if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
+        return new Date(b.published_at || 0) - new Date(a.published_at || 0);
+      });
+      const top = [];
+      const usedPublishers = new Set();
+      const tooSimilar = (c) => top.some((t) => newsDedupeKey(t) === newsDedupeKey(c) || newsTitleSimilarity(t.title, c.title) > 0.55);
+      for (const s of scored) {
+        if (top.length >= limit || tooSimilar(s)) continue;
+        const pub = (s.source || '').toLowerCase();
+        if (top.length < limit - 1 && usedPublishers.has(pub) && scored.length > limit + 2) continue;
+        usedPublishers.add(pub);
+        top.push({ ...s, rank: top.length + 1 });
+      }
+      for (const s of scored) {
+        if (top.length >= limit || tooSimilar(s)) continue;
+        top.push({ ...s, rank: top.length + 1 });
+      }
+      return { top, rest: clientDedupeStories(scored.filter((s) => !top.some((t) => newsDedupeKey(t) === newsDedupeKey(s)))) };
+    }
+
+    function clientBuildProgression(stories) {
+      if (!stories?.length) return null;
+      const bullishScore = stories.reduce((sum, s) => sum + (s.platinumImpact || 0), 0);
+      const direction = bullishScore >= 2 ? 'bullish' : bullishScore <= -2 ? 'bearish' : bullishScore !== 0 ? 'mixed' : 'neutral';
+      const themeCounts = {};
+      for (const s of stories) {
+        for (const lbl of s.themeLabels || []) themeCounts[lbl] = (themeCounts[lbl] || 0) + 1;
+      }
+      const themeTrends = Object.entries(themeCounts).map(([label, count]) => ({
+        id: label, label, trend: count >= 2 ? 'strengthening' : 'stable',
+      })).slice(0, 5);
+      const summary = direction === 'bullish'
+        ? "Today's headlines lean supportive for platinum — supply tightness, demand, or PGM basket strength dominating."
+        : direction === 'bearish'
+          ? "Today's headlines lean negative for PGM miners — demand weakness, disruptions, or macro pressure in focus."
+          : direction === 'mixed'
+            ? 'Headlines are split — PGM-sensitive themes point both ways.'
+            : 'No strong directional signal in today\'s top stories — PGM spot may trade on macro and USD.';
+      return { direction, bullishScore, summary, themeTrends };
+    }
+
+    function parseClientRss(xml) {
+      const items = [];
+      const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
+      for (const block of blocks) {
+        const tag = (t) => {
+          const m = block.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)<\\/${t}>`, 'i'));
+          return m ? m[1].trim() : null;
+        };
+        const rawTitle = tag('title');
+        const link = tag('link');
+        const pubDate = tag('pubDate');
+        const sourceTag = tag('source');
+        if (!rawTitle || !link) continue;
+        const dec = (s) => String(s || '').replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '')
+          .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
+        let title = dec(rawTitle);
+        const publisher = sourceTag ? dec(sourceTag) : null;
+        if (publisher && title.endsWith(' - ' + publisher)) title = title.slice(0, -(publisher.length + 3));
+        items.push({
+          title,
+          url: dec(link),
+          published_at: pubDate ? new Date(pubDate).toISOString() : null,
+          source: publisher || 'Google News',
+        });
+      }
+      return items;
+    }
+
+    async function fetchRssFeedClient(feedUrl) {
+      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(feedUrl)}`;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 22000);
+      try {
+        const res = await fetch(proxy, { signal: ctrl.signal, cache: 'no-store' });
+        if (!res.ok) throw new Error(`RSS HTTP ${res.status}`);
+        return parseClientRss(await res.text());
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function fetchNewsRowsFromSupabase() {
+      const q = 'news_stories?select=title,url,source,topic,published_at,fetched_at&order=published_at.desc.nullslast,fetched_at.desc&limit=120';
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${q}`, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      });
+      if (!res.ok) throw new Error(`Supabase news read ${res.status}`);
+      return res.json();
+    }
+
+    function mapClientStory(s, research) {
+      return {
+        title: s.title,
+        headline: s.headline || s.title,
+        url: s.url,
+        source: s.source,
+        topic: s.topic,
+        publishedAt: s.published_at,
+        rank: s.rank,
+        bullets: s.bullets || [],
+        platinumImpact: s.platinumImpact,
+        direction: s.direction,
+        themeLabels: s.themeLabels || [],
+        relevanceScore: s.relevanceScore,
+        research: research || s.research || null,
+      };
+    }
+
+    function buildClientDigest(rows, { liveRss = false } = {}) {
+      const { top, rest } = clientPickTopStories(rows, 3);
+      const progression = clientBuildProgression(top);
+      return {
+        ok: true,
+        date: digestDateLocal(),
+        stories: top.map((s, i) => mapClientStory({ ...s, rank: i + 1 })),
+        pastStories: rest.slice(0, 40).map((r) => ({
+          ...mapClientStory(r),
+          digestDate: (r.fetched_at || r.published_at || '').slice(0, 10),
+        })),
+        progression,
+        dailyBrief: null,
+        clientSourced: true,
+        liveRss,
+      };
+    }
+
+    async function refreshNewsClientSide({ liveRss = false } = {}) {
+      let rows = [];
+      let didRss = false;
+      if (!liveRss) {
+        try { rows = await fetchNewsRowsFromSupabase(); } catch (_) {}
+      }
+      if (liveRss || rows.length < 8) {
+        const results = await Promise.allSettled(
+          NEWS_RSS_FEEDS.map(async (feed) => {
+            const items = await fetchRssFeedClient(feed.url);
+            return items.slice(0, 22).map((item) => ({ ...item, topic: feed.topic }));
+          })
+        );
+        const live = [];
+        for (const r of results) {
+          if (r.status === 'fulfilled') live.push(...r.value);
+        }
+        if (live.length) {
+          rows = clientDedupeStories([...live, ...rows]);
+          didRss = true;
+        }
+      }
+      if (!rows.length) throw new Error('No PGM headlines found — check connection and try Refresh');
+      return buildClientDigest(rows, { liveRss: didRss });
     }
 
     function loadResearchCache() {
@@ -4885,30 +5123,27 @@
           return;
         }
 
-        const url = force
-          ? `/.netlify/functions/news-digest?deep=0&refresh=1&t=${Date.now()}`
-          : `/.netlify/functions/news-digest?deep=0&t=${Date.now()}`;
-        let data = null;
         try {
-          const res = await fetch(url, { cache: 'no-store' });
-          const json = await res.json().catch(() => ({}));
-          if (!json.ok) throw new Error(json.error || `HTTP ${res.status}`);
-          data = json;
+          const data = await refreshNewsClientSide({ liveRss: !!force });
+          const note = force
+            ? `Live Google News sweep · ${today} · no server quota`
+            : `Today's digest · ${today}`;
+          setDigest({ ...data, persistNote: note });
+          saveLocalNewsDigest(data);
+          localStorage.setItem(NEWS_LAST_DATE_KEY, data.date || today);
+          setPastStories(mergePastStories(data, loadLocalNewsHistory()));
+          setLocalDays(loadLocalNewsHistory().length);
         } catch (e) {
+          const msg = /quota/i.test(e.message) ? 'Host quota bypassed — retry Refresh (client-side RSS)' : e.message;
           if (cached) {
-            setDigest({ ...cached, persistNote: `Fetch failed — showing ${cached.date} digest`, fromCache: true });
+            setDigest({ ...cached, persistNote: `Using saved digest · ${cached.date}`, fromCache: true });
             setPastStories(mergePastStories(cached, localHist));
             setLocalDays(localHist.length);
-            setLoading(false);
-            return;
+            if (force) setError(msg);
+          } else {
+            throw new Error(msg);
           }
-          throw e;
         }
-        setDigest(data);
-        saveLocalNewsDigest(data);
-        localStorage.setItem(NEWS_LAST_DATE_KEY, data.date || today);
-        setPastStories(mergePastStories(data, loadLocalNewsHistory()));
-        setLocalDays(loadLocalNewsHistory().length);
       }, []);
 
       useEffect(() => {
@@ -4953,7 +5188,7 @@
                 padding:'6px 12px', borderRadius:6, border:`1px solid ${C.border}`,
                 background:C.surface, color:C.textDark, cursor: loading ? 'wait' : 'pointer',
               }}
-            >{loading ? 'Deep-diving…' : 'Refresh'}</button>
+            >{loading ? 'Refreshing…' : 'Refresh'}</button>
           </div>
 
           {error && (
@@ -4966,9 +5201,9 @@
             <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
               <span className="news-search-icon" title="Searching">⛏</span>
               <div>
-                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Deep-diving PGM news…</div>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Scanning PGM news…</div>
                 <div style={{fontSize:11, color:C.text, marginTop:4}}>
-                  Scanning mining feeds, cross-checking web coverage, building daily progression — may take up to a minute
+                  Google News RSS from your browser — free, no Netlify server quota
                 </div>
               </div>
             </div>
@@ -5096,7 +5331,7 @@
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            Refreshes once per day · multi-source Google News PGM sweep with on-click deep dive
+            Google News RSS · scored in-browser · no server quota
             {digest?.persistNote && ` · ${digest.persistNote}`}
           </div>
         </div>
