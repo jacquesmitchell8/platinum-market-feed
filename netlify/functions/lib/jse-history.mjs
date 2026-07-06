@@ -129,13 +129,16 @@ async function fetchFmpQuote(ticker, apiKey) {
 function parseYahooChart(data, ticker) {
   const result = data?.chart?.result?.[0];
   if (!result) throw new Error(`Yahoo ${ticker} no chart result`);
+  const currency = result.meta?.currency || 'ZAR';
   const timestamps = result.timestamp || [];
   const closes = result.indicators?.quote?.[0]?.close || [];
   const points = [];
   for (let i = 0; i < timestamps.length; i++) {
     if (closes[i] == null) continue;
+    let price = closes[i];
+    if (currency === 'ZAc' || currency === 'GBp') price /= 100;
     const day = formatDay(timestamps[i] * 1000);
-    points.push({ day, price: closes[i], ts: timestamps[i] * 1000 });
+    points.push({ day, price, ts: timestamps[i] * 1000 });
   }
   if (!points.length) throw new Error(`Yahoo ${ticker} no close prices`);
   return parsePointsFromDays(points);

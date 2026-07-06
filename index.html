@@ -1790,30 +1790,140 @@
       return 0.65;
     }
 
-    async function fetchProducerStocks(timeframeId) {
-      const urls = [`/.netlify/functions/producer-stocks?timeframe=${encodeURIComponent(timeframeId)}`];
-      for (const url of urls) {
-        try {
-          const r = await fetch(url);
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = await r.json();
-          if (data.ok) {
-            const rows = (data.rows || []).map(row => ({
-              ...row,
-              label: row.label || fmtTs(row.ts, timeframeId),
-            }));
-            return {
-              ...data,
-              rows,
-              producerMeta: data.producerMeta || { quotes: data.quotes || [], announcements: data.announcements || [] },
-            };
-          }
-          throw new Error(data.error || 'Producer feed failed');
-        } catch (e) {
-          if (url === urls[urls.length - 1]) throw e;
-        }
+    const PRODUCER_YAHOO_RANGE = {
+      '24h': '5d', '1w': '5d', '1m': '1mo', '3m': '3mo', '1y': '1y', '3y': '3y', '5y': '5y',
+    };
+
+    function zarFromYahooClose(close, currency) {
+      if (close == null || Number.isNaN(close)) return null;
+      if (currency === 'ZAc' || currency === 'GBp') return close / 100;
+      return close;
+    }
+
+    function parseYahooChartClient(data, ticker) {
+      const result = data?.chart?.result?.[0];
+      if (!result) throw new Error(`Yahoo ${ticker}: no data`);
+      const currency = result.meta?.currency || 'ZAR';
+      const timestamps = result.timestamp || [];
+      const closes = result.indicators?.quote?.[0]?.close || [];
+      const points = [];
+      for (let i = 0; i < timestamps.length; i++) {
+        const price = zarFromYahooClose(closes[i], currency);
+        if (price == null) continue;
+        points.push({ ts: timestamps[i] * 1000, price, day: new Date(timestamps[i] * 1000).toISOString().slice(0, 10) });
       }
-      throw new Error('Producer feed unavailable');
+      if (!points.length) throw new Error(`Yahoo ${ticker}: empty`);
+      return points;
+    }
+
+    async function fetchYahooProducerHistory(ticker, timeframeId) {
+      const range = PRODUCER_YAHOO_RANGE[timeframeId] || '3y';
+      const path = `/yahoo-proxy/v8/finance/chart/${encodeURIComponent(ticker)}?range=${encodeURIComponent(range)}&interval=1d`;
+      const res = await fetch(path, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Yahoo ${ticker} HTTP ${res.status}`);
+      return parseYahooChartClient(await res.json(), ticker);
+    }
+
+    function filterProducerPoints(points, timeframeId) {
+      const tf = TIMEFRAMES.find((t) => t.id === timeframeId) || TIMEFRAMES[5];
+      const now = Date.now();
+      if (tf.hours) return points.filter((p) => now - p.ts <= tf.hours * 3600000);
+      if (tf.days) return points.filter((p) => now - p.ts <= tf.days * 86400000);
+      return points;
+    }
+
+    function buildProducerChartRows(seriesMap, timeframeId) {
+      const filtered = {};
+      Object.entries(seriesMap).forEach(([id, pts]) => {
+        filtered[id] = filterProducerPoints(pts, timeframeId);
+      });
+      const tsSet = new Set();
+      Object.values(filtered).forEach((pts) => pts.forEach((p) => tsSet.add(p.ts)));
+      const sorted = [...tsSet].sort((a, b) => a - b);
+      return sorted.map((ts) => {
+        const row = { ts, label: fmtTs(ts, timeframeId) };
+        Object.entries(filtered).forEach(([id, pts]) => {
+          const hit = pts.find((p) => p.ts === ts);
+          if (hit) row[id] = hit.price;
+          else {
+            const prior = [...pts].filter((p) => p.ts <= ts).pop();
+            if (prior) row[id] = prior.price;
+          }
+        });
+        return row;
+      });
+    }
+
+    let producerStaticCache = null;
+    async function loadProducerStaticHistory() {
+      if (producerStaticCache) return producerStaticCache;
+      try {
+        const res = await fetch('/data/producer-jse-history.json', { cache: 'default' });
+        if (!res.ok) throw new Error('static missing');
+        producerStaticCache = await res.json();
+        return producerStaticCache;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    async function fetchProducerStocks(timeframeId) {
+      const lsKey = `v2:producers:yahoo:${timeframeId}`;
+      try {
+        const cached = JSON.parse(localStorage.getItem(lsKey) || 'null');
+        if (cached?.rows?.length && cached.savedAt && Date.now() - cached.savedAt < 30 * 60 * 1000) {
+          return { ...cached, stale: true, warn: 'Cached producer curves (30 min)' };
+        }
+      } catch (_) {}
+
+      const producers = ['IDX-201', 'IDX-202', 'IDX-203', 'IDX-204'];
+      const seriesMap = {};
+      const quotes = [];
+      const staticData = await loadProducerStaticHistory();
+
+      for (const id of producers) {
+        const meta = CURVE_INDEX[id];
+        const ticker = meta.yahoo || meta.ticker;
+        let points = null;
+        try {
+          points = await fetchYahooProducerHistory(ticker, timeframeId);
+        } catch (_) {
+          const fallback = staticData?.series?.[id]?.points;
+          if (fallback?.length) points = fallback.map((p) => ({ ts: p.ts, price: p.price, day: p.day }));
+        }
+        if (!points?.length) continue;
+        seriesMap[id] = points;
+        const last = points[points.length - 1];
+        const prior = points[points.length - 2];
+        quotes.push({
+          id,
+          company: meta.name,
+          country: meta.country,
+          production: meta.production,
+          ticker,
+          exchange: 'JSE',
+          priceZar: last.price,
+          changePct: prior ? ((last.price - prior.price) / prior.price) * 100 : null,
+          updatedAt: new Date(last.ts).toISOString(),
+        });
+        await new Promise((r) => setTimeout(r, 350));
+      }
+
+      const rows = buildProducerChartRows(seriesMap, timeframeId);
+      if (!rows.length) throw new Error('Producer charts unavailable — Yahoo blocked, retry in a minute');
+
+      const payload = {
+        ok: true,
+        rows,
+        producerMeta: { quotes, announcements: [] },
+        source: 'yahoo-finance-browser',
+        updatedAt: new Date().toISOString(),
+        stale: false,
+      };
+      try {
+        localStorage.setItem(lsKey, JSON.stringify({ ...payload, savedAt: Date.now() }));
+      } catch (_) {}
+      return payload;
     }
 
     function fmtZar(price) {
@@ -3251,8 +3361,7 @@
                     </div>
                   )}
                   <div style={{fontSize:11, color:C.text, marginTop:8, lineHeight:1.5}}>
-                    Historical curve loading — JSE history seeds hourly into Supabase (one producer per run).
-                    {quote ? ' Live quote above from last fetch.' : ' Quotes refresh twice daily.'}
+                    Chart data unavailable for this ticker — try Refresh or switch period.
                   </div>
                 </div>
               );

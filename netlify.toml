@@ -1,6 +1,12 @@
 [build]
   publish = "."
 
+[[redirects]]
+  from = "/yahoo-proxy/*"
+  to = "https://query1.finance.yahoo.com/:splat"
+  status = 200
+  force = true
+
 [build.environment]
   SECRETS_SCAN_OMIT_PATHS = "index.html,.env.seed.example,scripts"
 
@@ -28,7 +34,7 @@
 [functions."fetch-producers"]
   schedule = "0 9,21 * * *"
 
-[functions."propagate-producers"]
+    [functions."propagate-producers"]
   schedule = "15 * * * *"
 
 [functions."propagate-curves"]
