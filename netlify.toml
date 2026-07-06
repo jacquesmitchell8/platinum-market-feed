@@ -28,5 +28,8 @@
 [functions."fetch-producers"]
   schedule = "0 9,21 * * *"
 
+[functions."propagate-producers"]
+  schedule = "15 * * * *"
+
 [functions."propagate-curves"]
   schedule = "0 * * * *"

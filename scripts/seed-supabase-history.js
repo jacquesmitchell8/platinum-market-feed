@@ -68,8 +68,8 @@ if (!SUPABASE_URL.startsWith('https://') || !SUPABASE_URL.includes('supabase.co'
   die(`SUPABASE_URL looks wrong: ${SUPABASE_URL}`);
 }
 
-if (!METALS_DEV_API_KEY) {
-  die('METALS_DEV_API_KEY is required — copy it from Netlify environment variables.');
+if (!METALS_DEV_API_KEY && !process.argv.includes('--producers-only')) {
+  die('METALS_DEV_API_KEY is required for full seed — use --producers-only for JSE only.');
 }
 
 const BACKFILL_YEARS = 50; // run until Metals.Dev / source has no more data

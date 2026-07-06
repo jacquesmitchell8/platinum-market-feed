@@ -74,7 +74,10 @@ create table if not exists news_stories (
   title text not null,
   url text,
   source text,
+  topic text,
   published_at timestamptz,
+  fetched_at timestamptz,
+  title_norm text,
   created_at timestamptz default now()
 );
 
@@ -150,6 +153,13 @@ create index if not exists crypto_price_history_asset_recorded
 
 create unique index if not exists producer_price_history_ticker_day
   on producer_price_history (ticker, recorded_day);
+
+create unique index if not exists news_stories_url_unique
+  on news_stories (url)
+  where url is not null and trim(url) <> '';
+
+create index if not exists news_stories_published_idx
+  on news_stories (published_at desc nulls last);
 
 create index if not exists producer_price_history_ticker_recorded
   on producer_price_history (ticker, recorded_at);

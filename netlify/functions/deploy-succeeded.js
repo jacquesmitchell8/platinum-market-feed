@@ -22,9 +22,9 @@ export default {
 
     const targets = [
       '/.netlify/functions/propagate-curves',
+      '/.netlify/functions/propagate-producers',
       '/.netlify/functions/fetch-market-snapshots',
-      '/.netlify/functions/news-digest',
-      '/.netlify/functions/producer-stocks',
+      '/.netlify/functions/fetch-news',
       '/.netlify/functions/perth-mint',
     ];
     for (const path of targets) {

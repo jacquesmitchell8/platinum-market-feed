@@ -24,11 +24,16 @@ const THEMES = [
 
 function normTitle(title) {
   return String(title || '')
-    .toLowerCase()
+    .replace(/\s+by\s+[a-z0-9][\w\s.&'-]*$/i, '')
     .replace(/\s+-\s+[^-]+$/, '')
+    .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function normTitleForExport(title) {
+  return normTitle(title).slice(0, 120);
 }
 
 const TITLE_STOP = new Set(['the', 'a', 'an', 'and', 'or', 'in', 'on', 'for', 'of', 'to', 'says', 'after']);
@@ -45,6 +50,20 @@ export function titleSimilarity(a, b) {
 export function storyDedupeKey(story) {
   const t = normTitle(story.title || story.headline);
   return t.slice(0, 72) || (story.url || '').split('?')[0].toLowerCase();
+}
+
+/** Drop exact-key and near-duplicate headlines (same logic as news-research). */
+export function dedupeStories(rows) {
+  const out = [];
+  for (const row of rows) {
+    const title = row.title || row.headline || '';
+    const dup = out.some((o) => {
+      if (storyDedupeKey(o) === storyDedupeKey(row)) return true;
+      return titleSimilarity(o.title || o.headline, title) > 0.72;
+    });
+    if (!dup) out.push(row);
+  }
+  return out;
 }
 
 export function analyzeStory(story) {
@@ -90,15 +109,8 @@ export function analyzeStory(story) {
 }
 
 export function pickTopStories(rows, limit = 3) {
-  const seen = new Set();
-  const scored = [];
-  for (const row of rows) {
-    const key = storyDedupeKey(row);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    const enriched = { ...row, ...analyzeStory(row) };
-    scored.push(enriched);
-  }
+  const unique = dedupeStories(rows);
+  const scored = unique.map((row) => ({ ...row, ...analyzeStory(row) }));
   scored.sort((a, b) => {
     if (b.relevanceScore !== a.relevanceScore) return b.relevanceScore - a.relevanceScore;
     const ta = new Date(a.published_at || 0).getTime();
@@ -133,7 +145,7 @@ export function pickTopStories(rows, limit = 3) {
     if (tooSimilarToTop(s)) continue;
     top.push({ ...s, rank: top.length + 1 });
   }
-  return { top, rest: scored.filter((s) => !top.some((t) => storyDedupeKey(t) === storyDedupeKey(s))) };
+  return { top, rest: dedupeStories(scored.filter((s) => !top.some((t) => storyDedupeKey(t) === storyDedupeKey(s)))) };
 }
 
 export function buildProgression(stories) {

@@ -42,7 +42,7 @@ async function upsertQuote(quote) {
       'Content-Type': 'application/json',
       apikey: SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: 'resolution=merge-duplicates'
+      Prefer: 'resolution=merge-duplicates',
     },
     body: JSON.stringify({
       ticker: quote.ticker,
@@ -52,12 +52,31 @@ async function upsertQuote(quote) {
       change_pct: quote.change_pct,
       updated_at: new Date().toISOString(),
       source: quote.source || 'jse-history',
-    })
+    }),
   });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Supabase upsert failed for ${quote.ticker}: ${res.status} ${text}`);
   }
+}
+
+async function appendDailyClose(ticker, price) {
+  const day = new Date().toISOString().slice(0, 10);
+  await fetch(`${SUPABASE_URL}/rest/v1/producer_price_history?on_conflict=ticker%2Crecorded_day`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      Prefer: 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify({
+      ticker,
+      price,
+      recorded_at: `${day}T12:00:00Z`,
+      recorded_day: day,
+    }),
+  });
 }
 
 export default async (req) => {
@@ -72,6 +91,7 @@ export default async (req) => {
     try {
       const quote = await fetchQuote(producer);
       await upsertQuote(quote);
+      await appendDailyClose(producer.ticker, quote.price);
       results.push({ ticker: producer.ticker, ok: true, price: quote.price });
     } catch (err) {
       console.error(err.message);
