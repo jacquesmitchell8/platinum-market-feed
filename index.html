@@ -4423,7 +4423,7 @@
     }
 
     /* ─── COMMODITY NEWS · TOP 3 + PROGRESSION ───────────────────── */
-    const NEWS_CACHE_KEY = 'pm_metis_news_history_v4';
+    const NEWS_CACHE_KEY = 'pm_metis_news_history_v5';
     const NEWS_LAST_DATE_KEY = 'pm_metis_news_last_date';
     const NEWS_RESEARCH_CACHE_KEY = 'pm_metis_news_research_v1';
 
@@ -4488,24 +4488,40 @@
       localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify(hist.slice(0, 60)));
     }
 
-    /* Client-side news — Google News RSS + Supabase read. No Netlify functions (avoids host quota). */
+    /* Client-side news — direct Asian / SA / metals-desk RSS. No Google News, no Netlify quota. */
     const NEWS_RSS_FEEDS = [
-      { url: 'https://news.google.com/rss/search?q=platinum+mining+OR+platinum+deficit+OR+WPIC&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
-      { url: 'https://news.google.com/rss/search?q=Impala+Platinum+OR+Sibanye+Stillwater+OR+Northam+Platinum+OR+Valterra+Platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
-      { url: 'https://news.google.com/rss/search?q=palladium+rhodium+PGM+market&hl=en-AU&gl=AU&ceid=AU:en', topic: 'palladium' },
-      { url: 'https://news.google.com/rss/search?q=platinum+price+LBMA+OR+spot+platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
-      { url: 'https://news.google.com/rss/search?q=hydrogen+platinum+fuel+cell+PGM&hl=en-AU&gl=AU&ceid=AU:en', topic: 'demand' },
-      { url: 'https://news.google.com/rss/search?q=South+Africa+PGM+mining+strike+OR+Eskom&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
+      // Singapore & ASEAN
+      { url: 'https://www.businesstimes.com.sg/rss/feed/bt_commodities', source: 'Business Times Singapore', region: 'sg', topic: 'platinum' },
+      { url: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416', source: 'Channel News Asia', region: 'sg', topic: 'macro' },
+      // Hong Kong / Greater China
+      { url: 'https://www.scmp.com/rss/91/feed', source: 'South China Morning Post', region: 'hk', topic: 'macro' },
+      { url: 'https://www.xinhuanet.com/english/rss/worldrss.xml', source: 'Xinhua English', region: 'cn', topic: 'macro' },
+      { url: 'https://www.globaltimes.cn/rss/outbrain.xml', source: 'Global Times', region: 'cn', topic: 'macro' },
+      // Japan / North Asia
+      { url: 'https://asia.nikkei.com/rss/feed/nar', source: 'Nikkei Asia', region: 'jp', topic: 'macro' },
+      // South Africa — where PGM supply actually lives
+      { url: 'https://www.moneyweb.co.za/feed/', source: 'Moneyweb', region: 'za', topic: 'producers' },
+      // Dedicated metals & mining desks (not US cable)
+      { url: 'https://www.mining.com/feed/', source: 'Mining.com', region: 'global', topic: 'platinum' },
+      { url: 'https://www.kitco.com/news/rss/news.xml', source: 'Kitco Metals', region: 'global', topic: 'platinum' },
+      { url: 'https://www.investing.com/rss/news_285.rss', source: 'Investing.com · Platinum', region: 'global', topic: 'platinum' },
+      { url: 'https://www.platinumguild.com/rss/news', source: 'Platinum Guild International', region: 'global', topic: 'platinum' },
     ];
+
+    const NEWS_REGION_BOOST = { sg: 14, hk: 14, cn: 12, jp: 12, za: 16, global: 6 };
+    const PGM_HEADLINE_RE = /\b(platinum|palladium|rhodium|pgm|pgms|iridium|ruthenium|implats|impala|sibanye|northam|valterra|amplats|anglo american platinum|bushveld|wpic|lbma|hydrogen.{0,24}catalyst|fuel.?cell|precious.?metal|troy.?ounce|smelter|refinery|norilsk|nornickel)\b/i;
+    const SA_MINING_RE = /\b(sibanye|impala|northam|implats|jse|eskom|bushveld|load.?shedding|rand|pgm|platinum|mining)\b/i;
 
     const NEWS_BULLISH = ['surge','rally','rise','gain','jump','soar','record high','tight supply','deficit','shortage','strike ends','production up','demand growth','hydrogen','bullish','upgrade'];
     const NEWS_BEARISH = ['fall','drop','decline','slump','crash','weak demand','surplus','oversupply','layoff','shutdown','strike','load shedding','downgrade','bearish','cut production'];
     const NEWS_THEMES = [
-      { label: 'Supply / mine output', words: ['mine','production','output','shaft','smelter','strike','shutdown'] },
+      { label: 'Supply / mine output', words: ['mine','production','output','shaft','smelter','strike','shutdown','norilsk','nornickel'] },
       { label: 'Auto / industrial demand', words: ['automotive','catalyst','vehicle','industrial','demand'] },
-      { label: 'Market balance', words: ['deficit','surplus','wpic','inventory','stockpile'] },
-      { label: 'PGM basket', words: ['platinum','palladium','rhodium','pgm'] },
-      { label: 'South Africa / JSE', words: ['south africa','jse','rand','eskom','implats','impala','sibanye','northam'] },
+      { label: 'Market balance', words: ['deficit','surplus','wpic','inventory','stockpile','tight','shortage'] },
+      { label: 'PGM basket', words: ['platinum','palladium','rhodium','pgm','iridium'] },
+      { label: 'South Africa / JSE', words: ['south africa','jse','rand','eskom','implats','impala','sibanye','northam','bushveld'] },
+      { label: 'China / Asia demand', words: ['china','chinese','singapore','hong kong','asia','import','yuan','renminbi'] },
+      { label: 'Hydrogen / PEM', words: ['hydrogen','fuel cell','pem','electrolyser','electrolyzer','green hydrogen'] },
     ];
     const NEWS_TITLE_STOP = new Set(['the','a','an','and','or','in','on','for','of','to','says','after']);
 
@@ -4546,12 +4562,21 @@
       return out;
     }
 
+    function isPgmRelevant(story) {
+      const text = `${story.title || ''} ${story.description || ''}`.toLowerCase();
+      if (PGM_HEADLINE_RE.test(text)) return true;
+      if (story.topic === 'producers' && SA_MINING_RE.test(text)) return true;
+      if (story.topic === 'platinum' && /\b(metal|commodit|mining|smelter|refiner|ounce|spot price)\b/i.test(text)) return true;
+      return false;
+    }
+
     function clientAnalyzeStory(story) {
       const title = story.title || '';
-      const text = `${title} ${story.topic || ''}`.toLowerCase();
+      const text = `${title} ${story.description || ''} ${story.topic || ''}`.toLowerCase();
       let score = 0;
       for (const w of NEWS_BULLISH) if (text.includes(w)) score += 1;
       for (const w of NEWS_BEARISH) if (text.includes(w)) score -= 1;
+      if (/\bplatinum.?free\b|\bwithout platinum\b|\bsubstitut/i.test(text)) score -= 2;
       if (story.topic === 'platinum' || story.topic === 'producers') score += 0.5;
       const platinumImpact = score > 1 ? 2 : score === 1 ? 1 : score === 0 ? 0 : score === -1 ? -1 : -2;
       const direction = platinumImpact > 0 ? 'bullish' : platinumImpact < 0 ? 'bearish' : 'neutral';
@@ -4564,8 +4589,12 @@
       else if (platinumImpact < 0) bullets.push(`Net read for PGM complex: headwind (${direction}).`);
       else bullets.push('Mixed or indirect read for platinum — watch PGM basket and auto demand.');
       if (themeLabels.length) bullets.push(`Themes: ${themeLabels.join(' · ')}.`);
+      else bullets.push(`Source desk: ${story.source || story.region || 'markets'}.`);
+      const regionBoost = NEWS_REGION_BOOST[story.region] || 0;
       const relevanceScore = Math.min(100, Math.round(
-        40 + (story.topic === 'platinum' ? 25 : story.topic === 'producers' ? 30 : story.topic === 'palladium' ? 15 : 5) + Math.abs(score) * 8
+        35 + regionBoost +
+        (story.topic === 'platinum' ? 20 : story.topic === 'producers' ? 28 : 8) +
+        Math.abs(score) * 8
       ));
       return { headline: title, bullets, platinumImpact, direction, themeLabels, relevanceScore };
     }
@@ -4578,12 +4607,16 @@
       });
       const top = [];
       const usedPublishers = new Set();
+      const usedThemes = new Set();
       const tooSimilar = (c) => top.some((t) => newsDedupeKey(t) === newsDedupeKey(c) || newsTitleSimilarity(t.title, c.title) > 0.55);
       for (const s of scored) {
         if (top.length >= limit || tooSimilar(s)) continue;
         const pub = (s.source || '').toLowerCase();
+        const themeKey = (s.themeLabels || [])[0] || s.topic || 'general';
         if (top.length < limit - 1 && usedPublishers.has(pub) && scored.length > limit + 2) continue;
+        if (top.length < limit - 1 && usedThemes.has(themeKey) && scored.length > limit + 4) continue;
         usedPublishers.add(pub);
+        usedThemes.add(themeKey);
         top.push({ ...s, rank: top.length + 1 });
       }
       for (const s of scored) {
@@ -4626,33 +4659,47 @@
         const link = tag('link');
         const pubDate = tag('pubDate');
         const sourceTag = tag('source');
+        const rawDesc = tag('description') || tag('content:encoded') || tag('summary');
         if (!rawTitle || !link) continue;
         const dec = (s) => String(s || '').replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '')
           .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
         let title = dec(rawTitle);
         const publisher = sourceTag ? dec(sourceTag) : null;
         if (publisher && title.endsWith(' - ' + publisher)) title = title.slice(0, -(publisher.length + 3));
+        const description = rawDesc ? dec(rawDesc).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400) : '';
         items.push({
           title,
           url: dec(link),
           published_at: pubDate ? new Date(pubDate).toISOString() : null,
-          source: publisher || 'Google News',
+          source: publisher || null,
+          description,
         });
       }
       return items;
     }
 
     async function fetchRssFeedClient(feedUrl) {
-      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(feedUrl)}`;
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 22000);
-      try {
-        const res = await fetch(proxy, { signal: ctrl.signal, cache: 'no-store' });
-        if (!res.ok) throw new Error(`RSS HTTP ${res.status}`);
-        return parseClientRss(await res.text());
-      } finally {
-        clearTimeout(timer);
+      const proxies = [
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+      ];
+      let lastErr;
+      for (const px of proxies) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 18000);
+        try {
+          const res = await fetch(px(feedUrl), { signal: ctrl.signal, cache: 'no-store' });
+          clearTimeout(timer);
+          if (!res.ok) throw new Error(`RSS HTTP ${res.status}`);
+          const xml = await res.text();
+          if (!xml || xml.length < 80) throw new Error('RSS empty');
+          return parseClientRss(xml);
+        } catch (e) {
+          clearTimeout(timer);
+          lastErr = e;
+        }
       }
+      throw lastErr || new Error('RSS unavailable');
     }
 
     async function fetchNewsRowsFromSupabase() {
@@ -4710,7 +4757,14 @@
         const results = await Promise.allSettled(
           NEWS_RSS_FEEDS.map(async (feed) => {
             const items = await fetchRssFeedClient(feed.url);
-            return items.slice(0, 22).map((item) => ({ ...item, topic: feed.topic }));
+            return items.slice(0, 28)
+              .map((item) => ({
+                ...item,
+                source: item.source || feed.source,
+                topic: feed.topic,
+                region: feed.region,
+              }))
+              .filter(isPgmRelevant);
           })
         );
         const live = [];
@@ -5126,22 +5180,22 @@
         try {
           const data = await refreshNewsClientSide({ liveRss: !!force });
           const note = force
-            ? `Live Google News sweep · ${today} · no server quota`
+            ? `Live sweep · ${today} · SG · HK · CN · JP · ZA · metals desks`
             : `Today's digest · ${today}`;
           setDigest({ ...data, persistNote: note });
+          setError(null);
           saveLocalNewsDigest(data);
           localStorage.setItem(NEWS_LAST_DATE_KEY, data.date || today);
           setPastStories(mergePastStories(data, loadLocalNewsHistory()));
           setLocalDays(loadLocalNewsHistory().length);
         } catch (e) {
-          const msg = /quota/i.test(e.message) ? 'Host quota bypassed — retry Refresh (client-side RSS)' : e.message;
-          if (cached) {
-            setDigest({ ...cached, persistNote: `Using saved digest · ${cached.date}`, fromCache: true });
+          if (cached?.stories?.length) {
+            setDigest({ ...cached, persistNote: `Saved digest · ${cached.date} · live sweep timed out`, fromCache: true });
             setPastStories(mergePastStories(cached, localHist));
             setLocalDays(localHist.length);
-            if (force) setError(msg);
+            setError(null);
           } else {
-            throw new Error(msg);
+            throw e;
           }
         }
       }, []);
@@ -5203,7 +5257,7 @@
               <div>
                 <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Scanning PGM news…</div>
                 <div style={{fontSize:11, color:C.text, marginTop:4}}>
-                  Google News RSS from your browser — free, no Netlify server quota
+                  Business Times · SCMP · Nikkei Asia · Xinhua · Moneyweb · Kitco · Mining.com
                 </div>
               </div>
             </div>
@@ -5331,7 +5385,7 @@
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            Google News RSS · scored in-browser · no server quota
+            SG · HK · CN · JP · ZA · Kitco · Mining.com · scored in-browser
             {digest?.persistNote && ` · ${digest.persistNote}`}
           </div>
         </div>

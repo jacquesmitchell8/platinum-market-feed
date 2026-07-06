@@ -1,7 +1,7 @@
 // netlify/functions/fetch-news.js
 //
-// Scheduled ingest — fetches PGM Google News RSS into Supabase (deduped).
-// news-digest.js reads only; does not refresh on every page load.
+// Scheduled ingest — direct Asian / SA / metals-desk RSS into Supabase (deduped).
+// No Google News wrappers.
 
 import { dedupeStories, normTitleForExport } from './lib/news-enrich.mjs';
 import { parseRssItems } from './lib/rss-utils.mjs';
@@ -10,25 +10,39 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const FEEDS = [
-  { url: 'https://news.google.com/rss/search?q=platinum+mining+OR+platinum+deficit+OR+WPIC&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
-  { url: 'https://news.google.com/rss/search?q=Impala+Platinum+OR+Sibanye+Stillwater+OR+Northam+Platinum+OR+Valterra+Platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
-  { url: 'https://news.google.com/rss/search?q=palladium+rhodium+PGM+market&hl=en-AU&gl=AU&ceid=AU:en', topic: 'palladium' },
-  { url: 'https://news.google.com/rss/search?q=platinum+price+LBMA+OR+spot+platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
-  { url: 'https://news.google.com/rss/search?q=hydrogen+platinum+fuel+cell+PGM&hl=en-AU&gl=AU&ceid=AU:en', topic: 'demand' },
-  { url: 'https://news.google.com/rss/search?q=South+Africa+PGM+mining+strike+OR+Eskom&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
+  { url: 'https://www.businesstimes.com.sg/rss/feed/bt_commodities', source: 'Business Times Singapore', topic: 'platinum' },
+  { url: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416', source: 'Channel News Asia', topic: 'macro' },
+  { url: 'https://www.scmp.com/rss/91/feed', source: 'South China Morning Post', topic: 'macro' },
+  { url: 'https://www.xinhuanet.com/english/rss/worldrss.xml', source: 'Xinhua English', topic: 'macro' },
+  { url: 'https://asia.nikkei.com/rss/feed/nar', source: 'Nikkei Asia', topic: 'macro' },
+  { url: 'https://www.moneyweb.co.za/feed/', source: 'Moneyweb', topic: 'producers' },
+  { url: 'https://www.mining.com/feed/', source: 'Mining.com', topic: 'platinum' },
+  { url: 'https://www.kitco.com/news/rss/news.xml', source: 'Kitco Metals', topic: 'platinum' },
+  { url: 'https://www.investing.com/rss/news_285.rss', source: 'Investing.com · Platinum', topic: 'platinum' },
 ];
+
+const PGM_RE = /\b(platinum|palladium|rhodium|pgm|pgms|implats|impala|sibanye|northam|wpic|lbma|hydrogen|catalyst|fuel.?cell|precious.?metal|norilsk|nornickel|mining)\b/i;
+
+function isRelevant(item, topic) {
+  const text = `${item.title} ${item.description || ''}`.toLowerCase();
+  if (PGM_RE.test(text)) return true;
+  if (topic === 'producers' && /\b(jse|eskom|bushveld|rand)\b/i.test(text)) return true;
+  return topic === 'platinum';
+}
 
 async function fetchFeed(feed) {
   const res = await fetch(feed.url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/2.0)' },
   });
-  if (!res.ok) throw new Error(`${feed.topic} fetch failed: ${res.status}`);
+  if (!res.ok) throw new Error(`${feed.source} fetch failed: ${res.status}`);
   const xml = await res.text();
-  return parseRssItems(xml).slice(0, 25).map((item) => ({
-    ...item,
-    source: item.publisher || 'Google News',
-    topic: feed.topic,
-  }));
+  return parseRssItems(xml).slice(0, 28)
+    .filter((item) => isRelevant(item, feed.topic))
+    .map((item) => ({
+      ...item,
+      source: item.publisher || feed.source,
+      topic: feed.topic,
+    }));
 }
 
 async function upsertStoriesBatch(stories) {
@@ -70,7 +84,7 @@ export default async () => {
   for (let i = 0; i < FEEDS.length; i++) {
     const r = results[i];
     if (r.status === 'fulfilled') allItems.push(...r.value);
-    else console.error(`Feed ${FEEDS[i].topic}:`, r.reason?.message);
+    else console.error(`Feed ${FEEDS[i].source}:`, r.reason?.message);
   }
 
   try {

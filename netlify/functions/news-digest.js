@@ -11,12 +11,12 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const FEEDS = [
-  { url: 'https://news.google.com/rss/search?q=platinum+mining+OR+platinum+deficit+OR+WPIC&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
-  { url: 'https://news.google.com/rss/search?q=Impala+Platinum+OR+Sibanye+Stillwater+OR+Northam+Platinum+OR+Valterra+Platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
-  { url: 'https://news.google.com/rss/search?q=palladium+rhodium+PGM+market&hl=en-AU&gl=AU&ceid=AU:en', topic: 'palladium' },
-  { url: 'https://news.google.com/rss/search?q=platinum+price+LBMA+OR+spot+platinum&hl=en-AU&gl=AU&ceid=AU:en', topic: 'platinum' },
-  { url: 'https://news.google.com/rss/search?q=hydrogen+platinum+fuel+cell+PGM&hl=en-AU&gl=AU&ceid=AU:en', topic: 'demand' },
-  { url: 'https://news.google.com/rss/search?q=South+Africa+PGM+mining+strike+OR+Eskom&hl=en-AU&gl=AU&ceid=AU:en', topic: 'producers' },
+  { url: 'https://www.businesstimes.com.sg/rss/feed/bt_commodities', source: 'Business Times Singapore', topic: 'platinum' },
+  { url: 'https://www.scmp.com/rss/91/feed', source: 'South China Morning Post', topic: 'macro' },
+  { url: 'https://www.moneyweb.co.za/feed/', source: 'Moneyweb', topic: 'producers' },
+  { url: 'https://www.mining.com/feed/', source: 'Mining.com', topic: 'platinum' },
+  { url: 'https://www.kitco.com/news/rss/news.xml', source: 'Kitco Metals', topic: 'platinum' },
+  { url: 'https://www.investing.com/rss/news_285.rss', source: 'Investing.com · Platinum', topic: 'platinum' },
 ];
 
 function digestDateSydney() {
@@ -31,7 +31,7 @@ async function fetchFeed(feed) {
   const xml = await res.text();
   return parseRssItems(xml).slice(0, 25).map((item) => ({
     ...item,
-    source: item.publisher || item.source || 'Google News',
+    source: item.publisher || feed.source || item.source || 'RSS',
     topic: feed.topic,
   }));
 }
