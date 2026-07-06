@@ -1,7 +1,7 @@
 // netlify/functions/fetch-news.js
 //
-// Scheduled ingest — direct Asian / SA / metals-desk RSS into Supabase (deduped).
-// No Google News wrappers.
+// Scheduled ingest — RSS → Supabase with Price / Supply / Demand lens tags.
+// Browser reads Supabase only (no client RSS, no per-load function calls).
 
 import { dedupeStories, normTitleForExport } from './lib/news-enrich.mjs';
 import { parseRssItems } from './lib/rss-utils.mjs';
@@ -9,25 +9,29 @@ import { parseRssItems } from './lib/rss-utils.mjs';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// region: price = LBMA/paper/trade press | supply = SA/JSE miners | demand = Asia industrial
 const FEEDS = [
-  { url: 'https://www.businesstimes.com.sg/rss/feed/bt_commodities', source: 'Business Times Singapore', topic: 'platinum' },
-  { url: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416', source: 'Channel News Asia', topic: 'macro' },
-  { url: 'https://www.scmp.com/rss/91/feed', source: 'South China Morning Post', topic: 'macro' },
-  { url: 'https://www.xinhuanet.com/english/rss/worldrss.xml', source: 'Xinhua English', topic: 'macro' },
-  { url: 'https://asia.nikkei.com/rss/feed/nar', source: 'Nikkei Asia', topic: 'macro' },
-  { url: 'https://www.moneyweb.co.za/feed/', source: 'Moneyweb', topic: 'producers' },
-  { url: 'https://www.mining.com/feed/', source: 'Mining.com', topic: 'platinum' },
-  { url: 'https://www.kitco.com/news/rss/news.xml', source: 'Kitco Metals', topic: 'platinum' },
-  { url: 'https://www.investing.com/rss/news_285.rss', source: 'Investing.com · Platinum', topic: 'platinum' },
+  { url: 'https://www.kitco.com/news/rss/news.xml', source: 'Kitco Metals', topic: 'platinum', region: 'price' },
+  { url: 'https://www.mining.com/feed/', source: 'Mining.com', topic: 'platinum', region: 'price' },
+  { url: 'https://www.investing.com/rss/news_285.rss', source: 'Investing.com · Platinum', topic: 'platinum', region: 'price' },
+  { url: 'https://www.platinumguild.com/rss/news', source: 'Platinum Guild International', topic: 'platinum', region: 'price' },
+  { url: 'https://www.moneyweb.co.za/feed/', source: 'Moneyweb', topic: 'producers', region: 'supply' },
+  { url: 'https://www.businesstimes.com.sg/rss/feed/bt_commodities', source: 'Business Times Singapore', topic: 'platinum', region: 'demand' },
+  { url: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416', source: 'Channel News Asia', topic: 'macro', region: 'demand' },
+  { url: 'https://www.scmp.com/rss/91/feed', source: 'South China Morning Post', topic: 'macro', region: 'demand' },
+  { url: 'https://www.xinhuanet.com/english/rss/worldrss.xml', source: 'Xinhua English', topic: 'macro', region: 'demand' },
+  { url: 'https://www.globaltimes.cn/rss/outbrain.xml', source: 'Global Times', topic: 'macro', region: 'demand' },
+  { url: 'https://asia.nikkei.com/rss/feed/nar', source: 'Nikkei Asia', topic: 'macro', region: 'demand' },
 ];
 
-const PGM_RE = /\b(platinum|palladium|rhodium|pgm|pgms|implats|impala|sibanye|northam|wpic|lbma|hydrogen|catalyst|fuel.?cell|precious.?metal|norilsk|nornickel|mining)\b/i;
+const PGM_RE = /\b(platinum|palladium|rhodium|pgm|pgms|implats|impala|sibanye|northam|wpic|lbma|hydrogen|catalyst|fuel.?cell|precious.?metal|norilsk|nornickel|conflux|cfx)\b/i;
 
-function isRelevant(item, topic) {
+function isRelevant(item, feed) {
   const text = `${item.title} ${item.description || ''}`.toLowerCase();
   if (PGM_RE.test(text)) return true;
-  if (topic === 'producers' && /\b(jse|eskom|bushveld|rand)\b/i.test(text)) return true;
-  return topic === 'platinum';
+  if (feed.region === 'supply' && /\b(jse|eskom|bushveld|rand|mining)\b/i.test(text)) return true;
+  if (feed.region === 'demand' && /\b(commodit|metal|import|auto|ev)\b/i.test(text)) return true;
+  return feed.region === 'price';
 }
 
 async function fetchFeed(feed) {
@@ -37,11 +41,12 @@ async function fetchFeed(feed) {
   if (!res.ok) throw new Error(`${feed.source} fetch failed: ${res.status}`);
   const xml = await res.text();
   return parseRssItems(xml).slice(0, 28)
-    .filter((item) => isRelevant(item, feed.topic))
+    .filter((item) => isRelevant(item, feed))
     .map((item) => ({
       ...item,
       source: item.publisher || feed.source,
       topic: feed.topic,
+      region: feed.region,
     }));
 }
 
@@ -52,6 +57,7 @@ async function upsertStoriesBatch(stories) {
     url: story.url,
     source: story.source,
     topic: story.topic,
+    region: story.region,
     published_at: story.published_at,
     fetched_at: new Date().toISOString(),
     title_norm: normTitleForExport(story.title),
@@ -62,7 +68,7 @@ async function upsertStoriesBatch(stories) {
       'Content-Type': 'application/json',
       apikey: SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      Prefer: 'resolution=ignore-duplicates',
+      Prefer: 'resolution=merge-duplicates',
     },
     body: JSON.stringify(payload),
   });
@@ -75,7 +81,7 @@ async function upsertStoriesBatch(stories) {
 
 export default async () => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars');
+    console.error('Missing SUPABASE env vars');
     return new Response('Missing env vars', { status: 500 });
   }
 
@@ -90,8 +96,12 @@ export default async () => {
   try {
     const unique = dedupeStories(allItems);
     const inserted = await upsertStoriesBatch(unique);
-    const summary = { ok: true, feeds: FEEDS.length, fetched: allItems.length, unique: unique.length, upserted: inserted };
-    console.log('News fetch run complete:', JSON.stringify(summary));
+    const byRegion = unique.reduce((acc, s) => {
+      acc[s.region] = (acc[s.region] || 0) + 1;
+      return acc;
+    }, {});
+    const summary = { ok: true, feeds: FEEDS.length, unique: unique.length, upserted: inserted, byRegion };
+    console.log('News ingest:', JSON.stringify(summary));
     return new Response(JSON.stringify(summary), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },

@@ -75,6 +75,7 @@ create table if not exists news_stories (
   url text,
   source text,
   topic text,
+  region text,
   published_at timestamptz,
   fetched_at timestamptz,
   title_norm text,
@@ -160,6 +161,9 @@ create unique index if not exists news_stories_url_unique
 
 create index if not exists news_stories_published_idx
   on news_stories (published_at desc nulls last);
+
+create index if not exists news_stories_region_published_idx
+  on news_stories (region, published_at desc nulls last);
 
 create index if not exists producer_price_history_ticker_recorded
   on producer_price_history (ticker, recorded_at);

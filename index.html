@@ -536,8 +536,8 @@
 
   <footer>
     Platinum Metis · <a href="https://ewsol.au">ewsol.au</a> ·
-    Live metals: <a href="https://mintedmetal.com">Minted Metal</a> (LBMA) ·
-    Perth Mint: <a href="https://www.perthmint.com/invest/information-for-investors/metal-prices/">1oz retail API</a> ·
+    Spot metals: Supabase cache (Minted Metal / LBMA ingest every 5m) ·
+    Perth Mint retail: estimate from Supabase history (not live API) ·
     Live crypto: <a href="https://www.coingecko.com">CoinGecko</a> ·
     Charts: <a href="https://finance.yahoo.com">Yahoo Finance</a> / Kraken
     Historical: LBMA / WPIC (metals annual avg) · CoinGecko approx (crypto year-end) ·
@@ -748,25 +748,22 @@
 
       async function fetchSpotDirect() {
         const cached = loadSpotFromStorage();
-        let metalsData = null;
-        let cryptoData = null;
 
+        // Primary: Supabase cache (written every 5m by fetch-market-snapshots) — no external APIs, no quota.
         try {
-          metalsData = await fetchMetalsSpotBrowser();
-        } catch (_) {}
-
-        try {
-          cryptoData = await fetchCryptoSpotBrowser();
-        } catch (_) {}
-
-        if (!metalsData && !cryptoData) {
-          // Both direct sources failed — try Supabase before falling back to hardcoded values.
-          try {
-            const supaData = await fetchSupabaseSnapshot();
+          const supaData = await fetchSupabaseSnapshot();
+          if (supaData?.spot?.gold?.price && supaData?.spot?.platinum?.price) {
             saveSpotToStorage(supaData);
             return supaData;
-          } catch (_) {}
+          }
+        } catch (_) {}
 
+        let metalsData = null;
+        let cryptoData = null;
+        try { metalsData = await fetchMetalsSpotBrowser(); } catch (_) {}
+        try { cryptoData = await fetchCryptoSpotBrowser(); } catch (_) {}
+
+        if (!metalsData && !cryptoData) {
           if (!cached) {
             return {
               ok: true,
@@ -4532,7 +4529,7 @@
     }
 
     /* ─── COMMODITY NEWS · TOP 3 + PROGRESSION ───────────────────── */
-    const NEWS_CACHE_KEY = 'pm_metis_news_history_v5';
+    const NEWS_CACHE_KEY = 'pm_metis_news_history_v6';
     const NEWS_LAST_DATE_KEY = 'pm_metis_news_last_date';
     const NEWS_RESEARCH_CACHE_KEY = 'pm_metis_news_research_v1';
 
@@ -4572,6 +4569,14 @@
         seen.add(k);
         merged.push(s);
       }
+      for (const lensId of ['price', 'supply', 'demand']) {
+        for (const s of digest.lenses?.[lensId]?.archive || []) {
+          const k = storyKey(s);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          merged.push(s);
+        }
+      }
       for (const day of localHist) {
         if (day.date === digest.date) continue;
         for (const s of day.stories || []) {
@@ -4588,36 +4593,42 @@
       const hist = loadLocalNewsHistory().filter((d) => d.date !== digest.date);
       hist.unshift({
         date: digest.date,
+        lenses: digest.lenses,
         stories: digest.stories,
         pastStories: digest.pastStories,
         progression: digest.progression,
         dailyBrief: digest.dailyBrief,
+        source: digest.source,
         fetchedAt: Date.now(),
       });
       localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify(hist.slice(0, 60)));
     }
 
-    /* Client-side news — direct Asian / SA / metals-desk RSS. No Google News, no Netlify quota. */
-    const NEWS_RSS_FEEDS = [
-      // Singapore & ASEAN
-      { url: 'https://www.businesstimes.com.sg/rss/feed/bt_commodities', source: 'Business Times Singapore', region: 'sg', topic: 'platinum' },
-      { url: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416', source: 'Channel News Asia', region: 'sg', topic: 'macro' },
-      // Hong Kong / Greater China
-      { url: 'https://www.scmp.com/rss/91/feed', source: 'South China Morning Post', region: 'hk', topic: 'macro' },
-      { url: 'https://www.xinhuanet.com/english/rss/worldrss.xml', source: 'Xinhua English', region: 'cn', topic: 'macro' },
-      { url: 'https://www.globaltimes.cn/rss/outbrain.xml', source: 'Global Times', region: 'cn', topic: 'macro' },
-      // Japan / North Asia
-      { url: 'https://asia.nikkei.com/rss/feed/nar', source: 'Nikkei Asia', region: 'jp', topic: 'macro' },
-      // South Africa — where PGM supply actually lives
-      { url: 'https://www.moneyweb.co.za/feed/', source: 'Moneyweb', region: 'za', topic: 'producers' },
-      // Dedicated metals & mining desks (not US cable)
-      { url: 'https://www.mining.com/feed/', source: 'Mining.com', region: 'global', topic: 'platinum' },
-      { url: 'https://www.kitco.com/news/rss/news.xml', source: 'Kitco Metals', region: 'global', topic: 'platinum' },
-      { url: 'https://www.investing.com/rss/news_285.rss', source: 'Investing.com · Platinum', region: 'global', topic: 'platinum' },
-      { url: 'https://www.platinumguild.com/rss/news', source: 'Platinum Guild International', region: 'global', topic: 'platinum' },
-    ];
+    function getLensStories(digest, lensId) {
+      if (digest?.lenses?.[lensId]?.stories?.length) return digest.lenses[lensId].stories;
+      return (digest?.stories || []).filter((s) => (s.lens || inferNewsLens(s)) === lensId);
+    }
 
-    const NEWS_REGION_BOOST = { sg: 14, hk: 14, cn: 12, jp: 12, za: 16, global: 6 };
+    /* News — read Supabase only (ingested 2×/day by fetch-news). Lenses: price | supply | demand */
+    const NEWS_LENS_META = {
+      price: {
+        id: 'price',
+        label: 'Price',
+        subtitle: 'LBMA · Kitco · trade press — where spot is set',
+      },
+      supply: {
+        id: 'supply',
+        label: 'Supply',
+        subtitle: 'JSE miners · Moneyweb · Bushveld — mine-side ground truth',
+      },
+      demand: {
+        id: 'demand',
+        label: 'Demand',
+        subtitle: 'SG · HK · CN · JP — industrial absorption & policy',
+      },
+    };
+
+    const NEWS_LENS_BOOST = { price: 8, supply: 14, demand: 12 };
     const PGM_HEADLINE_RE = /\b(platinum|palladium|rhodium|pgm|pgms|iridium|ruthenium|implats|impala|sibanye|northam|valterra|amplats|anglo american platinum|bushveld|wpic|lbma|hydrogen.{0,24}catalyst|fuel.?cell|precious.?metal|troy.?ounce|smelter|refinery|norilsk|nornickel)\b/i;
     const SA_MINING_RE = /\b(sibanye|impala|northam|implats|jse|eskom|bushveld|load.?shedding|rand|pgm|platinum|mining)\b/i;
 
@@ -4680,6 +4691,7 @@
     }
 
     function clientAnalyzeStory(story) {
+      const lens = story.lens || inferNewsLens(story);
       const title = story.title || '';
       const text = `${title} ${story.description || ''} ${story.topic || ''}`.toLowerCase();
       let score = 0;
@@ -4698,14 +4710,14 @@
       else if (platinumImpact < 0) bullets.push(`Net read for PGM complex: headwind (${direction}).`);
       else bullets.push('Mixed or indirect read for platinum — watch PGM basket and auto demand.');
       if (themeLabels.length) bullets.push(`Themes: ${themeLabels.join(' · ')}.`);
-      else bullets.push(`Source desk: ${story.source || story.region || 'markets'}.`);
-      const regionBoost = NEWS_REGION_BOOST[story.region] || 0;
+      else bullets.push(`Source desk: ${story.source || NEWS_LENS_META[lens]?.label || 'markets'}.`);
+      const lensBoost = NEWS_LENS_BOOST[lens] || 0;
       const relevanceScore = Math.min(100, Math.round(
-        35 + regionBoost +
+        35 + lensBoost +
         (story.topic === 'platinum' ? 20 : story.topic === 'producers' ? 28 : 8) +
         Math.abs(score) * 8
       ));
-      return { headline: title, bullets, platinumImpact, direction, themeLabels, relevanceScore };
+      return { headline: title, bullets, platinumImpact, direction, themeLabels, relevanceScore, lens };
     }
 
     function clientPickTopStories(rows, limit = 3) {
@@ -4756,63 +4768,17 @@
       return { direction, bullishScore, summary, themeTrends };
     }
 
-    function parseClientRss(xml) {
-      const items = [];
-      const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
-      for (const block of blocks) {
-        const tag = (t) => {
-          const m = block.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)<\\/${t}>`, 'i'));
-          return m ? m[1].trim() : null;
-        };
-        const rawTitle = tag('title');
-        const link = tag('link');
-        const pubDate = tag('pubDate');
-        const sourceTag = tag('source');
-        const rawDesc = tag('description') || tag('content:encoded') || tag('summary');
-        if (!rawTitle || !link) continue;
-        const dec = (s) => String(s || '').replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '')
-          .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
-        let title = dec(rawTitle);
-        const publisher = sourceTag ? dec(sourceTag) : null;
-        if (publisher && title.endsWith(' - ' + publisher)) title = title.slice(0, -(publisher.length + 3));
-        const description = rawDesc ? dec(rawDesc).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400) : '';
-        items.push({
-          title,
-          url: dec(link),
-          published_at: pubDate ? new Date(pubDate).toISOString() : null,
-          source: publisher || null,
-          description,
-        });
-      }
-      return items;
-    }
-
-    async function fetchRssFeedClient(feedUrl) {
-      const proxies = [
-        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-        (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-      ];
-      let lastErr;
-      for (const px of proxies) {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 18000);
-        try {
-          const res = await fetch(px(feedUrl), { signal: ctrl.signal, cache: 'no-store' });
-          clearTimeout(timer);
-          if (!res.ok) throw new Error(`RSS HTTP ${res.status}`);
-          const xml = await res.text();
-          if (!xml || xml.length < 80) throw new Error('RSS empty');
-          return parseClientRss(xml);
-        } catch (e) {
-          clearTimeout(timer);
-          lastErr = e;
-        }
-      }
-      throw lastErr || new Error('RSS unavailable');
+    function inferNewsLens(story) {
+      const r = story.region;
+      if (r === 'price' || r === 'supply' || r === 'demand') return r;
+      const blob = `${story.source || ''} ${story.topic || ''} ${story.title || ''}`.toLowerCase();
+      if (story.topic === 'producers' || /\b(moneyweb|biznews|mining weekly|jse|implats|sibanye|northam|eskom|bushveld)\b/.test(blob)) return 'supply';
+      if (story.topic === 'macro' || /\b(business times|nikkei|scmp|xinhua|global times|channel news|cna|caixin|singapore|china|japan)\b/.test(blob)) return 'demand';
+      return 'price';
     }
 
     async function fetchNewsRowsFromSupabase() {
-      const q = 'news_stories?select=title,url,source,topic,published_at,fetched_at&order=published_at.desc.nullslast,fetched_at.desc&limit=120';
+      const q = 'news_stories?select=title,url,source,topic,region,published_at,fetched_at&order=published_at.desc.nullslast,fetched_at.desc&limit=200';
       const res = await fetch(`${SUPABASE_URL}/rest/v1/${q}`, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
       });
@@ -4834,59 +4800,56 @@
         direction: s.direction,
         themeLabels: s.themeLabels || [],
         relevanceScore: s.relevanceScore,
+        lens: s.lens,
         research: research || s.research || null,
       };
     }
 
-    function buildClientDigest(rows, { liveRss = false } = {}) {
-      const { top, rest } = clientPickTopStories(rows, 3);
-      const progression = clientBuildProgression(top);
+    async function buildLensDigestFromSupabase() {
+      const rows = await fetchNewsRowsFromSupabase();
+      const grouped = { price: [], supply: [], demand: [] };
+      for (const row of rows) {
+        const lens = inferNewsLens(row);
+        if (!isPgmRelevant(row)) continue;
+        grouped[lens].push({ ...row, lens });
+      }
+
+      const lenses = {};
+      const allTop = [];
+      const allArchive = [];
+      for (const lensId of ['price', 'supply', 'demand']) {
+        const { top, rest } = clientPickTopStories(grouped[lensId], 3);
+        lenses[lensId] = {
+          stories: top.map((s, i) => mapClientStory({ ...s, rank: i + 1 })),
+          archive: rest.slice(0, 20).map((r) => ({
+            ...mapClientStory(r),
+            digestDate: (r.fetched_at || r.published_at || '').slice(0, 10),
+          })),
+        };
+        allTop.push(...top);
+        allArchive.push(...rest.slice(0, 15));
+      }
+
+      if (!allTop.length && !rows.length) {
+        throw new Error('No news in database yet — scheduled ingest runs twice daily');
+      }
+
+      const progression = clientBuildProgression(allTop.length ? allTop : rows.slice(0, 6).map((r) => ({ ...r, ...clientAnalyzeStory(r) })));
+      const flatStories = ['price', 'supply', 'demand'].flatMap((id) => lenses[id]?.stories || []);
+
       return {
         ok: true,
         date: digestDateLocal(),
-        stories: top.map((s, i) => mapClientStory({ ...s, rank: i + 1 })),
-        pastStories: rest.slice(0, 40).map((r) => ({
+        lenses,
+        stories: flatStories,
+        pastStories: clientDedupeStories(allArchive).slice(0, 40).map((r) => ({
           ...mapClientStory(r),
           digestDate: (r.fetched_at || r.published_at || '').slice(0, 10),
         })),
         progression,
         dailyBrief: null,
-        clientSourced: true,
-        liveRss,
+        source: 'supabase-news',
       };
-    }
-
-    async function refreshNewsClientSide({ liveRss = false } = {}) {
-      let rows = [];
-      let didRss = false;
-      if (!liveRss) {
-        try { rows = await fetchNewsRowsFromSupabase(); } catch (_) {}
-      }
-      if (liveRss || rows.length < 8) {
-        const results = await Promise.allSettled(
-          NEWS_RSS_FEEDS.map(async (feed) => {
-            const items = await fetchRssFeedClient(feed.url);
-            return items.slice(0, 28)
-              .map((item) => ({
-                ...item,
-                source: item.source || feed.source,
-                topic: feed.topic,
-                region: feed.region,
-              }))
-              .filter(isPgmRelevant);
-          })
-        );
-        const live = [];
-        for (const r of results) {
-          if (r.status === 'fulfilled') live.push(...r.value);
-        }
-        if (live.length) {
-          rows = clientDedupeStories([...live, ...rows]);
-          didRss = true;
-        }
-      }
-      if (!rows.length) throw new Error('No PGM headlines found — check connection and try Refresh');
-      return buildClientDigest(rows, { liveRss: didRss });
     }
 
     function loadResearchCache() {
@@ -5264,6 +5227,7 @@
 
     function NewsPanel() {
       const [digest, setDigest] = useState(null);
+      const [activeLens, setActiveLens] = useState('price');
       const [pastStories, setPastStories] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
@@ -5287,10 +5251,10 @@
         }
 
         try {
-          const data = await refreshNewsClientSide({ liveRss: !!force });
+          const data = await buildLensDigestFromSupabase();
           const note = force
-            ? `Live sweep · ${today} · SG · HK · CN · JP · ZA · metals desks`
-            : `Today's digest · ${today}`;
+            ? `Re-read Supabase · ${today}`
+            : `Today's digest · ${today} · updates 2×/day via scheduled ingest`;
           setDigest({ ...data, persistNote: note });
           setError(null);
           saveLocalNewsDigest(data);
@@ -5298,8 +5262,8 @@
           setPastStories(mergePastStories(data, loadLocalNewsHistory()));
           setLocalDays(loadLocalNewsHistory().length);
         } catch (e) {
-          if (cached?.stories?.length) {
-            setDigest({ ...cached, persistNote: `Saved digest · ${cached.date} · live sweep timed out`, fromCache: true });
+          if (cached?.stories?.length || cached?.lenses) {
+            setDigest({ ...cached, persistNote: `Saved digest · ${cached.date} · Supabase read failed`, fromCache: true });
             setPastStories(mergePastStories(cached, localHist));
             setLocalDays(localHist.length);
             setError(null);
@@ -5331,12 +5295,14 @@
       };
 
       const trendIcon = { strengthening: '↑', fading: '↓', stable: '→' };
+      const lensStories = getLensStories(digest, activeLens);
+      const lensMeta = NEWS_LENS_META[activeLens];
 
       return (
         <div style={{marginBottom:24}}>
           <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap', marginBottom:10}}>
             <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>
-              Platinum News · Daily Top 3
+              Platinum News · Price · Supply · Demand
               {digest?.date && (
                 <span style={{fontWeight:500, color:C.plat, marginLeft:8, fontSize:11}}>
                   {digest.date}{digest.date !== digestDateLocal() ? ' · stale — refreshing' : ''}
@@ -5354,19 +5320,43 @@
             >{loading ? 'Refreshing…' : 'Refresh'}</button>
           </div>
 
+          <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:10}}>
+            {['price', 'supply', 'demand'].map((id) => {
+              const meta = NEWS_LENS_META[id];
+              const count = getLensStories(digest, id).length;
+              const active = activeLens === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveLens(id)}
+                  style={{
+                    fontSize:11, fontWeight:600, padding:'6px 12px', borderRadius:6, cursor:'pointer',
+                    border: `1px solid ${active ? C.plat : C.border}`,
+                    background: active ? 'rgba(184,134,11,0.12)' : C.surface,
+                    color: active ? C.plat : C.textDark,
+                  }}
+                >{meta.label}{count ? ` (${count})` : ''}</button>
+              );
+            })}
+          </div>
+          {lensMeta && (
+            <div style={{fontSize:11, color:C.text, marginBottom:10}}>{lensMeta.subtitle}</div>
+          )}
+
           {error && (
             <div style={{...cardStyle, padding:12, marginBottom:10, color:'#B91C1C', fontSize:12}}>
               News unavailable: {error}
             </div>
           )}
 
-          {loading && !digest?.stories?.length && (
+          {loading && !lensStories.length && (
             <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
               <span className="news-search-icon" title="Searching">⛏</span>
               <div>
-                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Scanning PGM news…</div>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Loading PGM news from database…</div>
                 <div style={{fontSize:11, color:C.text, marginTop:4}}>
-                  Business Times · SCMP · Nikkei Asia · Xinhua · Moneyweb · Kitco · Mining.com
+                  Price · Supply · Demand lenses · ingested twice daily
                 </div>
               </div>
             </div>
@@ -5468,14 +5458,19 @@
           )}
 
           <div style={{display:'grid', gap:8}}>
-            {(digest?.stories || []).map((story) => (
+            {lensStories.map((story) => (
               <NewsStoryCard
                 key={story.url || story.title}
                 story={story}
                 rank={story.rank}
-                relatedPool={[...(digest?.stories || []), ...pastStories]}
+                relatedPool={[...lensStories, ...pastStories]}
               />
             ))}
+            {!loading && !lensStories.length && digest && (
+              <div style={{...cardStyle, padding:12, fontSize:12, color:C.text}}>
+                No {lensMeta?.label || activeLens} headlines yet — scheduled ingest runs twice daily.
+              </div>
+            )}
           </div>
 
           {pastStories.length > 0 && (
@@ -5494,7 +5489,7 @@
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            SG · HK · CN · JP · ZA · Kitco · Mining.com · scored in-browser
+            Supabase cache · Price / Supply / Demand · scored in-browser · ingest 2×/day
             {digest?.persistNote && ` · ${digest.persistNote}`}
           </div>
         </div>
