@@ -325,6 +325,11 @@
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
+    @keyframes mine-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .mine-spin { display:inline-block; animation: mine-spin 1.2s linear infinite; }
     .news-search-box {
       display: flex;
       align-items: center;
@@ -3163,7 +3168,15 @@
       const pointCount = chartRows.filter((r) =>
         curveIds.some((id) => r[id] != null && !isNaN(r[id]))
       ).length;
-      const minGood = timeframe === '24h' ? 6 : timeframe === '1w' ? 8 : timeframe === '1m' ? 10 : 0;
+      const minGood = ({
+        '24h': 10,
+        '1w': 14,
+        '1m': 18,
+        '3m': 22,
+        '1y': 30,
+        '3y': 40,
+        '5y': 50,
+      })[timeframe] ?? 0;
       const pulling = minGood > 0 && pointCount > 0 && pointCount < minGood;
       const tfLabel = (TIMEFRAMES.find(t => t.id === timeframe)?.label || timeframe);
 
@@ -3205,7 +3218,8 @@
                   padding:'2px 8px',
                   borderRadius:999,
                 }}>
-                  Pulling data · {pointCount} pts
+                  <span className="mine-spin" style={{marginRight:6}}>⛏</span>
+                  Mining history · {pointCount} pts
                 </span>
               )}
             </span>
@@ -3243,18 +3257,27 @@
             <div style={{fontSize:11, color:C.text, padding:'6px 4px 0', lineHeight:1.5}}>{subtitle}</div>
           )}
           {pulling && (
-            <div style={{
-              fontSize:11,
-              color:'#92400E',
-              marginTop:6,
-              padding:'8px 10px',
-              borderRadius:8,
-              background:'rgba(217,119,6,0.08)',
-              border:'1px solid rgba(217,119,6,0.18)',
-              lineHeight:1.5,
-            }}>
-              This is real data, but the {tfLabel} window is still filling in (currently {pointCount} points).
-              Leave it open or refresh in a minute for a more informative curve.
+            <div style={{position:'relative'}}>
+              <div style={{
+                position:'absolute',
+                left:12,
+                top:12,
+                zIndex:5,
+                maxWidth:460,
+                fontSize:11,
+                color:'#92400E',
+                padding:'10px 12px',
+                borderRadius:10,
+                background:'rgba(255, 247, 237, 0.92)',
+                border:'1px solid rgba(217,119,6,0.25)',
+                boxShadow:'0 8px 20px rgba(26,35,50,0.08)',
+                lineHeight:1.5,
+                pointerEvents:'none',
+              }}>
+                <span className="mine-spin" style={{marginRight:8}}>⚒</span>
+                <span style={{fontWeight:800}}>Propagating curve…</span>{' '}
+                {tfLabel} window has {pointCount} points so far. This will look “flat” until more prints land.
+              </div>
             </div>
           )}
         </div>
