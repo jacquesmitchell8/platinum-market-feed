@@ -10,10 +10,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const PRODUCERS = [
-  { ticker: 'VAL.JO', name: 'Valterra Platinum', id: 'IDX-201', country: 'South Africa', production: '~1.7 Moz Pt/yr' },
-  { ticker: 'IMP.JO', name: 'Impala Platinum', id: 'IDX-202', country: 'South Africa', production: '~1.1 Moz Pt/yr' },
-  { ticker: 'SSW.JO', name: 'Sibanye-Stillwater', id: 'IDX-203', country: 'South Africa / USA', production: '~0.9 Moz Pt/yr' },
-  { ticker: 'NPH.JO', name: 'Northam Platinum', id: 'IDX-204', country: 'South Africa', production: '~0.5 Moz Pt/yr' },
+  { ticker: 'VAL.JO', name: 'Valterra Platinum', id: 'IDX-201', country: 'South Africa', production: '~1.7 Moz Pt/yr', marketSharePct: 29 },
+  { ticker: 'IMP.JO', name: 'Impala Platinum', id: 'IDX-202', country: 'South Africa', production: '~1.1 Moz Pt/yr', marketSharePct: 19 },
+  { ticker: 'SSW.JO', name: 'Sibanye-Stillwater', id: 'IDX-203', country: 'South Africa / USA', production: '~0.9 Moz Pt/yr', marketSharePct: 16 },
+  { ticker: 'NPH.JO', name: 'Northam Platinum', id: 'IDX-204', country: 'South Africa', production: '~0.5 Moz Pt/yr', marketSharePct: 9 },
 ];
 
 const TIMEFRAME_FILTERS = {
@@ -105,6 +105,7 @@ export default async (req) => {
         company: m.name,
         country: m.country,
         production: m.production,
+        marketSharePct: m.marketSharePct,
         ticker: r.ticker,
         exchange: 'JSE',
         priceZar: r.currency === 'ZAR' ? r.price : null,

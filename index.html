@@ -569,7 +569,7 @@
       const MINTED_METAL_URL = 'https://mintedmetal.com/api/prices.json';
       // Crypto spot prices now fetched via /.netlify/functions/crypto-feed?type=spot
       // (see fetchCryptoSpotBrowser below) instead of calling CoinGecko directly.
-      const SPOT_LS_KEY = 'pm_metis_spot_v2';
+      const SPOT_LS_KEY = 'pm_metis_spot_v3';
       let spotInflight = null;
 
       const FALLBACK_SPOT = {
@@ -765,15 +765,23 @@
           return t < min ? t : min;
         }, Date.now());
 
+        const anyStale = rows.some(isStale);
+        const anyHardStale = rows.some(isHardStale);
+        const metalsOk = byKey.XAU && byKey.XPT && !isHardStale(byKey.XAU) && !isHardStale(byKey.XPT);
+
         return {
           ok: true,
-          stale: true,
-          hardStale: rows.some(isHardStale),
+          stale: anyStale,
+          hardStale: anyHardStale,
           spot,
           audUsd: 0.65,
           updatedAt: new Date(oldestUpdate).toISOString(),
-          cacheNote: 'Supabase fallback — live feeds unavailable',
-          sources: { metals: 'supabase-cache', crypto: 'supabase-cache' },
+          cacheNote: anyHardStale
+            ? 'Spot snapshots over 12h old — scheduled ingest may be delayed'
+            : anyStale
+              ? 'Some spot prices slightly delayed — updates every 5 min'
+              : null,
+          sources: { metals: metalsOk ? 'supabase-ingest' : 'supabase-cache', crypto: 'supabase-ingest' },
         };
       }
 
@@ -784,6 +792,13 @@
         try {
           const supaData = await fetchSupabaseSnapshot();
           if (supaData?.spot?.gold?.price && supaData?.spot?.platinum?.price) {
+            try {
+              const fxRes = await fetchWithTimeout('https://api.frankfurter.dev/v1/latest?from=AUD&to=USD', {}, 8000);
+              if (fxRes.ok) {
+                const fx = await readJson(fxRes);
+                if (fx.rates?.USD != null) supaData.audUsd = fx.rates.USD;
+              }
+            } catch (_) {}
             saveSpotToStorage(supaData);
             return supaData;
           }
@@ -1035,10 +1050,10 @@
       'IDX-105': { id:'IDX-105', code:'PM-PT-OZ-OFFER-USD', label:'Perth Mint — 1oz Platinum — Sell (US dollars)', name:'Perth Mint · 1oz Platinum · Sell (USD equiv.)', unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#4A6785', perthMetal:'Platinum', perthField:'offer', usdConv:true, assets:['platinum','perth'], axis:'platinum' },
       'IDX-106': { id:'IDX-106', code:'PM-AU-OZ-OFFER-USD', label:'Perth Mint — 1oz Gold — Sell (US dollars)',     name:'Perth Mint · 1oz Gold · Sell (USD equiv.)',     unit:'USD', source:'Perth Mint + FX', family:'perth', tab:'perth', color:'#9A7B1A', perthMetal:'Gold',     perthField:'offer', usdConv:true, assets:['gold','perth'], axis:'gold' },
       'IDX-107': { id:'IDX-107', code:'PM-PT-TA', label:'Platinum — Technical structure (S/R · patterns)', name:'Platinum · Technical overlay', unit:'AUD', source:'Computed · Perth Mint sell', family:'ta', tab:'perth', color:'#7C3AED', assets:['platinum','perth'], axis:'platinum-ta', taOverlay:true, taSource:'IDX-103' },
-      'IDX-201': { id:'IDX-201', code:'VAL-JSE',  label:'Valterra Platinum — VAL.JO',           name:'Valterra Platinum · JSE',             unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#1E40AF', yahoo:'VAL.JO', ticker:'VAL.JO', exchange:'JSE', country:'South Africa', production:'~1.7 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-202': { id:'IDX-202', code:'IMP-JSE',  label:'Impala Platinum — IMP.JO',             name:'Impala Platinum · JSE',               unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#B45309', yahoo:'IMP.JO', ticker:'IMP.JO', exchange:'JSE', country:'South Africa', production:'~1.1 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-203': { id:'IDX-203', code:'SSW-JSE',  label:'Sibanye-Stillwater — SSW.JO',          name:'Sibanye-Stillwater · JSE',            unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#047857', yahoo:'SSW.JO', ticker:'SSW.JO', exchange:'JSE', country:'South Africa / USA', production:'~0.9 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
-      'IDX-204': { id:'IDX-204', code:'NPH-JSE',  label:'Northam Platinum — NPH.JO',            name:'Northam Platinum · JSE',              unit:'ZAR', source:'Yahoo Finance / JSE',     family:'producer', tab:'producers', color:'#6B21A8', yahoo:'NPH.JO', ticker:'NPH.JO', exchange:'JSE', country:'South Africa', production:'~0.5 Moz Pt/yr', assets:['platinum','producers'], axis:'producers' },
+      'IDX-201': { id:'IDX-201', code:'VAL-JSE',  label:'Valterra Platinum — VAL.JO',           name:'Valterra Platinum · JSE',             unit:'AUD', source:'JSE · ZAR→AUD',           family:'producer', tab:'producers', color:'#1E40AF', yahoo:'VAL.JO', ticker:'VAL.JO', exchange:'JSE', country:'South Africa', production:'~1.7 Moz Pt/yr', marketSharePct:29, assets:['platinum','producers'], axis:'producers' },
+      'IDX-202': { id:'IDX-202', code:'IMP-JSE',  label:'Impala Platinum — IMP.JO',             name:'Impala Platinum · JSE',               unit:'AUD', source:'JSE · ZAR→AUD',           family:'producer', tab:'producers', color:'#B45309', yahoo:'IMP.JO', ticker:'IMP.JO', exchange:'JSE', country:'South Africa', production:'~1.1 Moz Pt/yr', marketSharePct:19, assets:['platinum','producers'], axis:'producers' },
+      'IDX-203': { id:'IDX-203', code:'SSW-JSE',  label:'Sibanye-Stillwater — SSW.JO',          name:'Sibanye-Stillwater · JSE',            unit:'AUD', source:'JSE · ZAR→AUD',           family:'producer', tab:'producers', color:'#047857', yahoo:'SSW.JO', ticker:'SSW.JO', exchange:'JSE', country:'South Africa / USA', production:'~0.9 Moz Pt/yr', marketSharePct:16, assets:['platinum','producers'], axis:'producers' },
+      'IDX-204': { id:'IDX-204', code:'NPH-JSE',  label:'Northam Platinum — NPH.JO',            name:'Northam Platinum · JSE',              unit:'AUD', source:'JSE · ZAR→AUD',           family:'producer', tab:'producers', color:'#6B21A8', yahoo:'NPH.JO', ticker:'NPH.JO', exchange:'JSE', country:'South Africa', production:'~0.5 Moz Pt/yr', marketSharePct:9, assets:['platinum','producers'], axis:'producers' },
     };
 
     const TIMEFRAMES = [
@@ -1864,6 +1879,28 @@
       return 0.65;
     }
 
+    async function fetchZarPerAud() {
+      try {
+        const r = await pmFetch('https://api.frankfurter.dev/v1/latest?from=AUD&to=ZAR', {}, 8000);
+        if (r.ok) {
+          const j = await r.json();
+          if (j.rates?.ZAR != null) return j.rates.ZAR;
+        }
+      } catch (_) {}
+      return 11.5;
+    }
+
+    function convertProducerRowsToAud(rows, producerIds, zarPerAud) {
+      if (!rows?.length || !zarPerAud) return rows;
+      return rows.map((row) => {
+        const out = { ...row };
+        for (const id of producerIds) {
+          if (out[id] != null && !Number.isNaN(out[id])) out[id] = out[id] / zarPerAud;
+        }
+        return out;
+      });
+    }
+
     const PRODUCER_YAHOO_RANGE = {
       '24h': '5d', '1w': '5d', '1m': '1mo', '3m': '3mo', '1y': '1y', '3y': '3y', '5y': '5y',
     };
@@ -2003,6 +2040,17 @@
     function fmtZar(price) {
       if (price == null) return '—';
       return `R${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    function fmtAud(price) {
+      if (price == null) return '—';
+      if (price >= 100) return `$${Math.round(price).toLocaleString()} AUD`;
+      return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AUD`;
+    }
+
+    function zarToAud(zar, zarPerAud) {
+      if (zar == null || !zarPerAud) return null;
+      return zar / zarPerAud;
     }
 
     function persistPerthSnapshot(pmData) {
@@ -2815,6 +2863,7 @@
       const [live, setLive] = useState(bootCached?.spot || FALLBACK_SPOT_CLIENT);
       const [perth, setPerth] = useState(null);
       const [audUsd, setAudUsd] = useState(bootCached?.audUsd ?? 0.65);
+      const [zarPerAud, setZarPerAud] = useState(11.5);
       const [error, setError] = useState(null);
       const [feedWarn, setFeedWarn] = useState(bootCached ? (bootCached.cacheNote || 'Showing cached prices') : null);
       const [perthError, setPerthError] = useState(null);
@@ -2851,11 +2900,13 @@
       const fetchAll = useCallback(async () => {
         setSpotLoading(true);
         try {
-          const [spotData, perthData, audFromFx] = await Promise.all([
+          const [spotData, perthData, audFromFx, zarFromFx] = await Promise.all([
             fetchSpotForDashboard(),
             fetchPerthMint().catch(() => null),
             fetchAudUsd().catch(() => null),
+            fetchZarPerAud().catch(() => null),
           ]);
+          if (zarFromFx != null) setZarPerAud(zarFromFx);
           applySpotData({
             ...spotData,
             audUsd: audFromFx ?? spotData.audUsd ?? 0.65,
@@ -2892,7 +2943,7 @@
         if (live) updateTicker(live);
       }, [live]);
 
-      return { live, perth, audUsd, error, feedWarn, perthError, updated, spotLoading, refreshSpot: fetchAll };
+      return { live, perth, audUsd, zarPerAud, error, feedWarn, perthError, updated, spotLoading, refreshSpot: fetchAll };
     }
 
     function useTimeline(tab, metalTimeframe, cryptoTimeframe, cfxTimeframe, activeIds) {
@@ -3096,7 +3147,7 @@
       return [floor, max + pad];
     }
 
-    function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale, liveSpot, connectNulls, tightScale, chartHeight = 260 }) {
+    function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale, liveSpot, connectNulls, tightScale, chartHeight = 260, subtitle }) {
       const chartRows = useMemo(() => {
         if (!rows?.length || !curveIds?.length) return [];
         let filtered = filterRowsByTimeframe(rows, timeframe);
@@ -3125,7 +3176,7 @@
       }
 
       const fmtY = v => {
-        if (unit === 'AUD') return `$${Math.round(v).toLocaleString()}`;
+        if (unit === 'AUD') return fmtAud(v).replace(' AUD', '');
         if (unit === 'ZAR') return fmtZar(v);
         if (v < 10) return `$${v.toFixed(4)}`;
         return fmtUsd(v);
@@ -3147,7 +3198,7 @@
                 domain={yDomain}
                 allowDataOverflow={logScale}
                 tickFormatter={fmtY}/>
-              <Tooltip content={<TimelineTip/>} cursor={{stroke:C.border}}/>
+              <Tooltip content={<TimelineTip unit={unit}/>} cursor={{stroke:C.border}}/>
               <Legend wrapperStyle={{fontSize:11, paddingTop:6}}
                 formatter={id => CURVE_INDEX[id]?.label || id}/>
               {showEvents && events.map(e => {
@@ -3165,6 +3216,9 @@
               ))}
             </LineChart>
           </ResponsiveContainer>
+          {subtitle && (
+            <div style={{fontSize:11, color:C.text, padding:'6px 4px 0', lineHeight:1.5}}>{subtitle}</div>
+          )}
         </div>
       );
     }
@@ -3272,7 +3326,7 @@
       );
     }
 
-    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, cfxTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, onCfxTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot, chartView = 'timeline' }) {
+    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, cfxTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, onCfxTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot, chartView = 'timeline', zarPerAud }) {
       if (tab === 'index') {
         const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
         const cryptoMajorIds = activeCurves.filter(id =>
@@ -3382,19 +3436,24 @@
         const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
         if (!producerIds.length) return null;
         const quotesById = Object.fromEntries((producerMeta?.quotes || []).map(q => [q.id, q]));
+        const audRows = convertProducerRowsToAud(rows, producerIds, zarPerAud);
         return (
           <>
             <TimeframeBar label="Producer chart period" value={metalTimeframe} onChange={onMetalTimeframeChange} />
             {producerIds.map((id) => {
               const meta = CURVE_INDEX[id];
               const quote = quotesById[id];
-              const hasHistory = rows?.some((r) => r[id] != null && !isNaN(r[id]));
+              const hasHistory = audRows?.some((r) => r[id] != null && !isNaN(r[id]));
+              const shareLine = meta.marketSharePct != null
+                ? `~${meta.marketSharePct}% of global platinum mine production · ${meta.production}`
+                : meta.production;
               if (hasHistory) {
                 return (
                   <SingleTimelineChart
                     key={id}
-                    title={`${meta.name} · ${meta.ticker} · ZAR`}
-                    unit="ZAR" rows={rows} curveIds={[id]} timeframe={metalTimeframe}
+                    title={`${meta.name} · ${meta.ticker} · AUD`}
+                    subtitle={shareLine}
+                    unit="AUD" rows={audRows} curveIds={[id]} timeframe={metalTimeframe}
                     showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}/>
                 );
               }
@@ -3402,14 +3461,20 @@
                 <div key={id} style={{...cardStyle, marginBottom:8, padding:'16px 18px'}}>
                   <div style={{fontSize:12, fontWeight:600, color:meta.color, marginBottom:6}}>{meta.label}</div>
                   <div style={{fontSize:22, fontWeight:600, color:C.textDark, fontVariantNumeric:'tabular-nums'}}>
-                    {quote?.priceZar != null ? fmtZar(quote.priceZar) : '—'}
+                    {quote?.priceZar != null ? fmtAud(zarToAud(quote.priceZar, zarPerAud)) : '—'}
                   </div>
+                  {quote?.priceZar != null && (
+                    <div style={{fontSize:11, color:C.text, marginTop:4}}>{fmtZar(quote.priceZar)} JSE</div>
+                  )}
                   {quote?.changePct != null && (
                     <div style={{fontSize:12, marginTop:4, color: quote.changePct >= 0 ? '#047857' : '#B91C1C'}}>
                       {fmtPct(quote.changePct)} today
                     </div>
                   )}
                   <div style={{fontSize:11, color:C.text, marginTop:8, lineHeight:1.5}}>
+                    {shareLine}
+                  </div>
+                  <div style={{fontSize:11, color:C.text, marginTop:6, lineHeight:1.5}}>
                     Chart data unavailable for this ticker — try Refresh or switch period.
                   </div>
                 </div>
@@ -3561,7 +3626,7 @@
       );
     };
 
-    const TimelineTip = ({ active, payload }) => {
+    const TimelineTip = ({ active, payload, unit: tipUnit }) => {
       if (!active || !payload?.length) return null;
       const d = payload[0].payload;
       const nearEvent = TIMELINE_EVENTS.find(e => Math.abs(e.ts - d.ts) < 86400000 * 2);
@@ -3571,9 +3636,10 @@
           {payload.filter(p => p.value != null).map(p => {
             const meta = CURVE_INDEX[p.dataKey];
             if (!meta) return null;
-            const val = meta.unit === 'AUD'
-              ? `$${Math.round(p.value).toLocaleString()} AUD`
-              : meta.unit === 'ZAR'
+            const u = tipUnit || meta.unit;
+            const val = u === 'AUD'
+              ? fmtAud(p.value)
+              : u === 'ZAR'
                 ? fmtZar(p.value)
                 : fmtUsd(p.value);
             return (
@@ -5884,10 +5950,11 @@
       );
     }
 
-    const ProducerPriceCard = ({ quote, meta }) => {
+    const ProducerPriceCard = ({ quote, meta, zarPerAud }) => {
       const q = quote || {};
       const m = meta || CURVE_INDEX[q.id];
       const chg = q.changePct;
+      const aud = q.priceZar != null ? zarToAud(q.priceZar, zarPerAud) : null;
       return (
         <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 200px', minWidth:190}}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8, marginBottom:6}}>
@@ -5902,8 +5969,11 @@
             {q.ticker || m?.ticker} · {q.exchange || m?.exchange || 'JSE'}
           </div>
           <div style={{fontSize:22, fontWeight:600, color: m?.color || C.plat, fontVariantNumeric:'tabular-nums', marginBottom:4}}>
-            {q.priceZar != null ? fmtZar(q.priceZar) : '···'}
+            {aud != null ? fmtAud(aud) : '···'}
           </div>
+          {q.priceZar != null && (
+            <div style={{fontSize:11, color:C.text, marginBottom:6}}>{fmtZar(q.priceZar)} JSE</div>
+          )}
           <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
             {chg != null && (
               <span style={{
@@ -5913,7 +5983,11 @@
                 padding:'2px 7px', borderRadius:4,
               }}>{fmtPct(chg)}</span>
             )}
-            <span style={{fontSize:11, color:C.text}}>{q.production || m?.production}</span>
+            <span style={{fontSize:11, color:C.text}}>
+              {m?.marketSharePct != null ? `~${m.marketSharePct}% global Pt supply` : ''}
+              {m?.marketSharePct != null && m?.production ? ' · ' : ''}
+              {q.production || m?.production}
+            </span>
           </div>
         </div>
       );
@@ -5962,7 +6036,7 @@
 
     /* ─── LIVE DASHBOARD ──────────────────────────────────────────── */
     function LiveDashboard() {
-      const { live, perth, audUsd, error, feedWarn, perthError, updated, spotLoading, refreshSpot } = useLivePrices();
+      const { live, perth, audUsd, zarPerAud, error, feedWarn, perthError, updated, spotLoading, refreshSpot } = useLivePrices();
       const [tab, setTab] = useState('index');
       const [metalTimeframe, setMetalTimeframe] = useState('3y');
       const [cryptoTimeframe, setCryptoTimeframe] = useState('3y');
@@ -5994,12 +6068,12 @@
           el.innerHTML = producerMeta.quotes.map(q => `
             <div class="ticker-item">
               <span class="ticker-sym">${q.ticker}</span>
-              <span class="ticker-price">${fmtZar(q.priceZar)}</span>
+              <span class="ticker-price">${fmtAud(zarToAud(q.priceZar, zarPerAud))}</span>
               <span class="ticker-chg ${chgClass(q.changePct)}">${fmtPct(q.changePct)}</span>
             </div>
           `).join('');
         }
-      }, [tab, live, perth, audUsd, producerMeta]);
+      }, [tab, live, perth, audUsd, zarPerAud, producerMeta]);
 
       const eventsInRange = useMemo(
         () => getEventsInRangeFromRows(
@@ -6087,7 +6161,7 @@
                 {['IDX-201','IDX-202','IDX-203','IDX-204'].map(id => {
                   const quote = producerMeta?.quotes?.find(q => q.id === id);
                   return (
-                    <ProducerPriceCard key={id} quote={quote} meta={CURVE_INDEX[id]} />
+                    <ProducerPriceCard key={id} quote={quote} meta={CURVE_INDEX[id]} zarPerAud={zarPerAud} />
                   );
                 })}
               </div>
@@ -6181,7 +6255,7 @@
                     onMetalTimeframeChange={setMetalTimeframe} onCryptoTimeframeChange={setCryptoTimeframe}
                     onCfxTimeframeChange={setCfxTimeframe}
                     activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}
-                    producerMeta={producerMeta} liveSpot={live} chartView={indexChartView}/>
+                    producerMeta={producerMeta} liveSpot={live} chartView={indexChartView} zarPerAud={zarPerAud}/>
                 </ErrorBoundary>
               </>
               );
@@ -6204,7 +6278,7 @@
               {tab === 'perth'
                 ? 'Separate charts for gold and platinum 1oz coins (AUD, estimated). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
                 : tab === 'producers'
-                  ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Prices in ZAR · announcements via Google News.'
+                  ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Share prices in AUD (converted from JSE ZAR).'
                   : 'Separate charts for precious metals and cryptocurrency — each with its own price scale so no curve is flattened. Toggle Technical structure for support/resistance, breakouts, and chart patterns on the same history.'}
             </div>
           </div>
