@@ -42,5 +42,8 @@
     [functions."propagate-producers"]
   schedule = "15 * * * *"
 
+[functions."fetch-producer-intraday"]
+  schedule = "7 * * * *"
+
 [functions."propagate-curves"]
   schedule = "0 * * * *"

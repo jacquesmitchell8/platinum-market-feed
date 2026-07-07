@@ -1835,12 +1835,7 @@
 
       if (tab === 'producers') {
         try {
-          const data = await fetchProducerStocks(metalTimeframeId);
-          saveTimelineToStorage(lsKey, data);
-          return data;
-        } catch (_) {}
-        try {
-          const data = await fetchNetlifyTimeline(tab, metalTimeframeId, curveIds);
+          const data = await fetchProducerTimelineFromSupabase(metalTimeframeId);
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
@@ -2040,6 +2035,93 @@
         localStorage.setItem(lsKey, JSON.stringify({ ...payload, savedAt: Date.now() }));
       } catch (_) {}
       return payload;
+    }
+
+    async function fetchProducerTimelineFromSupabase(timeframeId) {
+      if (!SUPABASE_URL.includes('.supabase.co')) throw new Error('Supabase URL missing');
+      const tf = TIMEFRAMES.find(t => t.id === timeframeId) || TIMEFRAMES[1];
+
+      const producers = ['IDX-201', 'IDX-202', 'IDX-203', 'IDX-204'];
+      const byId = {};
+      producers.forEach((id) => { byId[id] = CURVE_INDEX[id]; });
+      const tickers = producers.map((id) => byId[id]?.ticker).filter(Boolean);
+      if (!tickers.length) throw new Error('No producer tickers configured');
+
+      const now = Date.now();
+      const sinceMs = tf.hours ? tf.hours * 3600000 : (tf.days ? tf.days * 86400000 : 30 * 86400000);
+      const sinceIso = new Date(now - sinceMs).toISOString();
+
+      const useIntraday = ['24h', '1w', '1m', '3m'].includes(timeframeId);
+      const table = useIntraday ? 'producer_price_intraday' : 'producer_price_history';
+      const priceField = useIntraday ? 'close' : 'price';
+      const timeField = 'recorded_at';
+
+      // NOTE: PostgREST "in" filter expects (a,b,c) form.
+      const inList = '(' + tickers.map(t => `"${t}"`).join(',') + ')';
+      const url =
+        `${SUPABASE_URL}/rest/v1/${table}` +
+        `?select=ticker,${priceField},${timeField}` +
+        `&ticker=in.${encodeURIComponent(inList)}` +
+        `&${timeField}=gte.${encodeURIComponent(sinceIso)}` +
+        `&order=${timeField}.asc`;
+
+      const res = await pmFetch(url, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      }, 12000);
+      if (!res.ok) throw new Error(`Supabase producers ${timeframeId}: ${res.status}`);
+      const rows = await res.json();
+      if (!Array.isArray(rows) || rows.length === 0) throw new Error('Supabase producers empty');
+
+      const seriesMap = {};
+      for (const r of rows) {
+        const id = producers.find(pid => byId[pid]?.ticker === r.ticker);
+        if (!id) continue;
+        const ts = new Date(r[timeField]).getTime();
+        const price = Number(r[priceField]);
+        if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
+        if (!seriesMap[id]) seriesMap[id] = [];
+        seriesMap[id].push({ ts, price });
+      }
+
+      const chartRows = buildProducerChartRows(seriesMap, timeframeId);
+
+      // Latest quotes from producer_quotes (latest-only) — optional.
+      let quoteRows = [];
+      try {
+        const qUrl = `${SUPABASE_URL}/rest/v1/producer_quotes?select=ticker,name,price,currency,change_pct,updated_at,source`;
+        const qRes = await pmFetch(qUrl, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }, 8000);
+        if (qRes.ok) quoteRows = await qRes.json();
+      } catch (_) {}
+
+      const quotes = (quoteRows || []).map((q) => {
+        const id = producers.find(pid => byId[pid]?.ticker === q.ticker);
+        const m = id ? byId[id] : null;
+        return {
+          id: id || null,
+          company: q.name || m?.name,
+          country: m?.country,
+          production: m?.production,
+          marketSharePct: m?.marketSharePct,
+          ticker: q.ticker,
+          exchange: 'JSE',
+          priceZar: q.currency === 'ZAR' ? q.price : q.price,
+          changePct: q.change_pct,
+          updatedAt: q.updated_at,
+        };
+      }).filter(q => q.id);
+
+      const oldestUpdate = quoteRows?.length
+        ? quoteRows.reduce((min, r) => Math.min(min, new Date(r.updated_at).getTime()), Date.now())
+        : Date.now();
+
+      return {
+        ok: true,
+        stale: false,
+        rows: chartRows,
+        producerMeta: { quotes, announcements: [], historyCounts: {} },
+        updatedAt: new Date(oldestUpdate).toISOString(),
+        source: useIntraday ? 'supabase-producer-intraday' : 'supabase-producer-daily',
+      };
     }
 
     function fmtZar(price) {

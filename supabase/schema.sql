@@ -44,6 +44,19 @@ create table if not exists producer_quotes (
   source text
 );
 
+create table if not exists producer_price_intraday (
+  id bigserial primary key,
+  ticker text not null,
+  interval_min int not null default 60,
+  recorded_at timestamptz not null,
+  open numeric,
+  high numeric,
+  low numeric,
+  close numeric not null,
+  volume numeric,
+  source text
+);
+
 -- Monthly baselines for long timeframes. We store month-end closes.
 create table if not exists metal_price_history_monthly (
   id bigserial primary key,
@@ -155,6 +168,12 @@ create index if not exists crypto_price_history_asset_recorded
 create unique index if not exists producer_price_history_ticker_day
   on producer_price_history (ticker, recorded_day);
 
+create unique index if not exists producer_price_intraday_ticker_interval_ts
+  on producer_price_intraday (ticker, interval_min, recorded_at);
+
+create index if not exists producer_price_intraday_ticker_ts
+  on producer_price_intraday (ticker, recorded_at desc);
+
 create unique index if not exists news_stories_url_unique
   on news_stories (url)
   where url is not null and trim(url) <> '';
@@ -195,6 +214,7 @@ alter table metal_price_history enable row level security;
 alter table crypto_price_history enable row level security;
 alter table producer_price_history enable row level security;
 alter table producer_quotes enable row level security;
+alter table producer_price_intraday enable row level security;
 alter table news_stories enable row level security;
 alter table ta_pattern_library enable row level security;
 alter table ta_observations enable row level security;
@@ -210,6 +230,7 @@ drop policy if exists "Public read ta observations" on ta_observations;
 drop policy if exists "Public read metal history monthly" on metal_price_history_monthly;
 drop policy if exists "Public read crypto history" on crypto_price_history;
 drop policy if exists "Public read crypto history monthly" on crypto_price_history_monthly;
+drop policy if exists "Public read producer intraday" on producer_price_intraday;
 
 create policy "Public read market snapshots"
   on market_snapshots for select
@@ -248,5 +269,10 @@ create policy "Public read ta patterns"
 
 create policy "Public read ta observations"
   on ta_observations for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read producer intraday"
+  on producer_price_intraday for select
   to anon, authenticated
   using (true);
