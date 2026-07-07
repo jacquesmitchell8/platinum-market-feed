@@ -4831,16 +4831,26 @@
     }
 
     async function fetchNewsRowsFromSupabase() {
-      const q = 'news_stories?select=title,url,source,topic,region,published_at,fetched_at&order=published_at.desc.nullslast,fetched_at.desc&limit=200';
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/${q}`, {
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-      });
-      if (!res.ok) {
-        throw new Error(res.status === 401
-          ? 'Supabase API key rejected (401) — check SUPABASE_ANON_KEY in Netlify env'
-          : `Supabase news read ${res.status}`);
+      const attempts = [
+        'news_stories?select=title,url,source,topic,region,published_at,fetched_at&order=published_at.desc,fetched_at.desc&limit=200',
+        'news_stories?select=title,url,source,topic,published_at,fetched_at&order=published_at.desc&limit=200',
+        'news_stories?select=title,url,source,published_at&order=published_at.desc&limit=200',
+      ];
+      let lastStatus = 0;
+      for (const q of attempts) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${q}`, {
+          headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+        });
+        if (res.ok) return res.json();
+        lastStatus = res.status;
+        if (res.status !== 400) break;
       }
-      return res.json();
+      if (lastStatus === 401) {
+        throw new Error('Supabase API key rejected (401) — check SUPABASE_ANON_KEY in Netlify env');
+      }
+      throw new Error(lastStatus === 400
+        ? 'Supabase news read 400 — run news migrations in SQL editor (region column)'
+        : `Supabase news read ${lastStatus}`);
     }
 
     function mapClientStory(s, research) {
