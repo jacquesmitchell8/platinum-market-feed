@@ -3812,7 +3812,16 @@
     };
 
     /* ─── BUY DEEP DIVE · PLATINUM + CONFLUX ─────────────────────── */
-    const BUY_DIVE_CACHE_KEY = 'pm_metis_buy_dive_v1';
+    const BUY_DIVE_CACHE_KEY = 'pm_metis_buy_dive_v2';
+
+    function buyIntelUsable(intel) {
+      if (!intel) return false;
+      return ['platinum', 'cfx'].some((k) => {
+        const row = intel[k];
+        if (!row || row.error) return false;
+        return (row.articleCount || 0) > 0 || (row.headlines?.length || 0) > 0 || !!row.narrative;
+      });
+    }
     const BUY_DIVE_TFS = ['1m', '3m', '1y', '3y'];
     const BUY_DIVE_TF_WEIGHT = { '1m': 1, '3m': 1.5, '1y': 2, '3y': 2.5 };
 
@@ -4207,22 +4216,23 @@
     async function fetchBuyDiveIntel() {
       try {
         const row = await fetchSupabaseMarketSnapshot('buy-intel');
-        if (row?.payload?.assets) {
+        if (row?.payload?.assets && buyIntelUsable(row.payload.assets)) {
           return { intel: row.payload.assets, fromCache: false, updatedAt: row.updated_at };
         }
       } catch (_) {}
 
       try {
         const cached = JSON.parse(localStorage.getItem(BUY_DIVE_CACHE_KEY) || 'null');
-        if (cached?.intelMap && cached?.savedAt && Date.now() - cached.savedAt < 24 * 60 * 60 * 1000) {
+        if (cached?.intelMap && buyIntelUsable(cached.intelMap) && cached?.savedAt
+            && Date.now() - cached.savedAt < 24 * 60 * 60 * 1000) {
           return { intel: cached.intelMap, fromCache: true };
         }
       } catch (_) {}
 
       return {
         intel: {
-          platinum: { error: 'Buy intel not ingested yet — runs hourly via scheduled job', articleCount: 0 },
-          cfx: { error: 'Buy intel not ingested yet — runs hourly via scheduled job', articleCount: 0 },
+          platinum: { error: 'Buy intel unavailable — database row missing or stale; hourly ingest will refill', articleCount: 0 },
+          cfx: { error: 'Buy intel unavailable — database row missing or stale; hourly ingest will refill', articleCount: 0 },
         },
         fromCache: false,
       };
@@ -4417,7 +4427,8 @@
           if (!force) {
             try {
               const cached = JSON.parse(localStorage.getItem(BUY_DIVE_CACHE_KEY) || 'null');
-              if (cached?.decisions && cached?.savedAt && Date.now() - cached.savedAt < 2 * 60 * 60 * 1000) {
+              if (cached?.decisions && cached?.savedAt && Date.now() - cached.savedAt < 2 * 60 * 60 * 1000
+                  && buyIntelUsable(cached.intelMap)) {
                 if (cached.ptRows || cached.cfxRows) {
                   const refreshed = buildDecisions(
                     cached.ptRows || [],
@@ -4465,13 +4476,15 @@
           const now = Date.now();
           setUpdatedAt(now);
           try {
-            localStorage.setItem(BUY_DIVE_CACHE_KEY, JSON.stringify({
-              decisions: withIntel.decisions,
-              intelMap: intel,
-              ptRows,
-              cfxRows,
-              savedAt: now,
-            }));
+            if (buyIntelUsable(intel)) {
+              localStorage.setItem(BUY_DIVE_CACHE_KEY, JSON.stringify({
+                decisions: withIntel.decisions,
+                intelMap: intel,
+                ptRows,
+                cfxRows,
+                savedAt: now,
+              }));
+            }
           } catch (_) {}
         } catch (e) {
           setWarn(e.message || 'Deep dive incomplete');
