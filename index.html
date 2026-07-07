@@ -3326,6 +3326,32 @@
       );
     }
 
+    function ProducerShareSubtitle({ meta }) {
+      if (!meta) return null;
+      if (meta.marketSharePct == null) return <>{meta.production || ''}</>;
+      return (
+        <>
+          <span style={{
+            display:'inline-flex',
+            alignItems:'center',
+            padding:'2px 8px',
+            borderRadius:999,
+            fontSize:11,
+            fontWeight:800,
+            letterSpacing:'0.02em',
+            background:`${meta.color}22`,
+            color: meta.color,
+            border:`1px solid ${meta.color}33`,
+            marginRight:8,
+          }}>
+            ~{meta.marketSharePct}%
+          </span>
+          <span style={{fontWeight:600, color:C.textDark}}>of global platinum mine production</span>
+          {meta.production ? <span style={{color:C.text}}> · {meta.production}</span> : null}
+        </>
+      );
+    }
+
     function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, cfxTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, onCfxTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot, chartView = 'timeline', zarPerAud }) {
       if (tab === 'index') {
         const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
@@ -3444,15 +3470,13 @@
               const meta = CURVE_INDEX[id];
               const quote = quotesById[id];
               const hasHistory = audRows?.some((r) => r[id] != null && !isNaN(r[id]));
-              const shareLine = meta.marketSharePct != null
-                ? `~${meta.marketSharePct}% of global platinum mine production · ${meta.production}`
-                : meta.production;
+              const subtitle = <ProducerShareSubtitle meta={meta} />;
               if (hasHistory) {
                 return (
                   <SingleTimelineChart
                     key={id}
                     title={`${meta.name} · ${meta.ticker} · AUD`}
-                    subtitle={shareLine}
+                    subtitle={subtitle}
                     unit="AUD" rows={audRows} curveIds={[id]} timeframe={metalTimeframe}
                     showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}/>
                 );
@@ -3472,7 +3496,7 @@
                     </div>
                   )}
                   <div style={{fontSize:11, color:C.text, marginTop:8, lineHeight:1.5}}>
-                    {shareLine}
+                    {subtitle}
                   </div>
                   <div style={{fontSize:11, color:C.text, marginTop:6, lineHeight:1.5}}>
                     Chart data unavailable for this ticker — try Refresh or switch period.
