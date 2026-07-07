@@ -569,7 +569,7 @@
       const MINTED_METAL_URL = 'https://mintedmetal.com/api/prices.json';
       // Crypto spot prices now fetched via /.netlify/functions/crypto-feed?type=spot
       // (see fetchCryptoSpotBrowser below) instead of calling CoinGecko directly.
-      const SPOT_LS_KEY = 'pm_metis_spot_v1';
+      const SPOT_LS_KEY = 'pm_metis_spot_v2';
       let spotInflight = null;
 
       const FALLBACK_SPOT = {
@@ -635,7 +635,15 @@
       function mergeSpot(primary, fallback) {
         const out = { ...(fallback || {}) };
         Object.keys(primary || {}).forEach((k) => {
-          if (primary[k] && primary[k].price != null) out[k] = primary[k];
+          const p = primary[k];
+          if (!p || p.price == null) return;
+          const prev = out[k] || {};
+          out[k] = {
+            ...prev,
+            ...p,
+            // Never keep a stale % move when the new payload has no change field.
+            chg: p.chg != null ? p.chg : (p.chg === null ? null : prev.chg),
+          };
         });
         return out;
       }
@@ -701,6 +709,23 @@
       const STALE_MS_METALS = 15 * 60 * 1000;      // 15 minutes
       const HARD_STALE_MS = 12 * 60 * 60 * 1000;   // 12 hours — flagged regardless of asset type
 
+      function spotFromSnapshotRow(row, snapshotKey) {
+        const p = row.payload || {};
+        const price = p.price;
+        if (price == null) return null;
+        let chg = p.chg;
+        if ((chg == null || Number.isNaN(chg)) && p.previousPrice != null) {
+          chg = pctChg(price, p.previousPrice);
+        }
+        const isCrypto = { BTC: true, ETH: true, CFX: true };
+        return {
+          price,
+          chg: chg != null && !Number.isNaN(chg) ? chg : null,
+          src: isCrypto[snapshotKey] ? '24h' : 'LBMA',
+          asOf: row.updated_at,
+        };
+      }
+
       async function fetchSupabaseSnapshot() {
         const url = `${SUPABASE_URL}/rest/v1/market_snapshots?select=snapshot_key,payload,updated_at,source`;
         const res = await fetchWithTimeout(url, {
@@ -723,11 +748,17 @@
         const isHardStale = (r) => !r || ageMs(r) > HARD_STALE_MS;
 
         const spot = {};
-        if (byKey.XAU) spot.gold = { price: byKey.XAU.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.XAU), hardStale: isHardStale(byKey.XAU), asOf: byKey.XAU.updated_at };
-        if (byKey.XPT) spot.platinum = { price: byKey.XPT.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.XPT), hardStale: isHardStale(byKey.XPT), asOf: byKey.XPT.updated_at };
-        if (byKey.BTC) spot.btc = { price: byKey.BTC.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.BTC), hardStale: isHardStale(byKey.BTC), asOf: byKey.BTC.updated_at };
-        if (byKey.ETH) spot.eth = { price: byKey.ETH.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.ETH), hardStale: isHardStale(byKey.ETH), asOf: byKey.ETH.updated_at };
-        if (byKey.CFX) spot.cfx = { price: byKey.CFX.payload.price, chg: 0, src: 'supabase-cache', stale: isStale(byKey.CFX), hardStale: isHardStale(byKey.CFX), asOf: byKey.CFX.updated_at };
+        const addSpot = (key, field) => {
+          if (!byKey[key]) return;
+          const base = spotFromSnapshotRow(byKey[key], key);
+          if (!base) return;
+          spot[field] = { ...base, stale: isStale(byKey[key]), hardStale: isHardStale(byKey[key]) };
+        };
+        addSpot('XAU', 'gold');
+        addSpot('XPT', 'platinum');
+        addSpot('BTC', 'btc');
+        addSpot('ETH', 'eth');
+        addSpot('CFX', 'cfx');
 
         const oldestUpdate = rows.reduce((min, r) => {
           const t = new Date(r.updated_at).getTime();
@@ -3482,7 +3513,7 @@
             : (unit === 'AUD' ? `$${Math.round(price||0).toLocaleString()} AUD` : fmtUsd(price, label?.includes('Conflux')?4:0))}
         </div>
         <div style={{display:'flex', alignItems:'center', gap:8}}>
-          {!loading && chg != null && (
+          {!loading && chg != null && !Number.isNaN(chg) && (
             <span style={{
               fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums',
               color: chg >= 0 ? '#047857' : '#B91C1C',
@@ -5975,9 +6006,9 @@
 
           {tab === 'index' ? (
             <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
-              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label} sub="LBMA London fix" color={C.gold}
+              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label} sub="vs prior LBMA fix" color={C.gold}
                 price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
-              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="LBMA London fix" color={C.plat}
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="vs prior LBMA fix" color={C.plat}
                 price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
               <PriceCard indexId="IDX-003" label={CURVE_INDEX['IDX-003'].label} sub="24 hour change" color={C.btc}
                 price={live?.btc?.price} chg={live?.btc?.chg} loading={loading} />

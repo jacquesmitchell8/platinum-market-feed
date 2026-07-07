@@ -12,6 +12,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const METALS = ['XAU', 'XPT'];
+const MINTED_METAL_URL = 'https://mintedmetal.com/api/prices.json';
 const CRYPTO_IDS = {
   CFX: 'conflux-token',
   ETH: 'ethereum',
@@ -31,9 +32,42 @@ async function fetchMetal(symbol) {
   };
 }
 
+function pctChg(cur, prev) {
+  if (cur == null || prev == null || !prev) return null;
+  return ((cur - prev) / prev) * 100;
+}
+
+/** LBMA-aligned spot via Minted Metal (previous fix → current fix = daily move). */
+async function fetchLbmaMetals() {
+  const res = await fetch(MINTED_METAL_URL, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/2.0)' },
+  });
+  if (!res.ok) throw new Error(`Minted Metal fetch failed: ${res.status}`);
+  const data = await res.json();
+  const metals = data?.metals;
+  if (!metals?.gold?.price || !metals?.platinum?.price) {
+    throw new Error('Minted Metal response missing gold/platinum');
+  }
+  const out = {};
+  for (const [key, symbol] of [['gold', 'XAU'], ['platinum', 'XPT']]) {
+    const m = metals[key];
+    const previousPrice = m.previousPrice ?? null;
+    out[symbol] = {
+      asset: symbol,
+      price: m.price,
+      previousPrice,
+      chg: pctChg(m.price, previousPrice),
+      currency: 'usd',
+      unit: 'oz',
+      raw_timestamp: data.updatedAt || data.timestamp || null,
+    };
+  }
+  return out;
+}
+
 async function fetchCrypto(symbol, geckoId) {
   const res = await fetch(
-    `https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd&include_last_updated_at=true`
+    `https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true`
   );
   if (!res.ok) throw new Error(`${symbol} fetch failed: ${res.status}`);
   const data = await res.json();
@@ -42,6 +76,7 @@ async function fetchCrypto(symbol, geckoId) {
   return {
     asset: symbol,
     price: entry.usd,
+    chg: entry.usd_24h_change ?? null,
     currency: 'usd',
     unit: 'token',
     raw_timestamp: entry.last_updated_at ? entry.last_updated_at * 1000 : null
@@ -127,15 +162,32 @@ export default async (req) => {
 
   const results = [];
 
-  for (const symbol of METALS) {
-    try {
-      const data = await fetchMetal(symbol);
-      await upsertSnapshot(symbol, data, 'gold-api.com');
-      await appendMetalHistory(symbol, data.price);
-      results.push({ asset: symbol, ok: true });
-    } catch (err) {
-      console.error(err.message);
-      results.push({ asset: symbol, ok: false, error: err.message });
+  try {
+    const lbma = await fetchLbmaMetals();
+    for (const symbol of METALS) {
+      try {
+        const data = lbma[symbol];
+        if (!data) throw new Error('Missing LBMA row');
+        await upsertSnapshot(symbol, data, 'mintedmetal.com');
+        await appendMetalHistory(symbol, data.price);
+        results.push({ asset: symbol, ok: true, source: 'mintedmetal.com' });
+      } catch (err) {
+        console.error(err.message);
+        results.push({ asset: symbol, ok: false, error: err.message });
+      }
+    }
+  } catch (err) {
+    console.error('Minted Metal batch failed, falling back to gold-api:', err.message);
+    for (const symbol of METALS) {
+      try {
+        const data = await fetchMetal(symbol);
+        await upsertSnapshot(symbol, { ...data, chg: null }, 'gold-api.com');
+        await appendMetalHistory(symbol, data.price);
+        results.push({ asset: symbol, ok: true, source: 'gold-api.com-fallback' });
+      } catch (inner) {
+        console.error(inner.message);
+        results.push({ asset: symbol, ok: false, error: inner.message });
+      }
     }
   }
 
