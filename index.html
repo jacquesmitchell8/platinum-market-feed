@@ -3160,6 +3160,13 @@
 
       if (!curveIds?.length || !chartRows.length) return null;
 
+      const pointCount = chartRows.filter((r) =>
+        curveIds.some((id) => r[id] != null && !isNaN(r[id]))
+      ).length;
+      const minGood = timeframe === '24h' ? 6 : timeframe === '1w' ? 8 : timeframe === '1m' ? 10 : 0;
+      const pulling = minGood > 0 && pointCount > 0 && pointCount < minGood;
+      const tfLabel = (TIMEFRAMES.find(t => t.id === timeframe)?.label || timeframe);
+
       const yDomain = yDomainForChart(chartRows, curveIds, logScale, { tight: tightScale });
       const hasValues = chartRows.some((r) =>
         curveIds.some((id) => r[id] != null && !isNaN(r[id]))
@@ -3185,7 +3192,23 @@
       return (
         <div style={{marginBottom:8}}>
           <div style={{...panelHdr, paddingTop:10}}>
-            <span>{title}</span>
+            <span style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+              <span>{title}</span>
+              {pulling && (
+                <span style={{
+                  display:'inline-flex', alignItems:'center',
+                  fontSize:10, fontWeight:700, letterSpacing:'0.06em',
+                  textTransform:'uppercase',
+                  background:'rgba(217,119,6,0.10)',
+                  border:'1px solid rgba(217,119,6,0.22)',
+                  color:'#92400E',
+                  padding:'2px 8px',
+                  borderRadius:999,
+                }}>
+                  Pulling data · {pointCount} pts
+                </span>
+              )}
+            </span>
             {logScale && <span style={{fontWeight:400, textTransform:'none', letterSpacing:0, color:C.text}}>· log scale</span>}
           </div>
           <ResponsiveContainer width="100%" height={chartHeight}>
@@ -3218,6 +3241,21 @@
           </ResponsiveContainer>
           {subtitle && (
             <div style={{fontSize:11, color:C.text, padding:'6px 4px 0', lineHeight:1.5}}>{subtitle}</div>
+          )}
+          {pulling && (
+            <div style={{
+              fontSize:11,
+              color:'#92400E',
+              marginTop:6,
+              padding:'8px 10px',
+              borderRadius:8,
+              background:'rgba(217,119,6,0.08)',
+              border:'1px solid rgba(217,119,6,0.18)',
+              lineHeight:1.5,
+            }}>
+              This is real data, but the {tfLabel} window is still filling in (currently {pointCount} points).
+              Leave it open or refresh in a minute for a more informative curve.
+            </div>
           )}
         </div>
       );
