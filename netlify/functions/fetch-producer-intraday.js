@@ -13,10 +13,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EODHD_API_TOKEN = process.env.EODHD_API_TOKEN;
 
 const PRODUCERS = [
-  { ticker: 'VAL.JO', name: 'Valterra Platinum' },
-  { ticker: 'IMP.JO', name: 'Impala Platinum' },
-  { ticker: 'SSW.JO', name: 'Sibanye-Stillwater' },
-  { ticker: 'NPH.JO', name: 'Northam Platinum' },
+  // Store tickers as Yahoo-style for UI consistency, but query EODHD using JSE codes.
+  { ticker: 'VAL.JO', eod: 'VAL.JSE', name: 'Valterra Platinum' },
+  { ticker: 'IMP.JO', eod: 'IMP.JSE', name: 'Impala Platinum' },
+  { ticker: 'SSW.JO', eod: 'SSW.JSE', name: 'Sibanye-Stillwater' },
+  { ticker: 'NPH.JO', eod: 'NPH.JSE', name: 'Northam Platinum' },
 ];
 
 function sbHeaders(extra = {}) {
@@ -32,11 +33,7 @@ function pctChg(cur, prev) {
   return ((cur - prev) / prev) * 100;
 }
 
-async function eodhdIntraday(ticker, { fromUnix, toUnix, interval = '1h' }) {
-  // EODHD uses `.JSE` for Johannesburg tickers (not `.JO`).
-  const eodTicker = ticker.endsWith('.JO')
-    ? ticker.slice(0, -3) + '.JSE'
-    : (ticker.includes('.') ? ticker : `${ticker}.JSE`);
+async function eodhdIntraday(eodTicker, { fromUnix, toUnix, interval = '1h' }) {
 
   const url =
     `https://eodhd.com/api/intraday/${encodeURIComponent(eodTicker)}` +
@@ -151,13 +148,13 @@ export default async () => {
   for (const p of PRODUCERS) {
     const ticker = p.ticker;
     try {
-      const bars = await eodhdIntraday(ticker, { fromUnix, toUnix: now, interval: '1h' });
+      const bars = await eodhdIntraday(p.eod, { fromUnix, toUnix: now, interval: '1h' });
       const ins = await upsertIntradayRows(ticker, bars);
       const q = await upsertLatestQuote(ticker, p.name, bars);
-      out.push({ ticker, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
+      out.push({ ticker, eod: p.eod, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
     } catch (err) {
       console.error(ticker, err.message);
-      out.push({ ticker, ok: false, error: err.message });
+      out.push({ ticker, eod: p.eod, ok: false, error: err.message });
     }
     await new Promise((r) => setTimeout(r, 350));
   }
