@@ -1,4 +1,5 @@
 [build]
+  command = "node scripts/inject-supabase-public.mjs"
   publish = "."
 
 [[redirects]]

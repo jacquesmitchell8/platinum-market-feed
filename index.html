@@ -701,8 +701,8 @@
       // Reads the last-known-good snapshot written by the fetch-market-snapshots
       // scheduled function (runs every 5 min) so the dashboard still shows real,
       // recent numbers instead of hardcoded placeholders during an outage.
-      const SUPABASE_URL = 'https://tjxiaidxcwpvsnwfvdck.supabase.co';
-      const SUPABASE_ANON_KEY = 'sb_publishable_iT9FkpchECUYsjhBqtQrzg_Q-Y0QxRf';
+      const SUPABASE_URL = '__SUPABASE_URL__';
+      const SUPABASE_ANON_KEY = '__SUPABASE_ANON_KEY__';
 
       // Staleness thresholds (ms) — crypto moves faster than metals, so it goes stale sooner.
       const STALE_MS_CRYPTO = 5 * 60 * 1000;       // 5 minutes
@@ -952,8 +952,8 @@
   <script type="text/babel" data-presets="react,env">
     const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
-    const SUPABASE_URL = 'https://tjxiaidxcwpvsnwfvdck.supabase.co';
-    const SUPABASE_ANON_KEY = 'sb_publishable_iT9FkpchECUYsjhBqtQrzg_Q-Y0QxRf';
+    const SUPABASE_URL = '__SUPABASE_URL__';
+    const SUPABASE_ANON_KEY = '__SUPABASE_ANON_KEY__';
 
     function sbAnonHeaders() {
       return { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
@@ -4835,7 +4835,11 @@
       const res = await fetch(`${SUPABASE_URL}/rest/v1/${q}`, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
       });
-      if (!res.ok) throw new Error(`Supabase news read ${res.status}`);
+      if (!res.ok) {
+        throw new Error(res.status === 401
+          ? 'Supabase API key rejected (401) — check SUPABASE_ANON_KEY in Netlify env'
+          : `Supabase news read ${res.status}`);
+      }
       return res.json();
     }
 
