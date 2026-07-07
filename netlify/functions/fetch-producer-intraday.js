@@ -53,6 +53,29 @@ async function eodhdIntraday(eodTicker, { fromUnix, toUnix, interval = '1h' }) {
   return rows;
 }
 
+async function eodhdRealtime(eodTicker) {
+  const url =
+    `https://eodhd.com/api/real-time/${encodeURIComponent(eodTicker)}` +
+    `?api_token=${encodeURIComponent(EODHD_API_TOKEN)}` +
+    `&fmt=json`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'PlatinumMetisBot/3.0' } });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`EODHD ${eodTicker} real-time failed: ${res.status} ${text.slice(0, 160)}`);
+  }
+  const q = await res.json();
+  const close = Number(q?.close);
+  if (!Number.isFinite(close)) throw new Error(`EODHD ${eodTicker} real-time missing close`);
+  return {
+    datetime: new Date().toISOString(),
+    open: close,
+    high: close,
+    low: close,
+    close,
+    volume: null,
+  };
+}
+
 async function upsertIntradayRows(ticker, bars) {
   // EODHD returns UTC datetime strings.
   const rows = bars
@@ -148,10 +171,22 @@ export default async () => {
   for (const p of PRODUCERS) {
     const ticker = p.ticker;
     try {
-      const bars = await eodhdIntraday(p.eod, { fromUnix, toUnix: now, interval: '1h' });
+      let bars = null;
+      let mode = 'intraday';
+      try {
+        bars = await eodhdIntraday(p.eod, { fromUnix, toUnix: now, interval: '1h' });
+      } catch (err) {
+        if (String(err.message || '').includes('intraday empty')) {
+          mode = 'realtime-sample';
+          bars = [await eodhdRealtime(p.eod)];
+        } else {
+          throw err;
+        }
+      }
+
       const ins = await upsertIntradayRows(ticker, bars);
       const q = await upsertLatestQuote(ticker, p.name, bars);
-      out.push({ ticker, eod: p.eod, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
+      out.push({ ticker, eod: p.eod, ok: true, mode, bars: bars.length, inserted: ins.inserted, quote: q.ok });
     } catch (err) {
       console.error(ticker, err.message);
       out.push({ ticker, eod: p.eod, ok: false, error: err.message });
