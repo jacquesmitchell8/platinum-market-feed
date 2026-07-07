@@ -25,6 +25,13 @@ if (!anon) {
   process.exit(1);
 }
 
+if (!url.includes('.supabase.co')) {
+  console.error(
+    `[inject-supabase-public] FATAL: SUPABASE_URL must be your Supabase project URL (https://xxx.supabase.co), got: ${url}`
+  );
+  process.exit(1);
+}
+
 let html = fs.readFileSync(indexPath, 'utf8');
 html = html
   .replaceAll('__SUPABASE_URL__', url)

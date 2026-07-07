@@ -4831,18 +4831,29 @@
     }
 
     async function fetchNewsRowsFromSupabase() {
+      if (!SUPABASE_URL.includes('.supabase.co')) {
+        throw new Error('SUPABASE_URL misconfigured — must be https://YOUR_REF.supabase.co (not a Netlify URL)');
+      }
       const attempts = [
         'news_stories?select=title,url,source,topic,region,published_at,fetched_at&order=published_at.desc,fetched_at.desc&limit=200',
         'news_stories?select=title,url,source,topic,published_at,fetched_at&order=published_at.desc&limit=200',
         'news_stories?select=title,url,source,published_at&order=published_at.desc&limit=200',
       ];
       let lastStatus = 0;
+      let lastBody = '';
       for (const q of attempts) {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/${q}`, {
           headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
         });
         if (res.ok) return res.json();
         lastStatus = res.status;
+        lastBody = await res.text().catch(() => '');
+        if (/quota has been exceeded/i.test(lastBody)) {
+          throw new Error(
+            'Netlify credits exhausted — news should read Supabase only. '
+            + 'Check Netlify env: SUPABASE_URL must be https://tjxiaidxcwpvsnwfvdck.supabase.co (not a Netlify function URL).'
+          );
+        }
         if (res.status !== 400) break;
       }
       if (lastStatus === 401) {
@@ -4850,7 +4861,7 @@
       }
       throw new Error(lastStatus === 400
         ? 'Supabase news read 400 — run news migrations in SQL editor (region column)'
-        : `Supabase news read ${lastStatus}`);
+        : `Supabase news read ${lastStatus}${lastBody ? `: ${lastBody.slice(0, 120)}` : ''}`);
     }
 
     function mapClientStory(s, research) {
@@ -5377,7 +5388,11 @@
               )}
             </div>
             <button
-              onClick={() => fetchDigest(true).catch((e) => setError(e.message)).finally(() => setLoading(false))}
+              onClick={() => fetchDigest(true).catch((e) => {
+                const cached = loadLocalNewsHistory()[0];
+                if (cached?.lenses || cached?.stories?.length) setError(null);
+                else setError(e.message);
+              }).finally(() => setLoading(false))}
               disabled={loading}
               style={{
                 fontSize:10, fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
