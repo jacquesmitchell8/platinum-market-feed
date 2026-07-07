@@ -208,6 +208,8 @@ drop policy if exists "Public read news" on news_stories;
 drop policy if exists "Public read ta patterns" on ta_pattern_library;
 drop policy if exists "Public read ta observations" on ta_observations;
 drop policy if exists "Public read metal history monthly" on metal_price_history_monthly;
+drop policy if exists "Public read crypto history" on crypto_price_history;
+drop policy if exists "Public read crypto history monthly" on crypto_price_history_monthly;
 
 create policy "Public read market snapshots"
   on market_snapshots for select
@@ -221,6 +223,16 @@ create policy "Public read metal history"
 
 create policy "Public read metal history monthly"
   on metal_price_history_monthly for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read crypto history"
+  on crypto_price_history for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read crypto history monthly"
+  on crypto_price_history_monthly for select
   to anon, authenticated
   using (true);
 

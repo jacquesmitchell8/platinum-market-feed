@@ -921,6 +921,33 @@
   <script type="text/babel" data-presets="react,env">
     const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
+    const SUPABASE_URL = 'https://tjxiaidxcwpvsnwfvdck.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_iT9FkpchECUYsjhBqtQrzg_Q-Y0QxRf';
+
+    function sbAnonHeaders() {
+      return { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
+    }
+
+    async function fetchSupabaseMarketSnapshot(snapshotKey) {
+      const q = `market_snapshots?select=payload,updated_at,source&snapshot_key=eq.${encodeURIComponent(snapshotKey)}`;
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${q}`, { headers: sbAnonHeaders() });
+      if (!res.ok) return null;
+      const rows = await res.json();
+      return rows[0] || null;
+    }
+
+    async function fetchSupabaseTableRows(table, query) {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: sbAnonHeaders() });
+      if (!res.ok) throw new Error(`Supabase ${table} ${res.status}`);
+      return res.json();
+    }
+
+    const GECKO_TO_ASSET = {
+      bitcoin: 'BTC',
+      ethereum: 'ETH',
+      'conflux-token': 'CFX',
+    };
+
     const safeFetch = async (url, options = {}) => {
       try {
         const fetchFn = window.PM?.fetchWithTimeout || ((u, o, ms) => Promise.race([
@@ -1447,34 +1474,55 @@
     }
 
     async function fetchCgChartBrowser(coinId, days) {
-      // Read stored crypto history from Supabase. Ingestion is propagate-curves.js.
-      let pts = [];
-      try {
-        const granularity = granularityForDays(days);
-        const histUrl = `/.netlify/functions/crypto-history?id=${encodeURIComponent(coinId)}&granularity=${encodeURIComponent(granularity)}`;
-        const res = await pmFetch(histUrl, {}, 15000);
-        const j = await res.json();
-        if (j.ok && j.prices?.length) {
-          pts = j.prices.map(([ts, price]) => ({ ts, price }));
-        }
-      } catch (_) {}
+      const dStr = days == null ? 'max' : String(days);
+      const dayNum = days == null ? null : Number(days);
 
-      if (!pts.length) {
-        const dStr = days == null ? 'max' : String(days);
-        const url = `/.netlify/functions/crypto-feed?type=chart&id=${encodeURIComponent(coinId)}&days=${encodeURIComponent(dStr)}`;
-        try {
-          const res = await pmFetch(url, {}, 15000);
-          if (res.ok) {
-            const j = await res.json();
-            if (j.ok && j.prices?.length) {
-              pts = j.prices.map(([ts, price]) => ({ ts, price }));
-            }
-          }
-        } catch (_) {}
+      if (dayNum != null && dayNum <= 30) {
+        const snap = await fetchSupabaseMarketSnapshot(`chart:${coinId}:${dStr}`);
+        if (snap?.payload?.prices?.length) {
+          return snap.payload.prices.map(([ts, price]) => ({ ts, price }));
+        }
       }
 
-      if (!pts.length) throw new Error('No stored crypto history for ' + coinId);
-      return pts;
+      const asset = GECKO_TO_ASSET[coinId];
+      if (asset) {
+        const gran = granularityForDays(days);
+        let rows = [];
+        try {
+          rows = await fetchSupabaseTableRows(
+            gran === 'monthly' ? 'crypto_price_history_monthly' : 'crypto_price_history',
+            `select=price,recorded_at&asset=eq.${encodeURIComponent(asset)}&order=recorded_at.asc&limit=2000`
+          );
+        } catch (_) {}
+
+        if (!rows.length && gran === 'monthly') {
+          try {
+            const daily = await fetchSupabaseTableRows(
+              'crypto_price_history',
+              `select=price,recorded_at&asset=eq.${encodeURIComponent(asset)}&order=recorded_at.asc&limit=2000`
+            );
+            const byMonth = new Map();
+            for (const r of daily) {
+              const t = new Date(r.recorded_at);
+              if (Number.isNaN(t.getTime())) continue;
+              const key = `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}`;
+              byMonth.set(key, r);
+            }
+            rows = [...byMonth.values()].sort(
+              (a, b) => new Date(a.recorded_at) - new Date(b.recorded_at)
+            );
+          } catch (_) {}
+        }
+
+        if (rows.length) {
+          return rows.map((r) => ({
+            ts: new Date(r.recorded_at).getTime(),
+            price: Number(r.price),
+          }));
+        }
+      }
+
+      throw new Error('No stored crypto history for ' + coinId);
     }
 
     async function fetchMetalChart(indexId, tf, goldPtsForFallback) {
@@ -1501,8 +1549,6 @@
     }
 
     async function fetchChartSeriesInner(coinId, days) {
-      // fetchCgChartBrowser already routes through the crypto-feed proxy,
-      // so this is just a thin wrapper for the in-flight de-duplication below.
       return await fetchCgChartBrowser(coinId, days);
     }
 
@@ -2455,8 +2501,6 @@
 
     function useTaIntelligence(curveId, timeframe, ta, assetLabel, fmtY) {
       const [library, setLibrary] = useState([]);
-      const [observations, setObservations] = useState([]);
-      const savedRef = useRef(new Set());
 
       useEffect(() => {
         let cancelled = false;
@@ -2465,69 +2509,46 @@
           const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
           if (cached?.library?.length && Date.now() - (cached.savedAt || 0) < 86400000) {
             setLibrary(cached.library);
-            setObservations(cached.observations || []);
           }
         } catch (_) {}
 
-        fetch(`/.netlify/functions/ta-intelligence?curveId=${encodeURIComponent(curveId)}&timeframe=${encodeURIComponent(timeframe)}`)
+        fetch(
+          `${SUPABASE_URL}/rest/v1/ta_pattern_library?select=slug,title,bias,summary,theory,diagram&order=slug.asc`,
+          { headers: sbAnonHeaders() }
+        )
           .then((r) => r.json())
-          .then((json) => {
-            if (cancelled || !json.ok) return;
-            setLibrary(json.library || []);
-            setObservations(json.observations || []);
+          .then((rows) => {
+            if (cancelled || !Array.isArray(rows) || !rows.length) return;
+            setLibrary(rows);
             try {
-              localStorage.setItem(cacheKey, JSON.stringify({
-                library: json.library,
-                observations: json.observations,
-                savedAt: Date.now(),
-              }));
+              localStorage.setItem(cacheKey, JSON.stringify({ library: rows, savedAt: Date.now() }));
             } catch (_) {}
           })
           .catch(() => {});
         return () => { cancelled = true; };
       }, [curveId, timeframe]);
 
-      useEffect(() => {
-        if (!ta?.chartRows?.length || !library.length) return;
-        const detections = collectTaDetections(ta, curveId, timeframe);
-        for (const d of detections) {
-          if (savedRef.current.has(d.fingerprint)) continue;
-          savedRef.current.add(d.fingerprint);
+      const detections = useMemo(
+        () => (ta ? collectTaDetections(ta, curveId, timeframe) : []),
+        [ta, curveId, timeframe]
+      );
+      const observations = useMemo(() => {
+        if (!detections.length || !library.length) return [];
+        return detections.map((d) => {
           const lib = library.find((l) => l.slug === d.slug);
-          fetch('/.netlify/functions/ta-intelligence', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              patternSlug: d.slug,
-              curveId,
-              timeframe,
-              fingerprint: d.fingerprint,
-              eventStartTs: d.eventStartTs ? new Date(d.eventStartTs).toISOString() : null,
-              eventEndTs: d.eventEndTs ? new Date(d.eventEndTs).toISOString() : null,
-              context: {
-                assetLabel,
-                timeframe,
-                bias: ta.bias,
-                livePrice: ta.last,
-                dates: { start: d.eventStartTs, end: d.eventEndTs },
-                levels: d.levels,
-              },
-            }),
-          }).then((r) => r.json()).then((json) => {
-            if (json.ok && json.observation) {
-              setObservations((prev) => {
-                const rest = prev.filter((o) => o.fingerprint !== d.fingerprint);
-                return [json.observation, ...rest].slice(0, 20);
-              });
-            }
-          }).catch(() => {});
-        }
-      }, [ta, curveId, timeframe, library, assetLabel]);
+          return {
+            fingerprint: d.fingerprint,
+            pattern_slug: d.slug,
+            story_narrative: lib?.summary || lib?.title || 'Pattern detected on chart.',
+            detected_at: new Date().toISOString(),
+          };
+        });
+      }, [detections, library]);
 
       const libBySlug = useMemo(() => Object.fromEntries(library.map((l) => [l.slug, l])), [library]);
       const obsByFp = useMemo(() => Object.fromEntries(observations.map((o) => [o.fingerprint, o])), [observations]);
 
-      return { library, libBySlug, obsByFp, detections: ta ? collectTaDetections(ta, curveId, timeframe) : [] };
+      return { library, libBySlug, obsByFp, detections };
     }
 
     const TA_MARKER_DOT = (props) => {
@@ -4154,38 +4175,26 @@
 
     async function fetchBuyDiveIntel() {
       try {
-        const cached = JSON.parse(localStorage.getItem(BUY_DIVE_CACHE_KEY) || 'null');
-        if (cached?.intelMap && cached?.savedAt && Date.now() - cached.savedAt < 2 * 60 * 60 * 1000) {
-          const hasArticles = ['platinum', 'cfx'].some((k) => (cached.intelMap[k]?.articleCount || 0) > 0);
-          if (hasArticles) return { intel: cached.intelMap, fromCache: true };
+        const row = await fetchSupabaseMarketSnapshot('buy-intel');
+        if (row?.payload?.assets) {
+          return { intel: row.payload.assets, fromCache: false, updatedAt: row.updated_at };
         }
       } catch (_) {}
 
       try {
-        const res = await fetch(`/.netlify/functions/asset-deep-dive?assets=platinum,cfx`, { cache: 'default' });
-        const text = await res.text();
-        let json = null;
-        try { json = JSON.parse(text); } catch (_) {}
-        if (!res.ok || !json?.ok) {
-          const msg = json?.error || text.slice(0, 120) || `HTTP ${res.status}`;
-          return {
-            intel: {
-              platinum: { error: msg, articleCount: 0 },
-              cfx: { error: msg, articleCount: 0 },
-            },
-            fromCache: false,
-          };
+        const cached = JSON.parse(localStorage.getItem(BUY_DIVE_CACHE_KEY) || 'null');
+        if (cached?.intelMap && cached?.savedAt && Date.now() - cached.savedAt < 24 * 60 * 60 * 1000) {
+          return { intel: cached.intelMap, fromCache: true };
         }
-        return { intel: json.assets, fromCache: false };
-      } catch (e) {
-        return {
-          intel: {
-            platinum: { error: e.message, articleCount: 0 },
-            cfx: { error: e.message, articleCount: 0 },
-          },
-          fromCache: false,
-        };
-      }
+      } catch (_) {}
+
+      return {
+        intel: {
+          platinum: { error: 'Buy intel not ingested yet — runs hourly via scheduled job', articleCount: 0 },
+          cfx: { error: 'Buy intel not ingested yet — runs hourly via scheduled job', articleCount: 0 },
+        },
+        fromCache: false,
+      };
     }
 
     function BuyAssetCard({ decision, intel, color }) {

@@ -1,7 +1,7 @@
 // netlify/functions/asset-deep-dive.js
 //
-// Deep web intelligence for buy candidates (Platinum + Conflux by default).
-// Multi-query Google News sweeps, entity mentions, directional narrative.
+// Legacy on-demand endpoint — prefer ingest-dashboard-cache (hourly) → Supabase
+// market_snapshots.buy-intel. Browser reads Supabase directly; this is not called.
 
 import { researchBuyAssets } from './lib/asset-intel.mjs';
 

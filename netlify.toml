@@ -19,6 +19,10 @@
 [functions."fetch-news"]
   schedule = "0 9,21 * * *"
 
+[functions."ingest-dashboard-cache"]
+  schedule = "0 * * * *"
+  timeout = 26
+
 [functions."news-digest"]
   timeout = 26
 
