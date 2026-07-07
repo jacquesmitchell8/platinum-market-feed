@@ -33,8 +33,13 @@ function pctChg(cur, prev) {
 }
 
 async function eodhdIntraday(ticker, { fromUnix, toUnix, interval = '1h' }) {
+  // EODHD uses `.JSE` for Johannesburg tickers (not `.JO`).
+  const eodTicker = ticker.endsWith('.JO')
+    ? ticker.slice(0, -3) + '.JSE'
+    : (ticker.includes('.') ? ticker : `${ticker}.JSE`);
+
   const url =
-    `https://eodhd.com/api/intraday/${encodeURIComponent(ticker)}` +
+    `https://eodhd.com/api/intraday/${encodeURIComponent(eodTicker)}` +
     `?api_token=${encodeURIComponent(EODHD_API_TOKEN)}` +
     `&interval=${encodeURIComponent(interval)}` +
     `&fmt=json` +
@@ -44,10 +49,10 @@ async function eodhdIntraday(ticker, { fromUnix, toUnix, interval = '1h' }) {
   const res = await fetch(url, { headers: { 'User-Agent': 'PlatinumMetisBot/3.0' } });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`EODHD ${ticker} intraday failed: ${res.status} ${text.slice(0, 160)}`);
+    throw new Error(`EODHD ${eodTicker} intraday failed: ${res.status} ${text.slice(0, 160)}`);
   }
   const rows = await res.json();
-  if (!Array.isArray(rows) || rows.length === 0) throw new Error(`EODHD ${ticker} intraday empty`);
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error(`EODHD ${eodTicker} intraday empty`);
   return rows;
 }
 
