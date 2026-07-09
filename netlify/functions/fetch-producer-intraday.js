@@ -243,31 +243,29 @@ export default async () => {
     });
   }
 
+  // Keep this function fast and reliable: ingest ONE ticker per run.
+  // The hourly schedule will cycle through all tickers in ~4 hours.
+  const idx = Math.floor(Date.now() / 3600000) % PRODUCERS.length;
+  const p = PRODUCERS[idx];
+  const ticker = p.ticker;
   const out = [];
-  for (const p of PRODUCERS) {
-    const ticker = p.ticker;
+  try {
+    const shareCode = ticker.split('.')[0];
+    const pts = await sharenetChart1dPoints(shareCode);
+    const bars = toHourlyBars(pts);
+    const ins = await upsertIntradayRows(ticker, bars);
+    const q = await upsertLatestQuote(ticker, p.name, bars);
+    out.push({ ticker, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
+  } catch (err) {
+    console.error(ticker, err.message);
     try {
-      // Primary: Sharenet embedded intraday points (15m delayed).
-      const shareCode = ticker.split('.')[0];
-      const pts = await sharenetChart1dPoints(shareCode);
-      const bars = toHourlyBars(pts);
-
+      const bars = await yahooIntradayBars(ticker, { range: '5d', interval: '60m' });
       const ins = await upsertIntradayRows(ticker, bars);
       const q = await upsertLatestQuote(ticker, p.name, bars);
-      out.push({ ticker, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
-    } catch (err) {
-      console.error(ticker, err.message);
-      // Secondary: Yahoo intraday (often rate-limited; best-effort).
-      try {
-        const bars = await yahooIntradayBars(ticker, { range: '5d', interval: '60m' });
-        const ins = await upsertIntradayRows(ticker, bars);
-        const q = await upsertLatestQuote(ticker, p.name, bars);
-        out.push({ ticker, ok: true, source: 'yahoo-fallback', bars: bars.length, inserted: ins.inserted, quote: q.ok });
-      } catch (inner) {
-        out.push({ ticker, ok: false, error: err.message, fallbackError: inner.message });
-      }
+      out.push({ ticker, ok: true, source: 'yahoo-fallback', bars: bars.length, inserted: ins.inserted, quote: q.ok });
+    } catch (inner) {
+      out.push({ ticker, ok: false, error: err.message, fallbackError: inner.message });
     }
-    await new Promise((r) => setTimeout(r, 350));
   }
 
   return new Response(JSON.stringify({ ok: true, results: out }), {
