@@ -38,9 +38,11 @@
 
 [functions."fetch-producers"]
   schedule = "0 9,21 * * *"
+  timeout = 26
 
     [functions."propagate-producers"]
   schedule = "15 * * * *"
+  timeout = 26
 
 [functions."fetch-producer-intraday"]
   schedule = "7 * * * *"
