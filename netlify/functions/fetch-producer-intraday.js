@@ -65,7 +65,13 @@ async function eodhdRealtime(eodTicker) {
   }
   const q = await res.json();
   const close = Number(q?.close);
-  if (!Number.isFinite(close)) throw new Error(`EODHD ${eodTicker} real-time missing close`);
+  if (!Number.isFinite(close)) {
+    const keys = q && typeof q === 'object' ? Object.keys(q).slice(0, 24) : [];
+    const sample = q && typeof q === 'object'
+      ? JSON.stringify(Object.fromEntries(Object.entries(q).slice(0, 8))).slice(0, 220)
+      : String(q).slice(0, 220);
+    throw new Error(`EODHD ${eodTicker} real-time missing close (keys: ${keys.join(', ') || 'none'}) sample: ${sample}`);
+  }
   return {
     datetime: new Date().toISOString(),
     open: close,
