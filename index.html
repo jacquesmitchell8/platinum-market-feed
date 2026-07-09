@@ -2056,8 +2056,8 @@
       const priceField = useIntraday ? 'close' : 'price';
       const timeField = 'recorded_at';
 
-      // NOTE: PostgREST "in" filter expects (a,b,c) form.
-      const inList = '(' + tickers.map(t => `"${t}"`).join(',') + ')';
+      // NOTE: PostgREST "in" filter expects (a,b,c) form (no quotes needed here).
+      const inList = '(' + tickers.join(',') + ')';
       const url =
         `${SUPABASE_URL}/rest/v1/${table}` +
         `?select=ticker,${priceField},${timeField}` +

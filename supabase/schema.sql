@@ -231,6 +231,8 @@ drop policy if exists "Public read metal history monthly" on metal_price_history
 drop policy if exists "Public read crypto history" on crypto_price_history;
 drop policy if exists "Public read crypto history monthly" on crypto_price_history_monthly;
 drop policy if exists "Public read producer intraday" on producer_price_intraday;
+drop policy if exists "Public read producer history" on producer_price_history;
+drop policy if exists "Public read producer quotes" on producer_quotes;
 
 create policy "Public read market snapshots"
   on market_snapshots for select
@@ -274,5 +276,15 @@ create policy "Public read ta observations"
 
 create policy "Public read producer intraday"
   on producer_price_intraday for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read producer history"
+  on producer_price_history for select
+  to anon, authenticated
+  using (true);
+
+create policy "Public read producer quotes"
+  on producer_quotes for select
   to anon, authenticated
   using (true);
