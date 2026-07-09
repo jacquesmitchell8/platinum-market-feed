@@ -31,6 +31,16 @@ function pctChg(cur, prev) {
   return ((cur - prev) / prev) * 100;
 }
 
+async function fetchWithTimeout(url, options = {}, ms = 8000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 function yahooChartUrl(ticker, { range = '5d', interval = '60m', includePrePost = false } = {}) {
   const base = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`;
   const params = new URLSearchParams();
@@ -43,12 +53,12 @@ function yahooChartUrl(ticker, { range = '5d', interval = '60m', includePrePost 
 
 async function sharenetChart1dPoints(shareCode) {
   const url = `https://www.sharenet.co.za/jse/${encodeURIComponent(shareCode)}/`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     },
-  });
+  }, 9000);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Sharenet ${shareCode} page failed: ${res.status} ${text.slice(0, 140)}`);
@@ -133,7 +143,7 @@ async function yahooIntradayBars(ticker, { range = '5d', interval = '60m' } = {}
 
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = await fetch(url, { headers });
+    const res = await fetchWithTimeout(url, { headers }, 8000);
     if (res.ok) {
       const json = await res.json();
       if (json?.chart?.error) throw new Error(`Yahoo ${ticker}: ${json.chart.error.description || 'error'}`);
@@ -143,7 +153,7 @@ async function yahooIntradayBars(ticker, { range = '5d', interval = '60m' } = {}
     const text = await res.text().catch(() => '');
     if (res.status === 429 && attempt < maxAttempts) {
       // Backoff with jitter to reduce lockouts.
-      const waitMs = (800 * Math.pow(2, attempt - 1)) + Math.floor(Math.random() * 600);
+      const waitMs = (500 * Math.pow(2, attempt - 1)) + Math.floor(Math.random() * 400);
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
     }
