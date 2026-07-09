@@ -1,7 +1,7 @@
 // netlify/functions/fetch-producer-intraday.js
 //
 // Scheduled ingest (hourly) — pulls intraday OHLCV bars for JSE platinum producers
-// from Yahoo Finance v8 chart endpoint and upserts them into Supabase
+// from Sharenet intraday chart data and upserts them into Supabase
 // `producer_price_intraday`.
 //
 // Env vars (Netlify):
@@ -39,6 +39,60 @@ function yahooChartUrl(ticker, { range = '5d', interval = '60m', includePrePost 
   params.set('includePrePost', includePrePost ? 'true' : 'false');
   params.set('events', 'div%7Csplits'); // keep response small but consistent
   return `${base}?${params.toString()}`;
+}
+
+async function sharenetChart1dPoints(shareCode) {
+  const url = `https://www.sharenet.co.za/jse/${encodeURIComponent(shareCode)}/`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Sharenet ${shareCode} page failed: ${res.status} ${text.slice(0, 140)}`);
+  }
+  const html = await res.text();
+  // The page embeds `var chart1d = [ [<ms>,<priceCents>], ... ];`
+  const m = html.match(/var\s+chart1d\s*=\s*(\[[\s\S]*?\]);/);
+  if (!m) throw new Error(`Sharenet ${shareCode}: missing chart1d`);
+  const raw = m[1];
+  // Parse pairs like [1783580400000,17141] and ignore nulls.
+  const pts = [];
+  const re = /\[\s*(\d{12,})\s*,\s*([0-9.]+|null)\s*\]/g;
+  let hit;
+  while ((hit = re.exec(raw))) {
+    const ts = Number(hit[1]);
+    const v = hit[2] === 'null' ? null : Number(hit[2]);
+    if (!Number.isFinite(ts) || v == null || !Number.isFinite(v)) continue;
+    // Sharenet uses cents for JSE shares; store in ZAR.
+    pts.push({ ts, price: v / 100 });
+  }
+  if (!pts.length) throw new Error(`Sharenet ${shareCode}: chart1d empty`);
+  return pts;
+}
+
+function toHourlyBars(points) {
+  const byHour = new Map();
+  for (const p of points) {
+    const hour = Math.floor(p.ts / 3600000) * 3600000;
+    const prev = byHour.get(hour);
+    // keep the latest print inside the hour as the close
+    if (!prev || p.ts > prev.ts) byHour.set(hour, p);
+  }
+  const hours = [...byHour.keys()].sort((a, b) => a - b);
+  return hours.map((h) => {
+    const p = byHour.get(h);
+    return {
+      datetime: new Date(h).toISOString(),
+      open: p.price,
+      high: p.price,
+      low: p.price,
+      close: p.price,
+      volume: null,
+    };
+  });
 }
 
 function parseYahooBars(json) {
@@ -183,15 +237,25 @@ export default async () => {
   for (const p of PRODUCERS) {
     const ticker = p.ticker;
     try {
-      // 5 trading days @ 1h gives us enough density for 24h/1w views.
-      const bars = await yahooIntradayBars(ticker, { range: '5d', interval: '60m' });
+      // Primary: Sharenet embedded intraday points (15m delayed).
+      const shareCode = ticker.split('.')[0];
+      const pts = await sharenetChart1dPoints(shareCode);
+      const bars = toHourlyBars(pts);
 
       const ins = await upsertIntradayRows(ticker, bars);
       const q = await upsertLatestQuote(ticker, p.name, bars);
       out.push({ ticker, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
     } catch (err) {
       console.error(ticker, err.message);
-      out.push({ ticker, ok: false, error: err.message });
+      // Secondary: Yahoo intraday (often rate-limited; best-effort).
+      try {
+        const bars = await yahooIntradayBars(ticker, { range: '5d', interval: '60m' });
+        const ins = await upsertIntradayRows(ticker, bars);
+        const q = await upsertLatestQuote(ticker, p.name, bars);
+        out.push({ ticker, ok: true, source: 'yahoo-fallback', bars: bars.length, inserted: ins.inserted, quote: q.ok });
+      } catch (inner) {
+        out.push({ ticker, ok: false, error: err.message, fallbackError: inner.message });
+      }
     }
     await new Promise((r) => setTimeout(r, 350));
   }
