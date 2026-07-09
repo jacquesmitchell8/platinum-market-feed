@@ -1,23 +1,21 @@
 // netlify/functions/fetch-producer-intraday.js
 //
 // Scheduled ingest (hourly) — pulls intraday OHLCV bars for JSE platinum producers
-// from EODHD and upserts them into Supabase `producer_price_intraday`.
+// from Yahoo Finance v8 chart endpoint and upserts them into Supabase
+// `producer_price_intraday`.
 //
 // Env vars (Netlify):
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
-//   EODHD_API_TOKEN
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const EODHD_API_TOKEN = process.env.EODHD_API_TOKEN;
 
 const PRODUCERS = [
-  // Store tickers as Yahoo-style for UI consistency, but query EODHD using JSE codes.
-  { ticker: 'VAL.JO', eod: 'VAL.JSE', name: 'Valterra Platinum' },
-  { ticker: 'IMP.JO', eod: 'IMP.JSE', name: 'Impala Platinum' },
-  { ticker: 'SSW.JO', eod: 'SSW.JSE', name: 'Sibanye-Stillwater' },
-  { ticker: 'NPH.JO', eod: 'NPH.JSE', name: 'Northam Platinum' },
+  { ticker: 'VAL.JO', name: 'Valterra Platinum' },
+  { ticker: 'IMP.JO', name: 'Impala Platinum' },
+  { ticker: 'SSW.JO', name: 'Sibanye-Stillwater' },
+  { ticker: 'NPH.JO', name: 'Northam Platinum' },
 ];
 
 function sbHeaders(extra = {}) {
@@ -33,53 +31,60 @@ function pctChg(cur, prev) {
   return ((cur - prev) / prev) * 100;
 }
 
-async function eodhdIntraday(eodTicker, { fromUnix, toUnix, interval = '1h' }) {
-
-  const url =
-    `https://eodhd.com/api/intraday/${encodeURIComponent(eodTicker)}` +
-    `?api_token=${encodeURIComponent(EODHD_API_TOKEN)}` +
-    `&interval=${encodeURIComponent(interval)}` +
-    `&fmt=json` +
-    (fromUnix ? `&from=${fromUnix}` : '') +
-    (toUnix ? `&to=${toUnix}` : '');
-
-  const res = await fetch(url, { headers: { 'User-Agent': 'PlatinumMetisBot/3.0' } });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`EODHD ${eodTicker} intraday failed: ${res.status} ${text.slice(0, 160)}`);
-  }
-  const rows = await res.json();
-  if (!Array.isArray(rows) || rows.length === 0) throw new Error(`EODHD ${eodTicker} intraday empty`);
-  return rows;
+function yahooChartUrl(ticker, { range = '5d', interval = '60m', includePrePost = false } = {}) {
+  const base = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`;
+  const params = new URLSearchParams();
+  params.set('range', range);
+  params.set('interval', interval);
+  params.set('includePrePost', includePrePost ? 'true' : 'false');
+  params.set('events', 'div%7Csplits'); // keep response small but consistent
+  return `${base}?${params.toString()}`;
 }
 
-async function eodhdRealtime(eodTicker) {
-  const url =
-    `https://eodhd.com/api/real-time/${encodeURIComponent(eodTicker)}` +
-    `?api_token=${encodeURIComponent(EODHD_API_TOKEN)}` +
-    `&fmt=json`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'PlatinumMetisBot/3.0' } });
+function parseYahooBars(json) {
+  const result = json?.chart?.result?.[0];
+  if (!result) throw new Error('Yahoo: missing result');
+  const timestamps = result.timestamp || [];
+  const q = result.indicators?.quote?.[0] || {};
+  const opens = q.open || [];
+  const highs = q.high || [];
+  const lows = q.low || [];
+  const closes = q.close || [];
+  const vols = q.volume || [];
+  const bars = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const ts = timestamps[i];
+    const close = closes[i];
+    if (ts == null || close == null) continue;
+    bars.push({
+      datetime: new Date(ts * 1000).toISOString(),
+      open: opens[i],
+      high: highs[i],
+      low: lows[i],
+      close,
+      volume: vols[i],
+    });
+  }
+  if (!bars.length) throw new Error('Yahoo: empty bars');
+  return bars;
+}
+
+async function yahooIntradayBars(ticker, { range = '5d', interval = '60m' } = {}) {
+  const url = yahooChartUrl(ticker, { range, interval, includePrePost: false });
+  const res = await fetch(url, {
+    headers: {
+      // A normal browser UA tends to reduce bot-blocking.
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+      Accept: 'application/json,text/plain,*/*',
+    },
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`EODHD ${eodTicker} real-time failed: ${res.status} ${text.slice(0, 160)}`);
+    throw new Error(`Yahoo ${ticker} chart failed: ${res.status} ${text.slice(0, 160)}`);
   }
-  const q = await res.json();
-  const close = Number(q?.close);
-  if (!Number.isFinite(close)) {
-    const keys = q && typeof q === 'object' ? Object.keys(q).slice(0, 24) : [];
-    const sample = q && typeof q === 'object'
-      ? JSON.stringify(Object.fromEntries(Object.entries(q).slice(0, 8))).slice(0, 220)
-      : String(q).slice(0, 220);
-    throw new Error(`EODHD ${eodTicker} real-time missing close (keys: ${keys.join(', ') || 'none'}) sample: ${sample}`);
-  }
-  return {
-    datetime: new Date().toISOString(),
-    open: close,
-    high: close,
-    low: close,
-    close,
-    volume: null,
-  };
+  const json = await res.json();
+  if (json?.chart?.error) throw new Error(`Yahoo ${ticker}: ${json.chart.error.description || 'error'}`);
+  return parseYahooBars(json);
 }
 
 async function upsertIntradayRows(ticker, bars) {
@@ -98,7 +103,7 @@ async function upsertIntradayRows(ticker, bars) {
         low: b.low != null ? Number(b.low) : null,
         close,
         volume: b.volume != null ? Number(b.volume) : null,
-        source: 'eodhd.com',
+        source: 'yahoo-finance',
       };
     })
     .filter(Boolean);
@@ -136,7 +141,7 @@ async function upsertLatestQuote(ticker, name, bars) {
     currency: 'ZAR',
     change_pct: prev != null && Number.isFinite(prev) ? pctChg(price, prev) : null,
     updated_at: updatedAt,
-    source: 'eodhd.com',
+    source: 'yahoo-finance',
   };
 
   const res = await fetch(`${SUPABASE_URL}/rest/v1/producer_quotes`, {
@@ -162,40 +167,20 @@ export default async () => {
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (!EODHD_API_TOKEN) {
-    return new Response(JSON.stringify({ ok: false, error: 'Missing EODHD_API_TOKEN' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  // Backfill window: last 10 days hourly. (Over-fetching is ok; unique index + ignore-duplicates.)
-  const now = Math.floor(Date.now() / 1000);
-  const fromUnix = now - 10 * 24 * 3600;
 
   const out = [];
   for (const p of PRODUCERS) {
     const ticker = p.ticker;
     try {
-      let bars = null;
-      let mode = 'intraday';
-      try {
-        bars = await eodhdIntraday(p.eod, { fromUnix, toUnix: now, interval: '1h' });
-      } catch (err) {
-        if (String(err.message || '').includes('intraday empty')) {
-          mode = 'realtime-sample';
-          bars = [await eodhdRealtime(p.eod)];
-        } else {
-          throw err;
-        }
-      }
+      // 5 trading days @ 1h gives us enough density for 24h/1w views.
+      const bars = await yahooIntradayBars(ticker, { range: '5d', interval: '60m' });
 
       const ins = await upsertIntradayRows(ticker, bars);
       const q = await upsertLatestQuote(ticker, p.name, bars);
-      out.push({ ticker, eod: p.eod, ok: true, mode, bars: bars.length, inserted: ins.inserted, quote: q.ok });
+      out.push({ ticker, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
     } catch (err) {
       console.error(ticker, err.message);
-      out.push({ ticker, eod: p.eod, ok: false, error: err.message });
+      out.push({ ticker, ok: false, error: err.message });
     }
     await new Promise((r) => setTimeout(r, 350));
   }
