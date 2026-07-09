@@ -44,6 +44,7 @@
 
 [functions."fetch-producer-intraday"]
   schedule = "7 * * * *"
+  timeout = 26
 
 [functions."propagate-curves"]
   schedule = "0 * * * *"
