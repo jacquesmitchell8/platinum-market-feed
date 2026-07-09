@@ -71,20 +71,31 @@ function parseYahooBars(json) {
 
 async function yahooIntradayBars(ticker, { range = '5d', interval = '60m' } = {}) {
   const url = yahooChartUrl(ticker, { range, interval, includePrePost: false });
-  const res = await fetch(url, {
-    headers: {
-      // A normal browser UA tends to reduce bot-blocking.
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
-      Accept: 'application/json,text/plain,*/*',
-    },
-  });
-  if (!res.ok) {
+  const headers = {
+    // A normal browser UA tends to reduce bot-blocking.
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+    Accept: 'application/json,text/plain,*/*',
+  };
+
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await fetch(url, { headers });
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.chart?.error) throw new Error(`Yahoo ${ticker}: ${json.chart.error.description || 'error'}`);
+      return parseYahooBars(json);
+    }
+
     const text = await res.text().catch(() => '');
+    if (res.status === 429 && attempt < maxAttempts) {
+      // Backoff with jitter to reduce lockouts.
+      const waitMs = (800 * Math.pow(2, attempt - 1)) + Math.floor(Math.random() * 600);
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
     throw new Error(`Yahoo ${ticker} chart failed: ${res.status} ${text.slice(0, 160)}`);
   }
-  const json = await res.json();
-  if (json?.chart?.error) throw new Error(`Yahoo ${ticker}: ${json.chart.error.description || 'error'}`);
-  return parseYahooBars(json);
+  throw new Error(`Yahoo ${ticker} chart failed: exhausted retries`);
 }
 
 async function upsertIntradayRows(ticker, bars) {
