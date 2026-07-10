@@ -1418,7 +1418,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v10:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v11:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1839,6 +1839,11 @@
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
+        try {
+          const data = await fetchProducerTimelineFromStatic(metalTimeframeId);
+          saveTimelineToStorage(lsKey, data);
+          return data;
+        } catch (_) {}
       }
 
       try {
@@ -2037,6 +2042,50 @@
       return payload;
     }
 
+    async function fetchProducerTimelineFromStatic(timeframeId) {
+      const staticData = await loadProducerStaticHistory();
+      if (!staticData?.series) throw new Error('Static producer history missing');
+
+      const producers = ['IDX-201', 'IDX-202', 'IDX-203', 'IDX-204'];
+      const seriesMap = {};
+      const quotes = [];
+
+      for (const id of producers) {
+        const meta = CURVE_INDEX[id];
+        const pts = staticData.series[id]?.points;
+        if (!pts?.length) continue;
+        const points = pts.map((p) => ({ ts: p.ts, price: p.price, day: p.day }));
+        seriesMap[id] = points;
+        const last = points[points.length - 1];
+        const prior = points[points.length - 2];
+        quotes.push({
+          id,
+          company: meta.name,
+          country: meta.country,
+          production: meta.production,
+          marketSharePct: meta.marketSharePct,
+          ticker: meta.ticker,
+          exchange: 'JSE',
+          priceZar: last.price,
+          changePct: prior ? ((last.price - prior.price) / prior.price) * 100 : null,
+          updatedAt: new Date(last.ts).toISOString(),
+        });
+      }
+
+      const chartRows = buildProducerChartRows(seriesMap, timeframeId);
+      if (!chartRows.length) throw new Error('Static producer charts empty');
+
+      return {
+        ok: true,
+        stale: true,
+        rows: chartRows,
+        producerMeta: { quotes, announcements: [], historyCounts: {} },
+        updatedAt: staticData.generatedAt || new Date().toISOString(),
+        source: 'producer-jse-history.json',
+        warn: 'Static JSE history — deploy seed-producers-from-json to fill Supabase',
+      };
+    }
+
     async function fetchProducerTimelineFromSupabase(timeframeId) {
       if (!SUPABASE_URL.includes('.supabase.co')) throw new Error('Supabase URL missing');
       const tf = TIMEFRAMES.find(t => t.id === timeframeId) || TIMEFRAMES[1];
@@ -2051,10 +2100,13 @@
       const sinceMs = tf.hours ? tf.hours * 3600000 : (tf.days ? tf.days * 86400000 : 30 * 86400000);
       const sinceIso = new Date(now - sinceMs).toISOString();
 
-      const useIntraday = ['24h', '1w', '1m', '3m'].includes(timeframeId);
+      // Intraday only for short windows. 1m/3m+ must use daily history or the
+      // chart sticks on a handful of hourly prints and looks flat forever.
+      const useIntraday = ['24h', '1w'].includes(timeframeId);
       const table = useIntraday ? 'producer_price_intraday' : 'producer_price_history';
       const priceField = useIntraday ? 'close' : 'price';
       const timeField = 'recorded_at';
+      const minPoints = useIntraday ? 8 : 60;
 
       // NOTE: PostgREST "in" filter expects (a,b,c) form (no quotes needed here).
       const inList = '(' + tickers.join(',') + ')';
@@ -2063,7 +2115,8 @@
         `?select=ticker,${priceField},${timeField}` +
         `&ticker=in.${encodeURIComponent(inList)}` +
         `&${timeField}=gte.${encodeURIComponent(sinceIso)}` +
-        `&order=${timeField}.asc`;
+        `&order=${timeField}.asc` +
+        `&limit=20000`;
 
       const res = await pmFetch(url, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
@@ -2081,6 +2134,11 @@
         if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
         if (!seriesMap[id]) seriesMap[id] = [];
         seriesMap[id].push({ ts, price });
+      }
+
+      const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
+      if (richest < minPoints) {
+        throw new Error(`Supabase producers thin (${richest} pts) — need daily/static fallback`);
       }
 
       const chartRows = buildProducerChartRows(seriesMap, timeframeId);
@@ -5082,10 +5140,8 @@
         lastStatus = res.status;
         lastBody = await res.text().catch(() => '');
         if (/quota has been exceeded/i.test(lastBody)) {
-          throw new Error(
-            'Netlify credits exhausted — news should read Supabase only. '
-            + 'Check Netlify env: SUPABASE_URL must be https://tjxiaidxcwpvsnwfvdck.supabase.co (not a Netlify function URL).'
-          );
+          // Host/API quota blip — not caused by browsing. Fall through to cache.
+          throw new Error('NEWS_QUOTA_BLIP');
         }
         if (res.status !== 400) break;
       }
@@ -5543,8 +5599,21 @@
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
       const [localDays, setLocalDays] = useState(0);
+      const newsFetchGen = useRef(0);
+
+      const applyNewsFallback = useCallback((note) => {
+        const localHist = loadLocalNewsHistory();
+        const fallback = localHist[0];
+        if (!fallback?.lenses && !fallback?.stories?.length) return false;
+        setDigest({ ...fallback, persistNote: note || `Saved digest · ${fallback.date}`, fromCache: true });
+        setPastStories(mergePastStories(fallback, localHist));
+        setLocalDays(localHist.length);
+        setError(null);
+        return true;
+      }, []);
 
       const fetchDigest = useCallback(async (force) => {
+        const gen = ++newsFetchGen.current;
         setLoading(true);
         setError(null);
         const today = digestDateLocal();
@@ -5554,6 +5623,7 @@
         const mustFetch = force || isNewDay;
 
         if (!mustFetch && cached?.date === today) {
+          if (gen !== newsFetchGen.current) return;
           setDigest({ ...cached, persistNote: `Today's digest · ${today}`, fromCache: true });
           setPastStories(mergePastStories(cached, localHist));
           setLocalDays(localHist.length);
@@ -5563,9 +5633,10 @@
 
         try {
           const data = await buildLensDigestFromSupabase();
+          if (gen !== newsFetchGen.current) return;
           const note = force
             ? `Re-read Supabase · ${today}`
-            : `Today's digest · ${today} · updates 2×/day via scheduled ingest`;
+            : `Today's digest · ${today} · web ingest 2×/day`;
           setDigest({ ...data, persistNote: note });
           setError(null);
           saveLocalNewsDigest(data);
@@ -5573,30 +5644,26 @@
           setPastStories(mergePastStories(data, loadLocalNewsHistory()));
           setLocalDays(loadLocalNewsHistory().length);
         } catch (e) {
-          if (cached?.stories?.length || cached?.lenses) {
-            setDigest({ ...cached, persistNote: `Saved digest · ${cached.date} · Supabase read failed`, fromCache: true });
-            setPastStories(mergePastStories(cached, localHist));
-            setLocalDays(localHist.length);
+          if (gen !== newsFetchGen.current) return;
+          // Always prefer showing stored news over a red quota banner.
+          if (applyNewsFallback(`Saved digest · ${cached?.date || 'prior'} · live read skipped`)) return;
+          const msg = String(e?.message || e || '');
+          if (/NEWS_QUOTA_BLIP|quota has been exceeded/i.test(msg)) {
             setError(null);
-          } else {
-            throw e;
+            return;
           }
+          throw e;
         }
-      }, []);
+      }, [applyNewsFallback]);
 
       useEffect(() => {
         fetchDigest(false).catch((e) => {
-          const localHist = loadLocalNewsHistory();
-          const fallback = localHist[0];
-          if (fallback) {
-            setDigest({ ...fallback, persistNote: 'Offline — showing last saved digest', persisted: false });
-            setPastStories(mergePastStories(fallback, localHist));
-            setLocalDays(localHist.length);
-          } else {
-            setError(e.message);
-          }
+          if (applyNewsFallback('Offline — showing last saved digest')) return;
+          const msg = String(e?.message || e || '');
+          if (/NEWS_QUOTA_BLIP|quota has been exceeded/i.test(msg)) setError(null);
+          else setError(msg);
         }).finally(() => setLoading(false));
-      }, [fetchDigest]);
+      }, [fetchDigest, applyNewsFallback]);
 
       const dirColor = {
         bullish: '#047857',
@@ -5622,9 +5689,10 @@
             </div>
             <button
               onClick={() => fetchDigest(true).catch((e) => {
-                const cached = loadLocalNewsHistory()[0];
-                if (cached?.lenses || cached?.stories?.length) setError(null);
-                else setError(e.message);
+                if (applyNewsFallback('Saved digest — refresh skipped')) return;
+                const msg = String(e?.message || e || '');
+                if (/NEWS_QUOTA_BLIP|quota has been exceeded/i.test(msg)) setError(null);
+                else setError(msg);
               }).finally(() => setLoading(false))}
               disabled={loading}
               style={{

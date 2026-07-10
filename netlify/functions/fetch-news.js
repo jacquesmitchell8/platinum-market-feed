@@ -1,10 +1,11 @@
 // netlify/functions/fetch-news.js
 //
-// Scheduled ingest — RSS → Supabase with Price / Supply / Demand lens tags.
+// Scheduled ingest — trade RSS + Google News web sweeps → Supabase.
 // Browser reads Supabase only (no client RSS, no per-load function calls).
+// No Yahoo. Web coverage comes from Google News RSS search queries.
 
 import { dedupeStories, normTitleForExport } from './lib/news-enrich.mjs';
-import { parseRssItems } from './lib/rss-utils.mjs';
+import { parseRssItems, fetchGoogleNewsParallel } from './lib/rss-utils.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,7 +25,38 @@ const FEEDS = [
   { url: 'https://asia.nikkei.com/rss/feed/nar', source: 'Nikkei Asia', topic: 'macro', region: 'demand' },
 ];
 
-const PGM_RE = /\b(platinum|palladium|rhodium|pgm|pgms|implats|impala|sibanye|northam|wpic|lbma|hydrogen|catalyst|fuel.?cell|precious.?metal|norilsk|nornickel|conflux|cfx)\b/i;
+// Open-web sweeps via Google News RSS (not Yahoo).
+const WEB_SWEEPS = [
+  {
+    region: 'price',
+    topic: 'platinum',
+    queries: [
+      'platinum price OR spot OR LBMA when:7d',
+      'platinum deficit OR surplus OR WPIC when:14d',
+      'palladium OR rhodium PGM price when:7d',
+    ],
+  },
+  {
+    region: 'supply',
+    topic: 'producers',
+    queries: [
+      'Impala OR Implats OR Sibanye OR Northam OR Valterra platinum when:14d',
+      'South Africa platinum mining OR Bushveld OR Eskom when:14d',
+      'Anglo American Platinum OR Amplats OR Norilsk PGM when:14d',
+    ],
+  },
+  {
+    region: 'demand',
+    topic: 'macro',
+    queries: [
+      'platinum hydrogen OR fuel cell OR auto catalyst when:14d',
+      'China platinum OR palladium demand OR jewellery when:14d',
+      'platinum ETF OR investment demand when:14d',
+    ],
+  },
+];
+
+const PGM_RE = /\b(platinum|palladium|rhodium|pgm|pgms|implats|impala|sibanye|northam|valterra|amplats|wpic|lbma|hydrogen|catalyst|fuel.?cell|precious.?metal|norilsk|nornickel|conflux|cfx)\b/i;
 
 function isRelevant(item, feed) {
   const text = `${item.title} ${item.description || ''}`.toLowerCase();
@@ -47,6 +79,18 @@ async function fetchFeed(feed) {
       source: item.publisher || feed.source,
       topic: feed.topic,
       region: feed.region,
+    }));
+}
+
+async function fetchWebSweep(sweep) {
+  const items = await fetchGoogleNewsParallel(sweep.queries, { limit: 12 });
+  return items
+    .filter((item) => PGM_RE.test(`${item.title} ${item.description || ''}`))
+    .map((item) => ({
+      ...item,
+      source: item.publisher || item.source || 'Google News',
+      topic: sweep.topic,
+      region: sweep.region,
     }));
 }
 
@@ -85,12 +129,24 @@ export default async () => {
     return new Response('Missing env vars', { status: 500 });
   }
 
-  const results = await Promise.allSettled(FEEDS.map((feed) => fetchFeed(feed)));
+  const feedResults = await Promise.allSettled(FEEDS.map((feed) => fetchFeed(feed)));
+  const webResults = await Promise.allSettled(WEB_SWEEPS.map((sweep) => fetchWebSweep(sweep)));
+
   const allItems = [];
   for (let i = 0; i < FEEDS.length; i++) {
-    const r = results[i];
+    const r = feedResults[i];
     if (r.status === 'fulfilled') allItems.push(...r.value);
     else console.error(`Feed ${FEEDS[i].source}:`, r.reason?.message);
+  }
+  let webHits = 0;
+  for (let i = 0; i < WEB_SWEEPS.length; i++) {
+    const r = webResults[i];
+    if (r.status === 'fulfilled') {
+      allItems.push(...r.value);
+      webHits += r.value.length;
+    } else {
+      console.error(`Web sweep ${WEB_SWEEPS[i].region}:`, r.reason?.message);
+    }
   }
 
   try {
@@ -100,7 +156,15 @@ export default async () => {
       acc[s.region] = (acc[s.region] || 0) + 1;
       return acc;
     }, {});
-    const summary = { ok: true, feeds: FEEDS.length, unique: unique.length, upserted: inserted, byRegion };
+    const summary = {
+      ok: true,
+      feeds: FEEDS.length,
+      webSweeps: WEB_SWEEPS.length,
+      webHits,
+      unique: unique.length,
+      upserted: inserted,
+      byRegion,
+    };
     console.log('News ingest:', JSON.stringify(summary));
     return new Response(JSON.stringify(summary), {
       status: 200,

@@ -5,6 +5,11 @@
 
 import { sbCount } from './lib/supabase-paginate.js';
 import { fetchJseDailyHistory } from './lib/jse-history.mjs';
+import {
+  loadProducerHistoryJson,
+  pointsToRows,
+  staticPointsForTicker,
+} from './lib/producer-json-seed.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -48,16 +53,33 @@ async function insertBatch(rows) {
   }
 }
 
+async function backfillFromStatic(ticker) {
+  const data = await loadProducerHistoryJson();
+  const points = staticPointsForTicker(data, ticker);
+  if (!points.length) throw new Error(`no static history for ${ticker}`);
+  const rows = pointsToRows(ticker, points);
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    await insertBatch(rows.slice(i, i + BATCH_SIZE));
+  }
+  const total = await historyCount(ticker);
+  return { ticker, source: 'producer-jse-history.json', added: rows.length, total, had: 0 };
+}
+
 async function backfillTicker(ticker) {
   const have = await historyCount(ticker);
+
+  // Empty table: seed from bundled JSON (Yahoo is blocked on Netlify IPs).
+  if (have < 100) {
+    try {
+      return await backfillFromStatic(ticker);
+    } catch (err) {
+      console.warn(`static backfill ${ticker} failed:`, err.message);
+    }
+  }
+
   const years = have < 200 ? 10 : 1;
   const { points, source } = await fetchJseDailyHistory(ticker, { years });
-  const rows = points.map((p) => ({
-    ticker,
-    price: p.price,
-    recorded_at: `${p.day}T12:00:00Z`,
-    recorded_day: p.day,
-  }));
+  const rows = pointsToRows(ticker, points);
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     await insertBatch(rows.slice(i, i + BATCH_SIZE));
   }
