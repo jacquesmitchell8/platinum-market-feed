@@ -105,9 +105,18 @@ function toHourlyBars(points) {
   });
 }
 
+function zarFromYahoo(value, currency) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const n = Number(value);
+  // JSE Yahoo charts often quote in ZAc (cents).
+  if (currency === 'ZAc' || currency === 'GBp') return n / 100;
+  return n;
+}
+
 function parseYahooBars(json) {
   const result = json?.chart?.result?.[0];
   if (!result) throw new Error('Yahoo: missing result');
+  const currency = result.meta?.currency || 'ZAR';
   const timestamps = result.timestamp || [];
   const q = result.indicators?.quote?.[0] || {};
   const opens = q.open || [];
@@ -118,15 +127,16 @@ function parseYahooBars(json) {
   const bars = [];
   for (let i = 0; i < timestamps.length; i++) {
     const ts = timestamps[i];
-    const close = closes[i];
+    const close = zarFromYahoo(closes[i], currency);
     if (ts == null || close == null) continue;
     bars.push({
       datetime: new Date(ts * 1000).toISOString(),
-      open: opens[i],
-      high: highs[i],
-      low: lows[i],
+      open: zarFromYahoo(opens[i], currency),
+      high: zarFromYahoo(highs[i], currency),
+      low: zarFromYahoo(lows[i], currency),
       close,
       volume: vols[i],
+      currency: currency === 'ZAc' ? 'ZAR' : currency,
     });
   }
   if (!bars.length) throw new Error('Yahoo: empty bars');

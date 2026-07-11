@@ -1434,7 +1434,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v15:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v16:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1940,6 +1940,15 @@
       return close;
     }
 
+    // JSE Yahoo intraday often lands as ZAc (cents). Daily history is ZAR.
+    function normalizeJseZarPrice(price, ticker) {
+      const n = Number(price);
+      if (!Number.isFinite(n) || n <= 0) return null;
+      // Typical JSE platinum majors: tens–low thousands ZAR. Cents are 100×.
+      if (n >= 5000) return n / 100;
+      return n;
+    }
+
     function parseYahooChartClient(data, ticker) {
       const result = data?.chart?.result?.[0];
       if (!result) throw new Error(`Yahoo ${ticker}: no data`);
@@ -2196,8 +2205,8 @@
           const id = producers.find((pid) => byId[pid]?.ticker === r.ticker);
           if (!id) continue;
           const ts = new Date(r.recorded_at).getTime();
-          const price = Number(r.close);
-          if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
+          const price = normalizeJseZarPrice(r.close, r.ticker);
+          if (!Number.isFinite(ts) || price == null) continue;
           if (!seriesMap[id]) seriesMap[id] = [];
           seriesMap[id].push({ ts, price });
         }
@@ -2216,8 +2225,8 @@
           const id = producers.find((pid) => byId[pid]?.ticker === r.ticker);
           if (!id) continue;
           const ts = new Date(r.recorded_at).getTime();
-          const price = Number(r.price);
-          if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
+          const price = normalizeJseZarPrice(r.price, r.ticker);
+          if (!Number.isFinite(ts) || price == null) continue;
           if (!seriesMap[id]) seriesMap[id] = [];
           seriesMap[id].push({ ts, price });
         }
@@ -2231,17 +2240,24 @@
         if (qRes.ok) quoteRows = await qRes.json();
       } catch (_) {}
 
+      // Stitch latest quote only when it matches the series scale (no cliff to ~0).
       for (const q of quoteRows || []) {
         const id = producers.find((pid) => byId[pid]?.ticker === q.ticker);
         if (!id || q.price == null) continue;
-        const price = Number(q.price);
+        const price = normalizeJseZarPrice(q.price, q.ticker);
         const ts = new Date(q.updated_at || Date.now()).getTime();
-        if (!Number.isFinite(price) || !Number.isFinite(ts)) continue;
+        if (price == null || !Number.isFinite(ts)) continue;
         if (!seriesMap[id]) seriesMap[id] = [];
         const pts = seriesMap[id];
         const last = pts[pts.length - 1];
-        if (!last || ts > last.ts + 30 * 60000) pts.push({ ts, price });
-        else if (last) last.price = price;
+        if (!last) {
+          pts.push({ ts, price });
+          continue;
+        }
+        const jump = Math.abs(price - last.price) / Math.max(Math.abs(last.price), 1e-9);
+        if (jump > 0.35) continue; // refuse scale-mismatch / bad stitch
+        if (ts > last.ts + 30 * 60000) pts.push({ ts, price });
+        else last.price = price;
       }
 
       const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
