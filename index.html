@@ -1425,7 +1425,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v13:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v14:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1969,21 +1969,54 @@
       Object.entries(seriesMap).forEach(([id, pts]) => {
         filtered[id] = filterProducerPoints(pts, tfId);
       });
+      // Per-ticker rows — never forward-fill one name across another's calendar.
+      // Shared-axis merge + carry-forward was drawing fake flat/smooth arcs.
       const tsSet = new Set();
       Object.values(filtered).forEach((pts) => pts.forEach((p) => tsSet.add(p.ts)));
       const sorted = [...tsSet].sort((a, b) => a - b);
+      const byId = {};
+      Object.entries(filtered).forEach(([id, pts]) => {
+        byId[id] = new Map(pts.map((p) => [p.ts, p.price]));
+      });
       return sorted.map((ts) => {
         const row = { ts, label: fmtTs(ts, tfId) };
-        Object.entries(filtered).forEach(([id, pts]) => {
-          const hit = pts.find((p) => p.ts === ts);
-          if (hit) row[id] = hit.price;
-          else {
-            const prior = [...pts].filter((p) => p.ts <= ts).pop();
-            if (prior) row[id] = prior.price;
-          }
+        Object.keys(filtered).forEach((id) => {
+          const price = byId[id].get(ts);
+          if (price != null) row[id] = price;
         });
         return row;
       });
+    }
+
+    async function sbFetchProducerHistory(tickers, sinceIso) {
+      // PostgREST caps each response at 1000 rows — page with Range headers.
+      const inList = '(' + tickers.join(',') + ')';
+      const base =
+        `producer_price_history?select=ticker,price,recorded_at` +
+        `&ticker=in.${encodeURIComponent(inList)}` +
+        `&recorded_at=gte.${encodeURIComponent(sinceIso)}` +
+        `&order=recorded_at.asc`;
+      const out = [];
+      const page = 1000;
+      let from = 0;
+      for (let guard = 0; guard < 30; guard++) {
+        const to = from + page - 1;
+        const res = await pmFetch(`${SUPABASE_URL}/rest/v1/${base}`, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            Range: `${from}-${to}`,
+            Prefer: 'count=exact',
+          },
+        }, 15000);
+        if (!res.ok) throw new Error(`Supabase producers page ${from}: ${res.status}`);
+        const batch = await res.json();
+        if (!Array.isArray(batch) || !batch.length) break;
+        out.push(...batch);
+        if (batch.length < page) break;
+        from += page;
+      }
+      return out;
     }
 
     let producerStaticCache = null;
@@ -2112,24 +2145,13 @@
       const tickers = producers.map((id) => byId[id]?.ticker).filter(Boolean);
       if (!tickers.length) throw new Error('No producer tickers configured');
 
-      const lookbackDays = ({ '1m': 120, '3m': 220, '1y': 420, '3y': 1200, '5y': 2000 })[tfId] || 420;
+      const lookbackDays = ({ '1m': 120, '3m': 220, '1y': 420, '3y': 1200, '5y': 2200 })[tfId] || 420;
       const sinceIso = new Date(Date.now() - lookbackDays * 86400000).toISOString();
 
-      const inList = '(' + tickers.join(',') + ')';
-      const url =
-        `${SUPABASE_URL}/rest/v1/producer_price_history` +
-        `?select=ticker,price,recorded_at` +
-        `&ticker=in.${encodeURIComponent(inList)}` +
-        `&recorded_at=gte.${encodeURIComponent(sinceIso)}` +
-        `&order=recorded_at.asc` +
-        `&limit=20000`;
-
-      const res = await pmFetch(url, {
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-      }, 12000);
-      if (!res.ok) throw new Error(`Supabase producers ${tfId}: ${res.status}`);
-      const rows = await res.json();
-      if (!Array.isArray(rows) || rows.length === 0) throw new Error('Supabase producers empty');
+      // Paginate — PostgREST hard-caps at 1000 rows/request. A single call for
+      // 3y×4 tickers returned only the oldest chunk, then forward-fill faked the rest.
+      const rows = await sbFetchProducerHistory(tickers, sinceIso);
+      if (!rows.length) throw new Error('Supabase producers empty');
 
       const seriesMap = {};
       for (const r of rows) {
@@ -3713,7 +3735,8 @@
                     title={`${meta.name} · ${meta.ticker} · AUD`}
                     subtitle={subtitle}
                     unit="AUD" rows={audRows} curveIds={[id]} timeframe={producerTf}
-                    showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}/>
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}
+                    connectNulls={false}/>
                 );
               }
               return (
