@@ -1434,7 +1434,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v16:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v17:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1655,11 +1655,13 @@
       if (tf.hours) filtered = rows.filter((r) => now - r.ts <= tf.hours * 3600000);
       else if (tf.days) filtered = rows.filter((r) => now - r.ts <= tf.days * 86400000);
 
-      // Weekend / ingest lag can empty short windows — keep recent rows so
-      // charts still draw instead of falling back to a dozen intraday stubs.
-      const minKeep = ({ '24h': 5, '1w': 8, '1m': 18, '3m': 40, '1y': 60, '3y': 120, '5y': 180 })[timeframeId] || 0;
-      if (minKeep && filtered.length < minKeep && rows.length) {
-        return rows.slice(-Math.max(minKeep, Math.min(rows.length, minKeep * 2)));
+      // Weekend / after-hours: wall-clock 24h only keeps a handful of Friday bars.
+      // Anchor from the last print and keep a full session (or week) of points.
+      const minKeep = ({ '24h': 40, '1w': 40, '1m': 80, '3m': 40, '1y': 60, '3y': 120, '5y': 180 })[timeframeId] || 0;
+      const lastTs = rows[rows.length - 1]?.ts;
+      const marketQuiet = lastTs != null && now - lastTs > 6 * 3600000;
+      if (minKeep && (filtered.length < minKeep || (marketQuiet && (timeframeId === '24h' || timeframeId === '1w')))) {
+        return rows.slice(-Math.min(rows.length, timeframeId === '24h' ? 80 : Math.max(minKeep, minKeep * 2)));
       }
       return filtered;
     }
@@ -1976,10 +1978,19 @@
     function filterProducerPoints(points, timeframeId) {
       const tfId = effectiveProducerTimeframe(timeframeId);
       const tf = TIMEFRAMES.find((t) => t.id === tfId) || TIMEFRAMES[5];
+      if (!points?.length) return [];
       const now = Date.now();
-      if (tf.hours) return points.filter((p) => now - p.ts <= tf.hours * 3600000);
-      if (tf.days) return points.filter((p) => now - p.ts <= tf.days * 86400000);
-      return points;
+      let filtered = points;
+      if (tf.hours) filtered = points.filter((p) => now - p.ts <= tf.hours * 3600000);
+      else if (tf.days) filtered = points.filter((p) => now - p.ts <= tf.days * 86400000);
+
+      const minKeep = ({ '24h': 40, '1w': 40, '1m': 80 })[tfId] || 0;
+      const lastTs = points[points.length - 1]?.ts;
+      const marketQuiet = lastTs != null && now - lastTs > 6 * 3600000;
+      if (minKeep && (filtered.length < minKeep || (marketQuiet && (tfId === '24h' || tfId === '1w')))) {
+        return points.slice(-Math.min(points.length, tfId === '24h' ? 80 : Math.max(minKeep, 80)));
+      }
+      return filtered;
     }
 
     function bucketProducerWeekly(points) {
@@ -2200,8 +2211,16 @@
 
       if (resolution === 'hourly') {
         const rows = await sbFetchProducerIntraday(tickers, sinceIso);
+        const preferFine = tfId === '24h' || tfId === '1w';
+        const hasFine = rows.some((r) => Number(r.interval_min) === 5);
         for (const r of rows) {
-          if (r.interval_min != null && Number(r.interval_min) !== 60) continue;
+          const iv = Number(r.interval_min) || 60;
+          if (preferFine) {
+            if (hasFine && iv !== 5) continue;
+            if (!hasFine && iv !== 60) continue;
+          } else if (iv !== 60) {
+            continue;
+          }
           const id = producers.find((pid) => byId[pid]?.ticker === r.ticker);
           if (!id) continue;
           const ts = new Date(r.recorded_at).getTime();
@@ -2210,10 +2229,10 @@
           if (!seriesMap[id]) seriesMap[id] = [];
           seriesMap[id].push({ ts, price });
         }
-        source = 'supabase-producer-hourly';
+        source = hasFine && preferFine ? 'supabase-producer-5m' : 'supabase-producer-hourly';
         const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
         // Hourly too thin → fall through to daily rather than draw 8 dots.
-        if (richest < 40) {
+        if (richest < 20) {
           Object.keys(seriesMap).forEach((k) => delete seriesMap[k]);
         }
       }
@@ -3440,7 +3459,10 @@
         '3y': 80,
         '5y': 100,
       })[timeframe] ?? 0;
-      const pulling = minGood > 0 && pointCount > 0 && pointCount < minGood;
+      const lastPointTs = chartRows.reduce((m, r) => Math.max(m, r.ts || 0), 0);
+      const marketQuiet = lastPointTs > 0 && Date.now() - lastPointTs > 6 * 3600000;
+      // Don't nag "propagating" on weekends / after the JSE session is done.
+      const pulling = !marketQuiet && minGood > 0 && pointCount > 0 && pointCount < minGood;
       const tfLabel = (TIMEFRAMES.find(t => t.id === timeframe)?.label || timeframe);
 
       const yDomain = yDomainForChart(chartRows, curveIds, logScale, { tight: tightScale });

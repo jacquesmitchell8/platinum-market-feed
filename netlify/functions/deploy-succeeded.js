@@ -22,6 +22,7 @@ export default {
 
     const targets = [
       '/.netlify/functions/seed-producers-from-json',
+      '/.netlify/functions/fetch-producer-intraday?all=1',
       '/.netlify/functions/propagate-curves',
       '/.netlify/functions/propagate-producers',
       '/.netlify/functions/fetch-market-snapshots',

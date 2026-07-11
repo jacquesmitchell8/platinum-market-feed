@@ -83,17 +83,15 @@ async function sharenetChart1dPoints(shareCode) {
   return pts;
 }
 
-function toHourlyBars(points) {
-  const byHour = new Map();
+function toBucketBars(points, bucketMs) {
+  const byBucket = new Map();
   for (const p of points) {
-    const hour = Math.floor(p.ts / 3600000) * 3600000;
-    const prev = byHour.get(hour);
-    // keep the latest print inside the hour as the close
-    if (!prev || p.ts > prev.ts) byHour.set(hour, p);
+    const bucket = Math.floor(p.ts / bucketMs) * bucketMs;
+    const prev = byBucket.get(bucket);
+    if (!prev || p.ts >= prev.ts) byBucket.set(bucket, p);
   }
-  const hours = [...byHour.keys()].sort((a, b) => a - b);
-  return hours.map((h) => {
-    const p = byHour.get(h);
+  return [...byBucket.keys()].sort((a, b) => a - b).map((h) => {
+    const p = byBucket.get(h);
     return {
       datetime: new Date(h).toISOString(),
       open: p.price,
@@ -103,6 +101,10 @@ function toHourlyBars(points) {
       volume: null,
     };
   });
+}
+
+function toHourlyBars(points) {
+  return toBucketBars(points, 3600000);
 }
 
 function zarFromYahoo(value, currency) {
@@ -172,8 +174,7 @@ async function yahooIntradayBars(ticker, { range = '5d', interval = '60m' } = {}
   throw new Error(`Yahoo ${ticker} chart failed: exhausted retries`);
 }
 
-async function upsertIntradayRows(ticker, bars) {
-  // EODHD returns UTC datetime strings.
+async function upsertIntradayRows(ticker, bars, intervalMin = 60, source = 'sharenet') {
   const rows = bars
     .map((b) => {
       const recordedAt = b.datetime ? new Date(b.datetime).toISOString() : null;
@@ -181,35 +182,39 @@ async function upsertIntradayRows(ticker, bars) {
       if (!recordedAt || !Number.isFinite(close)) return null;
       return {
         ticker,
-        interval_min: 60,
+        interval_min: intervalMin,
         recorded_at: recordedAt,
         open: b.open != null ? Number(b.open) : null,
         high: b.high != null ? Number(b.high) : null,
         low: b.low != null ? Number(b.low) : null,
         close,
         volume: b.volume != null ? Number(b.volume) : null,
-        source: 'yahoo-finance',
+        source,
       };
     })
     .filter(Boolean);
 
   if (!rows.length) return { inserted: 0 };
 
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/producer_price_intraday?on_conflict=ticker%2Cinterval_min%2Crecorded_at`,
-    {
-      method: 'POST',
-      headers: {
-        ...sbHeaders(),
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates',
-      },
-      body: JSON.stringify(rows),
+  // Batch — Sharenet session can be 400+ prints.
+  for (let i = 0; i < rows.length; i += 200) {
+    const batch = rows.slice(i, i + 200);
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/producer_price_intraday?on_conflict=ticker%2Cinterval_min%2Crecorded_at`,
+      {
+        method: 'POST',
+        headers: {
+          ...sbHeaders(),
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify(batch),
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Supabase intraday insert ${ticker}: ${res.status} ${text.slice(0, 160)}`);
     }
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Supabase intraday insert ${ticker}: ${res.status} ${text.slice(0, 160)}`);
   }
   return { inserted: rows.length };
 }
@@ -248,7 +253,7 @@ async function upsertLatestQuote(ticker, name, bars) {
   return { ok: true };
 }
 
-export default async () => {
+export default async (req) => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return new Response(JSON.stringify({ ok: false, error: 'Missing Supabase env vars' }), {
       status: 500,
@@ -256,44 +261,49 @@ export default async () => {
     });
   }
 
-  // Keep this function fast and reliable: ingest ONE ticker per run.
-  // The hourly schedule will cycle through all tickers in ~4 hours.
-  const idx = Math.floor(Date.now() / 3600000) % PRODUCERS.length;
-  const p = PRODUCERS[idx];
-  const ticker = p.ticker;
+  const url = new URL(req.url);
+  const all = url.searchParams.get('all') === '1';
+  // One ticker per scheduled run; ?all=1 backfills every name (deploy / manual).
+  const list = all
+    ? PRODUCERS
+    : [PRODUCERS[Math.floor(Date.now() / 3600000) % PRODUCERS.length]];
   const out = [];
-  // Prefer a full 1-month hourly backfill when the table is thin; otherwise
-  // refresh the latest session from Sharenet (today) with Yahoo 5d fallback.
-  try {
-    const shareCode = ticker.split('.')[0];
-    const pts = await sharenetChart1dPoints(shareCode);
-    const bars = toHourlyBars(pts);
-    const ins = await upsertIntradayRows(ticker, bars);
-    const q = await upsertLatestQuote(ticker, p.name, bars);
-    out.push({ ticker, ok: true, source: 'sharenet-1d', bars: bars.length, inserted: ins.inserted, quote: q.ok });
-  } catch (err) {
-    console.error(ticker, err.message);
+
+  for (const p of list) {
+    const ticker = p.ticker;
     try {
-      // Self-call site yahoo-proxy when direct Yahoo 429s from Netlify IPs.
-      const site = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://platinum-conflux.netlify.app';
-      const range = '1mo';
-      const proxyUrl = `${site.replace(/\/$/, '')}/yahoo-proxy/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=60m`;
-      const res = await fetchWithTimeout(proxyUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/2.0)' },
-      }, 12000);
-      if (!res.ok) throw new Error(`yahoo-proxy ${res.status}`);
-      const bars = parseYahooBars(await res.json());
-      const ins = await upsertIntradayRows(ticker, bars);
-      const q = await upsertLatestQuote(ticker, p.name, bars);
-      out.push({ ticker, ok: true, source: 'yahoo-proxy-1mo', bars: bars.length, inserted: ins.inserted, quote: q.ok });
-    } catch (inner) {
+      const shareCode = ticker.split('.')[0];
+      const pts = await sharenetChart1dPoints(shareCode);
+      const dense = toBucketBars(pts, 5 * 60000);
+      const hourly = toBucketBars(pts, 3600000);
+      const ins5 = await upsertIntradayRows(ticker, dense, 5, 'sharenet-5m');
+      const ins60 = await upsertIntradayRows(ticker, hourly, 60, 'sharenet-1h');
+      const q = await upsertLatestQuote(ticker, p.name, dense.length ? dense : hourly);
+      out.push({
+        ticker,
+        ok: true,
+        source: 'sharenet-1d',
+        dense: dense.length,
+        hourly: hourly.length,
+        inserted5: ins5.inserted,
+        inserted60: ins60.inserted,
+        quote: q.ok,
+      });
+    } catch (err) {
+      console.error(ticker, err.message);
       try {
-        const bars = await yahooIntradayBars(ticker, { range: '1mo', interval: '60m' });
-        const ins = await upsertIntradayRows(ticker, bars);
+        const site = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://platinum-conflux.netlify.app';
+        const proxyUrl = `${site.replace(/\/$/, '')}/yahoo-proxy/v8/finance/chart/${encodeURIComponent(ticker)}?range=1mo&interval=60m`;
+        const res = await fetchWithTimeout(proxyUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/2.0)' },
+        }, 12000);
+        if (!res.ok) throw new Error(`yahoo-proxy ${res.status}`);
+        const bars = parseYahooBars(await res.json());
+        const ins = await upsertIntradayRows(ticker, bars, 60, 'yahoo-proxy-1mo');
         const q = await upsertLatestQuote(ticker, p.name, bars);
-        out.push({ ticker, ok: true, source: 'yahoo-1mo', bars: bars.length, inserted: ins.inserted, quote: q.ok });
-      } catch (last) {
-        out.push({ ticker, ok: false, error: err.message, fallbackError: inner.message, lastError: last.message });
+        out.push({ ticker, ok: true, source: 'yahoo-proxy-1mo', bars: bars.length, inserted: ins.inserted, quote: q.ok });
+      } catch (inner) {
+        out.push({ ticker, ok: false, error: err.message, fallbackError: inner.message });
       }
     }
   }
