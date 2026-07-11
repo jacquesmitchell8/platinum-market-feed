@@ -1418,7 +1418,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v11:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v12:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1635,9 +1635,17 @@
       const tf = TIMEFRAMES.find((t) => t.id === timeframeId);
       if (!tf || !rows?.length) return rows || [];
       const now = Date.now();
-      if (tf.hours) return rows.filter((r) => now - r.ts <= tf.hours * 3600000);
-      if (tf.days) return rows.filter((r) => now - r.ts <= tf.days * 86400000);
-      return rows;
+      let filtered = rows;
+      if (tf.hours) filtered = rows.filter((r) => now - r.ts <= tf.hours * 3600000);
+      else if (tf.days) filtered = rows.filter((r) => now - r.ts <= tf.days * 86400000);
+
+      // Weekend / ingest lag can empty short windows — keep recent rows so
+      // charts still draw instead of falling back to a dozen intraday stubs.
+      const minKeep = ({ '24h': 5, '1w': 8, '1m': 18, '3m': 40, '1y': 60, '3y': 120, '5y': 180 })[timeframeId] || 0;
+      if (minKeep && filtered.length < minKeep && rows.length) {
+        return rows.slice(-Math.max(minKeep, Math.min(rows.length, minKeep * 2)));
+      }
+      return filtered;
     }
 
     async function fetchMetalsTimeline(metalTfId, curveIds) {
@@ -1943,9 +1951,17 @@
     function filterProducerPoints(points, timeframeId) {
       const tf = TIMEFRAMES.find((t) => t.id === timeframeId) || TIMEFRAMES[5];
       const now = Date.now();
-      if (tf.hours) return points.filter((p) => now - p.ts <= tf.hours * 3600000);
-      if (tf.days) return points.filter((p) => now - p.ts <= tf.days * 86400000);
-      return points;
+      let filtered = points;
+      if (tf.hours) filtered = points.filter((p) => now - p.ts <= tf.hours * 3600000);
+      else if (tf.days) filtered = points.filter((p) => now - p.ts <= tf.days * 86400000);
+
+      // Short windows go empty over weekends / seed lag — keep the latest
+      // trading days so the chart still draws a real curve immediately.
+      const minKeep = ({ '24h': 5, '1w': 8, '1m': 18, '3m': 40, '1y': 60, '3y': 120, '5y': 180 })[timeframeId] || 8;
+      if (filtered.length < minKeep && points.length) {
+        return points.slice(-Math.max(minKeep, Math.min(points.length, minKeep * 2)));
+      }
+      return filtered;
     }
 
     function buildProducerChartRows(seriesMap, timeframeId) {
@@ -2088,7 +2104,6 @@
 
     async function fetchProducerTimelineFromSupabase(timeframeId) {
       if (!SUPABASE_URL.includes('.supabase.co')) throw new Error('Supabase URL missing');
-      const tf = TIMEFRAMES.find(t => t.id === timeframeId) || TIMEFRAMES[1];
 
       const producers = ['IDX-201', 'IDX-202', 'IDX-203', 'IDX-204'];
       const byId = {};
@@ -2096,26 +2111,20 @@
       const tickers = producers.map((id) => byId[id]?.ticker).filter(Boolean);
       if (!tickers.length) throw new Error('No producer tickers configured');
 
-      const now = Date.now();
-      const sinceMs = tf.hours ? tf.hours * 3600000 : (tf.days ? tf.days * 86400000 : 30 * 86400000);
-      const sinceIso = new Date(now - sinceMs).toISOString();
+      // Always use daily history for producer charts. Intraday is too thin
+      // (a dozen hourly prints) and makes every window look "flat / propagating".
+      const lookbackDays = ({
+        '24h': 21, '1w': 45, '1m': 90, '3m': 180, '1y': 400, '3y': 1200, '5y': 2000,
+      })[timeframeId] || 400;
+      const sinceIso = new Date(Date.now() - lookbackDays * 86400000).toISOString();
 
-      // Intraday only for short windows. 1m/3m+ must use daily history or the
-      // chart sticks on a handful of hourly prints and looks flat forever.
-      const useIntraday = ['24h', '1w'].includes(timeframeId);
-      const table = useIntraday ? 'producer_price_intraday' : 'producer_price_history';
-      const priceField = useIntraday ? 'close' : 'price';
-      const timeField = 'recorded_at';
-      const minPoints = useIntraday ? 8 : 60;
-
-      // NOTE: PostgREST "in" filter expects (a,b,c) form (no quotes needed here).
       const inList = '(' + tickers.join(',') + ')';
       const url =
-        `${SUPABASE_URL}/rest/v1/${table}` +
-        `?select=ticker,${priceField},${timeField}` +
+        `${SUPABASE_URL}/rest/v1/producer_price_history` +
+        `?select=ticker,price,recorded_at` +
         `&ticker=in.${encodeURIComponent(inList)}` +
-        `&${timeField}=gte.${encodeURIComponent(sinceIso)}` +
-        `&order=${timeField}.asc` +
+        `&recorded_at=gte.${encodeURIComponent(sinceIso)}` +
+        `&order=recorded_at.asc` +
         `&limit=20000`;
 
       const res = await pmFetch(url, {
@@ -2129,19 +2138,20 @@
       for (const r of rows) {
         const id = producers.find(pid => byId[pid]?.ticker === r.ticker);
         if (!id) continue;
-        const ts = new Date(r[timeField]).getTime();
-        const price = Number(r[priceField]);
+        const ts = new Date(r.recorded_at).getTime();
+        const price = Number(r.price);
         if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
         if (!seriesMap[id]) seriesMap[id] = [];
         seriesMap[id].push({ ts, price });
       }
 
       const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
-      if (richest < minPoints) {
-        throw new Error(`Supabase producers thin (${richest} pts) — need daily/static fallback`);
+      if (richest < 8) {
+        throw new Error(`Supabase producers thin (${richest} pts) — need static fallback`);
       }
 
       const chartRows = buildProducerChartRows(seriesMap, timeframeId);
+      if (!chartRows.length) throw new Error('Supabase producers chart empty after filter');
 
       // Latest quotes from producer_quotes (latest-only) — optional.
       let quoteRows = [];
@@ -2176,9 +2186,15 @@
         ok: true,
         stale: false,
         rows: chartRows,
-        producerMeta: { quotes, announcements: [], historyCounts: {} },
+        producerMeta: {
+          quotes,
+          announcements: [],
+          historyCounts: Object.fromEntries(
+            producers.map((id) => [byId[id].ticker, (seriesMap[id] || []).length])
+          ),
+        },
         updatedAt: new Date(oldestUpdate).toISOString(),
-        source: useIntraday ? 'supabase-producer-intraday' : 'supabase-producer-daily',
+        source: 'supabase-producer-daily',
       };
     }
 
@@ -3309,10 +3325,10 @@
         curveIds.some((id) => r[id] != null && !isNaN(r[id]))
       ).length;
       const minGood = ({
-        '24h': 10,
-        '1w': 14,
-        '1m': 18,
-        '3m': 22,
+        '24h': 5,
+        '1w': 6,
+        '1m': 12,
+        '3m': 20,
         '1y': 30,
         '3y': 40,
         '5y': 50,
