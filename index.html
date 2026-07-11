@@ -1071,6 +1071,13 @@
       { id:'5y',  label:'5 Years',   cgDays:null, perthKey:'fiveYearsHistoricData', days:1825, maxPts:800 },
     ];
 
+    // JSE producers are daily closes in Supabase — no usable intraday yet.
+    // Short buttons (24h/1w) just produced 10-point garbage charts.
+    const PRODUCER_TIMEFRAMES = TIMEFRAMES.filter((t) => ['1m', '3m', '1y', '3y', '5y'].includes(t.id));
+    function effectiveProducerTimeframe(tfId) {
+      return ['1m', '3m', '1y', '3y', '5y'].includes(tfId) ? tfId : '1y';
+    }
+
     /* Market-moving events — shown on timeline when in range */
     const TIMELINE_EVENTS = [
       { ts: Date.parse('2024-01-10T00:00:00Z'), s:'BTC ETF', title:'Spot Bitcoin ETF approved by US SEC', detail:'Institutional crypto access opened; Bitcoin rallied while gold held firm as alternative store of value.', assets:['btc','gold','cfx'], c:'#059669', dir:'up' },
@@ -1418,7 +1425,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v12:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v13:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1843,12 +1850,12 @@
 
       if (tab === 'producers') {
         try {
-          const data = await fetchProducerTimelineFromSupabase(metalTimeframeId);
+          const data = await fetchProducerTimelineFromSupabase(effectiveProducerTimeframe(metalTimeframeId));
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
         try {
-          const data = await fetchProducerTimelineFromStatic(metalTimeframeId);
+          const data = await fetchProducerTimelineFromStatic(effectiveProducerTimeframe(metalTimeframeId));
           saveTimelineToStorage(lsKey, data);
           return data;
         } catch (_) {}
@@ -1949,31 +1956,24 @@
     }
 
     function filterProducerPoints(points, timeframeId) {
-      const tf = TIMEFRAMES.find((t) => t.id === timeframeId) || TIMEFRAMES[5];
+      const tfId = effectiveProducerTimeframe(timeframeId);
+      const tf = TIMEFRAMES.find((t) => t.id === tfId) || TIMEFRAMES[5];
       const now = Date.now();
-      let filtered = points;
-      if (tf.hours) filtered = points.filter((p) => now - p.ts <= tf.hours * 3600000);
-      else if (tf.days) filtered = points.filter((p) => now - p.ts <= tf.days * 86400000);
-
-      // Short windows go empty over weekends / seed lag — keep the latest
-      // trading days so the chart still draws a real curve immediately.
-      const minKeep = ({ '24h': 5, '1w': 8, '1m': 18, '3m': 40, '1y': 60, '3y': 120, '5y': 180 })[timeframeId] || 8;
-      if (filtered.length < minKeep && points.length) {
-        return points.slice(-Math.max(minKeep, Math.min(points.length, minKeep * 2)));
-      }
-      return filtered;
+      if (tf.days) return points.filter((p) => now - p.ts <= tf.days * 86400000);
+      return points;
     }
 
     function buildProducerChartRows(seriesMap, timeframeId) {
+      const tfId = effectiveProducerTimeframe(timeframeId);
       const filtered = {};
       Object.entries(seriesMap).forEach(([id, pts]) => {
-        filtered[id] = filterProducerPoints(pts, timeframeId);
+        filtered[id] = filterProducerPoints(pts, tfId);
       });
       const tsSet = new Set();
       Object.values(filtered).forEach((pts) => pts.forEach((p) => tsSet.add(p.ts)));
       const sorted = [...tsSet].sort((a, b) => a - b);
       return sorted.map((ts) => {
-        const row = { ts, label: fmtTs(ts, timeframeId) };
+        const row = { ts, label: fmtTs(ts, tfId) };
         Object.entries(filtered).forEach(([id, pts]) => {
           const hit = pts.find((p) => p.ts === ts);
           if (hit) row[id] = hit.price;
@@ -2104,6 +2104,7 @@
 
     async function fetchProducerTimelineFromSupabase(timeframeId) {
       if (!SUPABASE_URL.includes('.supabase.co')) throw new Error('Supabase URL missing');
+      const tfId = effectiveProducerTimeframe(timeframeId);
 
       const producers = ['IDX-201', 'IDX-202', 'IDX-203', 'IDX-204'];
       const byId = {};
@@ -2111,11 +2112,7 @@
       const tickers = producers.map((id) => byId[id]?.ticker).filter(Boolean);
       if (!tickers.length) throw new Error('No producer tickers configured');
 
-      // Always use daily history for producer charts. Intraday is too thin
-      // (a dozen hourly prints) and makes every window look "flat / propagating".
-      const lookbackDays = ({
-        '24h': 21, '1w': 45, '1m': 90, '3m': 180, '1y': 400, '3y': 1200, '5y': 2000,
-      })[timeframeId] || 400;
+      const lookbackDays = ({ '1m': 120, '3m': 220, '1y': 420, '3y': 1200, '5y': 2000 })[tfId] || 420;
       const sinceIso = new Date(Date.now() - lookbackDays * 86400000).toISOString();
 
       const inList = '(' + tickers.join(',') + ')';
@@ -2130,7 +2127,7 @@
       const res = await pmFetch(url, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
       }, 12000);
-      if (!res.ok) throw new Error(`Supabase producers ${timeframeId}: ${res.status}`);
+      if (!res.ok) throw new Error(`Supabase producers ${tfId}: ${res.status}`);
       const rows = await res.json();
       if (!Array.isArray(rows) || rows.length === 0) throw new Error('Supabase producers empty');
 
@@ -2145,21 +2142,34 @@
         seriesMap[id].push({ ts, price });
       }
 
-      const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
-      if (richest < 8) {
-        throw new Error(`Supabase producers thin (${richest} pts) — need static fallback`);
-      }
-
-      const chartRows = buildProducerChartRows(seriesMap, timeframeId);
-      if (!chartRows.length) throw new Error('Supabase producers chart empty after filter');
-
-      // Latest quotes from producer_quotes (latest-only) — optional.
+      // Stitch latest quote onto the curve so it isn't stuck on the last seed day.
       let quoteRows = [];
       try {
         const qUrl = `${SUPABASE_URL}/rest/v1/producer_quotes?select=ticker,name,price,currency,change_pct,updated_at,source`;
         const qRes = await pmFetch(qUrl, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }, 8000);
         if (qRes.ok) quoteRows = await qRes.json();
       } catch (_) {}
+
+      for (const q of quoteRows || []) {
+        const id = producers.find(pid => byId[pid]?.ticker === q.ticker);
+        if (!id || q.price == null) continue;
+        const price = Number(q.price);
+        const ts = new Date(q.updated_at || Date.now()).getTime();
+        if (!Number.isFinite(price) || !Number.isFinite(ts)) continue;
+        if (!seriesMap[id]) seriesMap[id] = [];
+        const pts = seriesMap[id];
+        const last = pts[pts.length - 1];
+        if (!last || ts > last.ts + 6 * 3600000) pts.push({ ts, price });
+        else if (last) last.price = price;
+      }
+
+      const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
+      if (richest < 20) {
+        throw new Error(`Supabase producers thin (${richest} pts) — need static fallback`);
+      }
+
+      const chartRows = buildProducerChartRows(seriesMap, tfId);
+      if (!chartRows.length) throw new Error('Supabase producers chart empty after filter');
 
       const quotes = (quoteRows || []).map((q) => {
         const id = producers.find(pid => byId[pid]?.ticker === q.ticker);
@@ -2195,6 +2205,7 @@
         },
         updatedAt: new Date(oldestUpdate).toISOString(),
         source: 'supabase-producer-daily',
+        timeframe: tfId,
       };
     }
 
@@ -3517,12 +3528,13 @@
       );
     }
 
-    function TimeframeBar({ value, onChange, label }) {
+    function TimeframeBar({ value, onChange, label, options }) {
+      const frames = options || TIMEFRAMES;
       return (
         <div style={{marginBottom:10}}>
           {label && <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:6}}>{label}</div>}
           <div className="price-tabs">
-            {TIMEFRAMES.map(tf => (
+            {frames.map(tf => (
               <button key={tf.id} type="button"
                 className={`price-tab ${value===tf.id?'active':''}`}
                 onClick={() => onChange(tf.id)}>{tf.label}</button>
@@ -3678,11 +3690,17 @@
       if (tab === 'producers') {
         const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
         if (!producerIds.length) return null;
+        const producerTf = effectiveProducerTimeframe(metalTimeframe);
         const quotesById = Object.fromEntries((producerMeta?.quotes || []).map(q => [q.id, q]));
         const audRows = convertProducerRowsToAud(rows, producerIds, zarPerAud);
         return (
           <>
-            <TimeframeBar label="Producer chart period" value={metalTimeframe} onChange={onMetalTimeframeChange} />
+            <TimeframeBar
+              label="Producer chart period · daily JSE closes"
+              value={producerTf}
+              onChange={onMetalTimeframeChange}
+              options={PRODUCER_TIMEFRAMES}
+            />
             {producerIds.map((id) => {
               const meta = CURVE_INDEX[id];
               const quote = quotesById[id];
@@ -3694,7 +3712,7 @@
                     key={id}
                     title={`${meta.name} · ${meta.ticker} · AUD`}
                     subtitle={subtitle}
-                    unit="AUD" rows={audRows} curveIds={[id]} timeframe={metalTimeframe}
+                    unit="AUD" rows={audRows} curveIds={[id]} timeframe={producerTf}
                     showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}/>
                 );
               }
@@ -6299,6 +6317,9 @@
         const el = document.getElementById('ticker');
         if (el) el.dataset.mode = tab;
         setActiveCurves(DEFAULT_CURVES[tab]);
+        if (tab === 'producers') {
+          setMetalTimeframe((tf) => effectiveProducerTimeframe(tf));
+        }
       }, [tab]);
 
       const { rows, metalsRows, cryptoRows, loading: chartLoading, err: chartErr, warn: chartWarn, producerMeta } =
@@ -6425,7 +6446,7 @@
             <>
               <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:8}}>Chart period</div>
               <div className="price-tabs" style={{marginBottom:16}}>
-                {TIMEFRAMES.map(tf => (
+                {(tab === 'producers' ? PRODUCER_TIMEFRAMES : TIMEFRAMES).map(tf => (
                   <button key={tf.id} type="button"
                     className={`price-tab ${metalTimeframe===tf.id?'active':''}`}
                     onClick={() => setMetalTimeframe(tf.id)}>{tf.label}</button>
