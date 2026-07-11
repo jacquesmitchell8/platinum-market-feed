@@ -1071,11 +1071,20 @@
       { id:'5y',  label:'5 Years',   cgDays:null, perthKey:'fiveYearsHistoricData', days:1825, maxPts:800 },
     ];
 
-    // JSE producers are daily closes in Supabase — no usable intraday yet.
-    // Short buttons (24h/1w) just produced 10-point garbage charts.
-    const PRODUCER_TIMEFRAMES = TIMEFRAMES.filter((t) => ['1m', '3m', '1y', '3y', '5y'].includes(t.id));
+    // Producer resolution ladder:
+    //   24h / 1w / 1m  → hourly bars (producer_price_intraday)
+    //   3m / 1y        → daily closes (producer_price_history)
+    //   3y / 5y        → weekly buckets from daily
+    const PRODUCER_TIMEFRAMES = TIMEFRAMES.filter((t) =>
+      ['24h', '1w', '1m', '3m', '1y', '3y', '5y'].includes(t.id)
+    );
+    function producerResolution(tfId) {
+      if (tfId === '24h' || tfId === '1w' || tfId === '1m') return 'hourly';
+      if (tfId === '3y' || tfId === '5y') return 'weekly';
+      return 'daily';
+    }
     function effectiveProducerTimeframe(tfId) {
-      return ['1m', '3m', '1y', '3y', '5y'].includes(tfId) ? tfId : '1y';
+      return PRODUCER_TIMEFRAMES.some((t) => t.id === tfId) ? tfId : '1m';
     }
 
     /* Market-moving events — shown on timeline when in range */
@@ -1425,7 +1434,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v14:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v15:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1959,18 +1968,32 @@
       const tfId = effectiveProducerTimeframe(timeframeId);
       const tf = TIMEFRAMES.find((t) => t.id === tfId) || TIMEFRAMES[5];
       const now = Date.now();
+      if (tf.hours) return points.filter((p) => now - p.ts <= tf.hours * 3600000);
       if (tf.days) return points.filter((p) => now - p.ts <= tf.days * 86400000);
       return points;
     }
 
+    function bucketProducerWeekly(points) {
+      const byWeek = new Map();
+      for (const p of points) {
+        const d = new Date(p.ts);
+        const day = d.getUTCDay();
+        const weekStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((day + 6) % 7), 12, 0, 0, 0);
+        const prev = byWeek.get(weekStart);
+        if (!prev || p.ts >= prev.ts) byWeek.set(weekStart, { ts: weekStart, price: p.price });
+      }
+      return [...byWeek.keys()].sort((a, b) => a - b).map((k) => byWeek.get(k));
+    }
+
     function buildProducerChartRows(seriesMap, timeframeId) {
       const tfId = effectiveProducerTimeframe(timeframeId);
+      const resolution = producerResolution(tfId);
       const filtered = {};
       Object.entries(seriesMap).forEach(([id, pts]) => {
-        filtered[id] = filterProducerPoints(pts, tfId);
+        let next = filterProducerPoints(pts, tfId);
+        if (resolution === 'weekly') next = bucketProducerWeekly(next);
+        filtered[id] = next;
       });
-      // Per-ticker rows — never forward-fill one name across another's calendar.
-      // Shared-axis merge + carry-forward was drawing fake flat/smooth arcs.
       const tsSet = new Set();
       Object.values(filtered).forEach((pts) => pts.forEach((p) => tsSet.add(p.ts)));
       const sorted = [...tsSet].sort((a, b) => a - b);
@@ -1988,28 +2011,27 @@
       });
     }
 
-    async function sbFetchProducerHistory(tickers, sinceIso) {
+    async function sbFetchProducerTable(table, select, tickers, sinceIso, orderCol = 'recorded_at') {
       // PostgREST caps each response at 1000 rows — page with Range headers.
       const inList = '(' + tickers.join(',') + ')';
       const base =
-        `producer_price_history?select=ticker,price,recorded_at` +
+        `${table}?select=${select}` +
         `&ticker=in.${encodeURIComponent(inList)}` +
-        `&recorded_at=gte.${encodeURIComponent(sinceIso)}` +
-        `&order=recorded_at.asc`;
+        `&${orderCol}=gte.${encodeURIComponent(sinceIso)}` +
+        `&order=${orderCol}.asc`;
       const out = [];
       const page = 1000;
       let from = 0;
-      for (let guard = 0; guard < 30; guard++) {
+      for (let guard = 0; guard < 40; guard++) {
         const to = from + page - 1;
         const res = await pmFetch(`${SUPABASE_URL}/rest/v1/${base}`, {
           headers: {
             apikey: SUPABASE_ANON_KEY,
             Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
             Range: `${from}-${to}`,
-            Prefer: 'count=exact',
           },
         }, 15000);
-        if (!res.ok) throw new Error(`Supabase producers page ${from}: ${res.status}`);
+        if (!res.ok) throw new Error(`Supabase ${table} page ${from}: ${res.status}`);
         const batch = await res.json();
         if (!Array.isArray(batch) || !batch.length) break;
         out.push(...batch);
@@ -2017,6 +2039,19 @@
         from += page;
       }
       return out;
+    }
+
+    async function sbFetchProducerHistory(tickers, sinceIso) {
+      return sbFetchProducerTable('producer_price_history', 'ticker,price,recorded_at', tickers, sinceIso);
+    }
+
+    async function sbFetchProducerIntraday(tickers, sinceIso) {
+      return sbFetchProducerTable(
+        'producer_price_intraday',
+        'ticker,close,recorded_at,interval_min',
+        tickers,
+        sinceIso
+      );
     }
 
     let producerStaticCache = null;
@@ -2138,6 +2173,7 @@
     async function fetchProducerTimelineFromSupabase(timeframeId) {
       if (!SUPABASE_URL.includes('.supabase.co')) throw new Error('Supabase URL missing');
       const tfId = effectiveProducerTimeframe(timeframeId);
+      const resolution = producerResolution(tfId);
 
       const producers = ['IDX-201', 'IDX-202', 'IDX-203', 'IDX-204'];
       const byId = {};
@@ -2145,26 +2181,49 @@
       const tickers = producers.map((id) => byId[id]?.ticker).filter(Boolean);
       if (!tickers.length) throw new Error('No producer tickers configured');
 
-      const lookbackDays = ({ '1m': 120, '3m': 220, '1y': 420, '3y': 1200, '5y': 2200 })[tfId] || 420;
+      const lookbackDays = ({
+        '24h': 5, '1w': 14, '1m': 40, '3m': 120, '1y': 420, '3y': 1200, '5y': 2200,
+      })[tfId] || 40;
       const sinceIso = new Date(Date.now() - lookbackDays * 86400000).toISOString();
 
-      // Paginate — PostgREST hard-caps at 1000 rows/request. A single call for
-      // 3y×4 tickers returned only the oldest chunk, then forward-fill faked the rest.
-      const rows = await sbFetchProducerHistory(tickers, sinceIso);
-      if (!rows.length) throw new Error('Supabase producers empty');
-
       const seriesMap = {};
-      for (const r of rows) {
-        const id = producers.find(pid => byId[pid]?.ticker === r.ticker);
-        if (!id) continue;
-        const ts = new Date(r.recorded_at).getTime();
-        const price = Number(r.price);
-        if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
-        if (!seriesMap[id]) seriesMap[id] = [];
-        seriesMap[id].push({ ts, price });
+      let source = 'supabase-producer-daily';
+
+      if (resolution === 'hourly') {
+        const rows = await sbFetchProducerIntraday(tickers, sinceIso);
+        for (const r of rows) {
+          if (r.interval_min != null && Number(r.interval_min) !== 60) continue;
+          const id = producers.find((pid) => byId[pid]?.ticker === r.ticker);
+          if (!id) continue;
+          const ts = new Date(r.recorded_at).getTime();
+          const price = Number(r.close);
+          if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
+          if (!seriesMap[id]) seriesMap[id] = [];
+          seriesMap[id].push({ ts, price });
+        }
+        source = 'supabase-producer-hourly';
+        const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
+        // Hourly too thin → fall through to daily rather than draw 8 dots.
+        if (richest < 40) {
+          Object.keys(seriesMap).forEach((k) => delete seriesMap[k]);
+        }
       }
 
-      // Stitch latest quote onto the curve so it isn't stuck on the last seed day.
+      if (!Object.keys(seriesMap).length) {
+        const rows = await sbFetchProducerHistory(tickers, sinceIso);
+        if (!rows.length) throw new Error('Supabase producers empty');
+        for (const r of rows) {
+          const id = producers.find((pid) => byId[pid]?.ticker === r.ticker);
+          if (!id) continue;
+          const ts = new Date(r.recorded_at).getTime();
+          const price = Number(r.price);
+          if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
+          if (!seriesMap[id]) seriesMap[id] = [];
+          seriesMap[id].push({ ts, price });
+        }
+        source = resolution === 'weekly' ? 'supabase-producer-weekly' : 'supabase-producer-daily';
+      }
+
       let quoteRows = [];
       try {
         const qUrl = `${SUPABASE_URL}/rest/v1/producer_quotes?select=ticker,name,price,currency,change_pct,updated_at,source`;
@@ -2173,7 +2232,7 @@
       } catch (_) {}
 
       for (const q of quoteRows || []) {
-        const id = producers.find(pid => byId[pid]?.ticker === q.ticker);
+        const id = producers.find((pid) => byId[pid]?.ticker === q.ticker);
         if (!id || q.price == null) continue;
         const price = Number(q.price);
         const ts = new Date(q.updated_at || Date.now()).getTime();
@@ -2181,20 +2240,18 @@
         if (!seriesMap[id]) seriesMap[id] = [];
         const pts = seriesMap[id];
         const last = pts[pts.length - 1];
-        if (!last || ts > last.ts + 6 * 3600000) pts.push({ ts, price });
+        if (!last || ts > last.ts + 30 * 60000) pts.push({ ts, price });
         else if (last) last.price = price;
       }
 
       const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
-      if (richest < 20) {
-        throw new Error(`Supabase producers thin (${richest} pts) — need static fallback`);
-      }
+      if (richest < 8) throw new Error(`Supabase producers thin (${richest} pts)`);
 
       const chartRows = buildProducerChartRows(seriesMap, tfId);
       if (!chartRows.length) throw new Error('Supabase producers chart empty after filter');
 
       const quotes = (quoteRows || []).map((q) => {
-        const id = producers.find(pid => byId[pid]?.ticker === q.ticker);
+        const id = producers.find((pid) => byId[pid]?.ticker === q.ticker);
         const m = id ? byId[id] : null;
         return {
           id: id || null,
@@ -2208,7 +2265,7 @@
           changePct: q.change_pct,
           updatedAt: q.updated_at,
         };
-      }).filter(q => q.id);
+      }).filter((q) => q.id);
 
       const oldestUpdate = quoteRows?.length
         ? quoteRows.reduce((min, r) => Math.min(min, new Date(r.updated_at).getTime()), Date.now())
@@ -2224,9 +2281,10 @@
           historyCounts: Object.fromEntries(
             producers.map((id) => [byId[id].ticker, (seriesMap[id] || []).length])
           ),
+          resolution,
         },
         updatedAt: new Date(oldestUpdate).toISOString(),
-        source: 'supabase-producer-daily',
+        source,
         timeframe: tfId,
       };
     }
@@ -3358,13 +3416,13 @@
         curveIds.some((id) => r[id] != null && !isNaN(r[id]))
       ).length;
       const minGood = ({
-        '24h': 5,
-        '1w': 6,
-        '1m': 12,
-        '3m': 20,
-        '1y': 30,
-        '3y': 40,
-        '5y': 50,
+        '24h': 12,
+        '1w': 30,
+        '1m': 60,
+        '3m': 40,
+        '1y': 120,
+        '3y': 80,
+        '5y': 100,
       })[timeframe] ?? 0;
       const pulling = minGood > 0 && pointCount > 0 && pointCount < minGood;
       const tfLabel = (TIMEFRAMES.find(t => t.id === timeframe)?.label || timeframe);
@@ -3718,7 +3776,11 @@
         return (
           <>
             <TimeframeBar
-              label="Producer chart period · daily JSE closes"
+              label={`Producer chart period · ${({
+                hourly: 'hourly',
+                daily: 'daily',
+                weekly: 'weekly',
+              })[producerResolution(producerTf)] || 'daily'} JSE`}
               value={producerTf}
               onChange={onMetalTimeframeChange}
               options={PRODUCER_TIMEFRAMES}

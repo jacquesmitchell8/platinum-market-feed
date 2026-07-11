@@ -185,15 +185,18 @@ async function upsertIntradayRows(ticker, bars) {
 
   if (!rows.length) return { inserted: 0 };
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/producer_price_intraday`, {
-    method: 'POST',
-    headers: {
-      ...sbHeaders(),
-      'Content-Type': 'application/json',
-      Prefer: 'resolution=ignore-duplicates',
-    },
-    body: JSON.stringify(rows),
-  });
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/producer_price_intraday?on_conflict=ticker%2Cinterval_min%2Crecorded_at`,
+    {
+      method: 'POST',
+      headers: {
+        ...sbHeaders(),
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify(rows),
+    }
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Supabase intraday insert ${ticker}: ${res.status} ${text.slice(0, 160)}`);
@@ -249,22 +252,39 @@ export default async () => {
   const p = PRODUCERS[idx];
   const ticker = p.ticker;
   const out = [];
+  // Prefer a full 1-month hourly backfill when the table is thin; otherwise
+  // refresh the latest session from Sharenet (today) with Yahoo 5d fallback.
   try {
     const shareCode = ticker.split('.')[0];
     const pts = await sharenetChart1dPoints(shareCode);
     const bars = toHourlyBars(pts);
     const ins = await upsertIntradayRows(ticker, bars);
     const q = await upsertLatestQuote(ticker, p.name, bars);
-    out.push({ ticker, ok: true, bars: bars.length, inserted: ins.inserted, quote: q.ok });
+    out.push({ ticker, ok: true, source: 'sharenet-1d', bars: bars.length, inserted: ins.inserted, quote: q.ok });
   } catch (err) {
     console.error(ticker, err.message);
     try {
-      const bars = await yahooIntradayBars(ticker, { range: '5d', interval: '60m' });
+      // Self-call site yahoo-proxy when direct Yahoo 429s from Netlify IPs.
+      const site = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://platinum-conflux.netlify.app';
+      const range = '1mo';
+      const proxyUrl = `${site.replace(/\/$/, '')}/yahoo-proxy/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=60m`;
+      const res = await fetchWithTimeout(proxyUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PlatinumMetisBot/2.0)' },
+      }, 12000);
+      if (!res.ok) throw new Error(`yahoo-proxy ${res.status}`);
+      const bars = parseYahooBars(await res.json());
       const ins = await upsertIntradayRows(ticker, bars);
       const q = await upsertLatestQuote(ticker, p.name, bars);
-      out.push({ ticker, ok: true, source: 'yahoo-fallback', bars: bars.length, inserted: ins.inserted, quote: q.ok });
+      out.push({ ticker, ok: true, source: 'yahoo-proxy-1mo', bars: bars.length, inserted: ins.inserted, quote: q.ok });
     } catch (inner) {
-      out.push({ ticker, ok: false, error: err.message, fallbackError: inner.message });
+      try {
+        const bars = await yahooIntradayBars(ticker, { range: '1mo', interval: '60m' });
+        const ins = await upsertIntradayRows(ticker, bars);
+        const q = await upsertLatestQuote(ticker, p.name, bars);
+        out.push({ ticker, ok: true, source: 'yahoo-1mo', bars: bars.length, inserted: ins.inserted, quote: q.ok });
+      } catch (last) {
+        out.push({ ticker, ok: false, error: err.message, fallbackError: inner.message, lastError: last.message });
+      }
     }
   }
 
