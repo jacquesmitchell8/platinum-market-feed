@@ -19,7 +19,8 @@
   schedule = "*/5 * * * *"
 
 [functions."fetch-news"]
-  schedule = "0 9,21 * * *"
+  schedule = "20 */3 * * *"
+  timeout = 26
 
 [functions."ingest-dashboard-cache"]
   schedule = "0 * * * *"

@@ -5453,7 +5453,7 @@
       return (digest?.stories || []).filter((s) => (s.lens || inferNewsLens(s)) === lensId);
     }
 
-    /* News — read Supabase only (ingested 2×/day by fetch-news). Lenses: price | supply | demand */
+    /* News — Supabase store; fetch-news propagates every ~3h + on Refresh. Lenses: price | supply | demand */
     const NEWS_LENS_META = {
       price: {
         id: 'price',
@@ -5534,6 +5534,21 @@
       return false;
     }
 
+    function newsAgeHours(story) {
+      const t = new Date(story.published_at || story.publishedAt || story.fetched_at || 0).getTime();
+      if (!t || Number.isNaN(t)) return 9999;
+      return (Date.now() - t) / 3600000;
+    }
+
+    function newsFreshnessBoost(story) {
+      const ageH = newsAgeHours(story);
+      if (ageH <= 18) return 28;
+      if (ageH <= 48) return 16;
+      if (ageH <= 96) return 8;
+      if (ageH <= 168) return 3;
+      return 0;
+    }
+
     function clientAnalyzeStory(story) {
       const lens = story.lens || inferNewsLens(story);
       const title = story.title || '';
@@ -5556,12 +5571,13 @@
       if (themeLabels.length) bullets.push(`Themes: ${themeLabels.join(' · ')}.`);
       else bullets.push(`Source desk: ${story.source || NEWS_LENS_META[lens]?.label || 'markets'}.`);
       const lensBoost = NEWS_LENS_BOOST[lens] || 0;
+      const freshness = newsFreshnessBoost(story);
       const relevanceScore = Math.min(100, Math.round(
-        35 + lensBoost +
-        (story.topic === 'platinum' ? 20 : story.topic === 'producers' ? 28 : 8) +
+        30 + lensBoost + freshness +
+        (story.topic === 'platinum' ? 18 : story.topic === 'producers' ? 26 : 6) +
         Math.abs(score) * 8
       ));
-      return { headline: title, bullets, platinumImpact, direction, themeLabels, relevanceScore, lens };
+      return { headline: title, bullets, platinumImpact, direction, themeLabels, relevanceScore, lens, freshnessBoost: freshness };
     }
 
     function clientPickTopStories(rows, limit = 3) {
@@ -5576,6 +5592,8 @@
       const tooSimilar = (c) => top.some((t) => newsDedupeKey(t) === newsDedupeKey(c) || newsTitleSimilarity(t.title, c.title) > 0.55);
       for (const s of scored) {
         if (top.length >= limit || tooSimilar(s)) continue;
+        // Prefer last ~5 days for the headline strip — archive still keeps older.
+        if (newsAgeHours(s) > 120 && scored.some((x) => newsAgeHours(x) <= 120 && !tooSimilar(x))) continue;
         const pub = (s.source || '').toLowerCase();
         const themeKey = (s.themeLabels || [])[0] || s.topic || 'general';
         if (top.length < limit - 1 && usedPublishers.has(pub) && scored.length > limit + 2) continue;
@@ -5593,23 +5611,32 @@
 
     function clientBuildProgression(stories) {
       if (!stories?.length) return null;
-      const bullishScore = stories.reduce((sum, s) => sum + (s.platinumImpact || 0), 0);
-      const direction = bullishScore >= 2 ? 'bullish' : bullishScore <= -2 ? 'bearish' : bullishScore !== 0 ? 'mixed' : 'neutral';
+      const recent = stories.filter((s) => newsAgeHours(s) <= 168);
+      const corpus = recent.length >= 4 ? recent : stories;
+      const bullishScore = corpus.reduce((sum, s) => sum + (s.platinumImpact || 0), 0);
+      const direction = bullishScore >= 3 ? 'bullish' : bullishScore <= -3 ? 'bearish' : bullishScore !== 0 ? 'mixed' : 'neutral';
       const themeCounts = {};
-      for (const s of stories) {
+      for (const s of corpus) {
         for (const lbl of s.themeLabels || []) themeCounts[lbl] = (themeCounts[lbl] || 0) + 1;
       }
-      const themeTrends = Object.entries(themeCounts).map(([label, count]) => ({
-        id: label, label, trend: count >= 2 ? 'strengthening' : 'stable',
-      })).slice(0, 5);
+      const themeTrends = Object.entries(themeCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([label, count]) => ({
+          id: label,
+          label,
+          count,
+          trend: count >= 3 ? 'strengthening' : count >= 2 ? 'stable' : 'emerging',
+        }))
+        .slice(0, 6);
+      const freshN = corpus.filter((s) => newsAgeHours(s) <= 48).length;
       const summary = direction === 'bullish'
-        ? "Today's headlines lean supportive for platinum — supply tightness, demand, or PGM basket strength dominating."
+        ? `Story unfolding lean supportive across ${corpus.length} PGM-relevant pieces (${freshN} in 48h) — supply tightness, demand, or basket strength dominating.`
         : direction === 'bearish'
-          ? "Today's headlines lean negative for PGM miners — demand weakness, disruptions, or macro pressure in focus."
+          ? `Story unfolding lean negative across ${corpus.length} PGM pieces (${freshN} in 48h) — demand weakness, disruptions, or macro pressure in focus.`
           : direction === 'mixed'
-            ? 'Headlines are split — PGM-sensitive themes point both ways.'
-            : 'No strong directional signal in today\'s top stories — PGM spot may trade on macro and USD.';
-      return { direction, bullishScore, summary, themeTrends };
+            ? `Story unfolding is split across ${corpus.length} recent PGM headlines (${freshN} in 48h) — themes point both ways.`
+            : `No strong directional signal yet across ${corpus.length} tracked pieces — spot may trade on USD/macro until a theme concentrates.`;
+      return { direction, bullishScore, summary, themeTrends, storyCount: corpus.length, freshCount: freshN };
     }
 
     function inferNewsLens(story) {
@@ -5672,13 +5699,23 @@
       };
     }
 
+    async function propagateNewsIngest() {
+      const res = await fetch('/.netlify/functions/fetch-news', { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && !data?.ok) throw new Error(data.error || `News ingest HTTP ${res.status}`);
+      return data;
+    }
+
     async function buildLensDigestFromSupabase() {
       const rows = await fetchNewsRowsFromSupabase();
       const grouped = { price: [], supply: [], demand: [] };
+      const analyzedAll = [];
       for (const row of rows) {
         const lens = inferNewsLens(row);
         if (!isPgmRelevant(row)) continue;
-        grouped[lens].push({ ...row, lens });
+        const withLens = { ...row, lens };
+        grouped[lens].push(withLens);
+        analyzedAll.push({ ...withLens, ...clientAnalyzeStory(withLens) });
       }
 
       const lenses = {};
@@ -5698,11 +5735,21 @@
       }
 
       if (!allTop.length && !rows.length) {
-        throw new Error('No news in database yet — scheduled ingest runs twice daily');
+        throw new Error('No news in database yet — tap Refresh to propagate feeds into Supabase');
       }
 
-      const progression = clientBuildProgression(allTop.length ? allTop : rows.slice(0, 6).map((r) => ({ ...r, ...clientAnalyzeStory(r) })));
+      // Story unfolding = last ~7 days of PGM-relevant corpus, not only the 9 headline slots.
+      const unfolding = analyzedAll
+        .filter((s) => newsAgeHours(s) <= 168)
+        .sort((a, b) => b.relevanceScore - a.relevanceScore);
+      const progression = clientBuildProgression(
+        unfolding.length ? unfolding : (allTop.length ? allTop : analyzedAll.slice(0, 24))
+      );
       const flatStories = ['price', 'supply', 'demand'].flatMap((id) => lenses[id]?.stories || []);
+      const newestFetched = rows.reduce(
+        (m, r) => Math.max(m, new Date(r.fetched_at || r.published_at || 0).getTime() || 0),
+        0
+      );
 
       return {
         ok: true,
@@ -5714,6 +5761,8 @@
           digestDate: (r.fetched_at || r.published_at || '').slice(0, 10),
         })),
         progression,
+        unfoldingCount: unfolding.length,
+        newestFetchedAt: newestFetched ? new Date(newestFetched).toISOString() : null,
         dailyBrief: null,
         source: 'supabase-news',
       };
@@ -6132,12 +6181,31 @@
         }
 
         try {
+          let ingestNote = null;
+          if (force) {
+            try {
+              const ingest = await propagateNewsIngest();
+              if (ingest?.ok) {
+                ingestNote = `Propagated ${ingest.unique || ingest.upserted || 0} stories into Supabase`
+                  + (ingest.byRegion
+                    ? ` · P ${ingest.byRegion.price || 0} / S ${ingest.byRegion.supply || 0} / D ${ingest.byRegion.demand || 0}`
+                    : '');
+              }
+            } catch (ingestErr) {
+              ingestNote = `Ingest skipped (${ingestErr.message || 'error'}) — showing DB`;
+            }
+          }
+
           const data = await buildLensDigestFromSupabase();
           if (gen !== newsFetchGen.current) return;
           const note = force
-            ? `Re-read Supabase · ${today}`
-            : `Today's digest · ${today} · web ingest 2×/day`;
-          setDigest({ ...data, persistNote: note });
+            ? (ingestNote || `Re-read Supabase · ${today}`)
+            : `Today's digest · ${today} · ingest every ~3h + Refresh`;
+          setDigest({
+            ...data,
+            persistNote: note,
+            ingestNote,
+          });
           setError(null);
           saveLocalNewsDigest(data);
           localStorage.setItem(NEWS_LAST_DATE_KEY, data.date || today);
@@ -6319,6 +6387,11 @@
                 Move progression · {digest.progression.direction}
                 <span style={{marginLeft:8, fontWeight:500, color:C.textDark, textTransform:'none', letterSpacing:0}}>
                   ({digest.progression.bullishScore > 0 ? '+' : ''}{digest.progression.bullishScore})
+                  {digest.progression.storyCount != null && (
+                    <> · {digest.progression.storyCount} stories / 7d
+                      {digest.progression.freshCount != null ? ` · ${digest.progression.freshCount} in 48h` : ''}
+                    </>
+                  )}
                 </span>
               </summary>
               <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.6, margin:'10px 0 8px'}}>
@@ -6332,7 +6405,7 @@
                       background: C.surface, border:`1px solid ${C.borderLight}`,
                       color: t.trend === 'strengthening' ? '#047857' : t.trend === 'fading' ? '#B91C1C' : C.text,
                     }}>
-                      {trendIcon[t.trend]} {t.label}
+                      {trendIcon[t.trend]} {t.label}{t.count != null ? ` ×${t.count}` : ''}
                     </span>
                   ))}
                 </div>
@@ -6371,9 +6444,12 @@
             </details>
           )}
 
-          <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            Supabase cache · Price / Supply / Demand · scored in-browser · ingest 2×/day
+          <div style={{fontSize:10, color:C.text, marginTop:8, lineHeight:1.5}}>
+            Supabase · Price / Supply / Demand · freshness-weighted · ingest every ~3h
             {digest?.persistNote && ` · ${digest.persistNote}`}
+            {digest?.newestFetchedAt && ` · DB newest ${timeAgo(new Date(digest.newestFetchedAt))}`}
+            {localDays > 0 && ` · ${localDays} day${localDays === 1 ? '' : 's'} saved locally`}
+            {' · '}Refresh runs full RSS + Google News into the database, then rebuilds the unfolding story.
           </div>
         </div>
       );

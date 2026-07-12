@@ -1,7 +1,8 @@
 // netlify/functions/news-digest.js
 //
-// Fast read endpoint for the news panel. RSS ingest runs on fetch-news (scheduled)
-// or when ?refresh=1 is passed — not on every page load.
+// Fast read endpoint for the news panel. Full RSS + Google News ingest runs on
+// fetch-news (every ~3h) or when the UI Refresh button hits that function.
+// ?refresh=1 here only does a light feed top-up for backwards compatibility.
 
 import { pickTopStories, buildProgression, dedupeStories, normTitleForExport } from './lib/news-enrich.mjs';
 import { researchStory, buildDailyBrief } from './lib/news-research.mjs';
