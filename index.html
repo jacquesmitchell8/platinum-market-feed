@@ -1191,7 +1191,37 @@
       perth: ['IDX-103','IDX-104','IDX-101','IDX-102','IDX-107'],
       producers: ['IDX-201','IDX-202','IDX-203','IDX-204'],
       bridge: ['IDX-002','IDX-005'],
+      wtf: ['IDX-002'],
     };
+
+    /** Annotated disconnect years — price refused to follow the textbook S&D script. */
+    const WTF_MOMENTS = [
+      {
+        year: 2020,
+        tag: 'COVID shock',
+        note: 'Mine disruption + demand collapse — balance swings hard; price whipsaws on macro fear, not clean scarcity math.',
+      },
+      {
+        year: 2023,
+        tag: 'Deficit shrug',
+        note: '≈−1,000 koz deficit — price barely moves. Warehouses still absorb. Textbook scarcity fails.',
+      },
+      {
+        year: 2024,
+        tag: 'Short & sold',
+        note: 'Still in deficit (~−930 koz) while price falls on ETF / investment unwind. Flows beat geology.',
+      },
+      {
+        year: 2025,
+        tag: 'Catch-up',
+        note: 'Record deficit (~−1,082 koz) — price finally re-rates as stock cover tightens. Lag, then violence.',
+      },
+      {
+        year: 2026,
+        tag: 'Cover crunch',
+        note: 'Deficit narrows on demand drop, but AGS cover &lt;3 months. Physical tightness ≠ paper calm forever.',
+      },
+    ];
 
     const PT_CFX_INTERFACE = [
       {
@@ -3474,7 +3504,7 @@
       }, [tab, cryptoTf, cfxTf, idsKey]);
 
       useEffect(() => {
-        if (tab === 'index' || tab === 'bridge') return undefined;
+        if (tab === 'index' || tab === 'bridge' || tab === 'wtf') return undefined;
         let cancelled = false;
         const mergedKey = `v10:${tab}:${metalTimeframe}:${idsKey}`;
 
@@ -6597,6 +6627,249 @@
       );
     }
 
+    /* ─── SUPPLY vs PRICE · WTF CURVE TAB ─────────────────────────── */
+    function PlatinumWtfCurve({ live }) {
+      const [focusYear, setFocusYear] = useState(null);
+      const chartRows = useMemo(() => SD_MERGED.filter((r) => r.balance != null || r.price != null), []);
+      const momentByYear = useMemo(
+        () => Object.fromEntries(WTF_MOMENTS.map((m) => [m.year, m])),
+        []
+      );
+      const tipStyleLocal = {
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
+        padding: '10px 12px',
+        fontSize: 12,
+        boxShadow: '0 8px 24px rgba(26,35,50,0.10)',
+        maxWidth: 320,
+      };
+
+      const WtfTip = ({ active, payload, label }) => {
+        if (!active || !payload?.length) return null;
+        const d = payload[0]?.payload || {};
+        const moment = momentByYear[d.year];
+        return (
+          <div style={tipStyleLocal}>
+            <div style={{fontWeight: 700, color: C.textDark, marginBottom: 6}}>{label}</div>
+            {d.balance != null && (
+              <div style={{color: d.balance < 0 ? '#B91C1C' : '#047857', marginBottom: 3, fontWeight: 600}}>
+                Market balance · {fmtKoz(d.balance)}
+                {d.balance < 0 ? ' deficit' : ' surplus'}
+              </div>
+            )}
+            {d.price != null && (
+              <div style={{color: C.plat, marginBottom: 3}}>Pt price · {fmtUsd(d.price, 0)}/oz</div>
+            )}
+            {d.priceChg != null && (
+              <div style={{color: C.text, marginBottom: 3}}>YoY price · {fmtPct(d.priceChg)}</div>
+            )}
+            {d.monthsCover != null && (
+              <div style={{color: C.text, marginBottom: moment ? 8 : 0}}>
+                Stock cover · {d.monthsCover} mo
+              </div>
+            )}
+            {moment && (
+              <div style={{borderTop: `1px solid ${C.borderLight}`, paddingTop: 8, marginTop: 4}}>
+                <div style={{fontWeight: 700, color: '#92400E', marginBottom: 3}}>WTF · {moment.tag}</div>
+                <div style={{color: C.textSecondary, lineHeight: 1.45}} dangerouslySetInnerHTML={{__html: moment.note}} />
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const pt = live?.platinum?.price;
+      const au = live?.gold?.price;
+      const ratio = pt != null && au > 0 ? pt / au : null;
+
+      return (
+        <div>
+          <div style={{
+            padding: '28px 22px 20px',
+            background: 'linear-gradient(165deg, #F8F5F2 0%, #F1EEEA 42%, #EAE7E2 100%)',
+            borderBottom: `1px solid ${C.border}`,
+          }}>
+            <div style={{
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontSize: 'clamp(26px, 3.8vw, 38px)',
+              fontWeight: 400,
+              color: C.textDark,
+              lineHeight: 1.15,
+              marginBottom: 10,
+            }}>
+              Supply vs Price · <span style={{color: '#92400E'}}>WTF Curve</span>
+            </div>
+            <p style={{fontSize: 15, color: C.textSecondary, lineHeight: 1.55, maxWidth: 720, margin: 0}}>
+              Textbook: scarcity (deficit) lifts price. Platinum&apos;s reality: multi-year WPIC deficits with
+              stagnant or falling prices until stock cover and investment flows finally force a catch-up.
+              This chart is the disconnect — annual balance vs the price the market actually printed.
+            </p>
+            <div style={{
+              marginTop: 16,
+              fontSize: 13,
+              color: C.textDark,
+              fontVariantNumeric: 'tabular-nums',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '6px 18px',
+            }}>
+              <span>Live Pt <strong>{pt != null ? fmtUsd(pt, 0) : '—'}</strong></span>
+              <span>Pt/Au <strong>{ratio != null ? `${(ratio * 100).toFixed(1)}%` : '—'}</strong></span>
+              <span style={{color: C.text}}>Red bars = deficit · green = surplus · slate line = Pt USD/oz</span>
+            </div>
+          </div>
+
+          <div style={{padding: '16px 14px 6px'}}>
+            <div style={{...panelHdr, paddingTop: 4, paddingBottom: 8}}>
+              <span>Annual market balance vs platinum price · {SD_START_YEAR}–{SD_END_YEAR}</span>
+            </div>
+            <ResponsiveContainer width="100%" height={360}>
+              <ComposedChart
+                data={chartRows}
+                margin={{top: 20, right: 52, left: 8, bottom: 8}}
+                onMouseMove={(s) => {
+                  const y = s?.activeLabel;
+                  if (y != null) setFocusYear(Number(y));
+                }}
+                onMouseLeave={() => setFocusYear(null)}
+              >
+                <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                <XAxis dataKey="year" {...axP}/>
+                <YAxis
+                  yAxisId="bal"
+                  {...axP}
+                  width={58}
+                  tickFormatter={(v) => `${v}`}
+                  label={{ value: 'Balance (koz)', angle: -90, position: 'insideLeft', fill: C.text, fontSize: 10 }}
+                />
+                <YAxis
+                  yAxisId="px"
+                  orientation="right"
+                  {...axP}
+                  width={52}
+                  tickFormatter={(v) => `$${v}`}
+                  domain={['auto', 'auto']}
+                />
+                <Tooltip content={<WtfTip/>} cursor={{stroke: C.border, strokeDasharray: '4 4'}}/>
+                <ReferenceLine yAxisId="bal" y={0} stroke={C.border} strokeWidth={1.5}/>
+                {WTF_MOMENTS.map((m) => (
+                  <ReferenceLine
+                    key={m.year}
+                    yAxisId="bal"
+                    x={m.year}
+                    stroke="rgba(146, 64, 14, 0.45)"
+                    strokeDasharray="4 3"
+                    strokeWidth={1.25}
+                    label={{
+                      value: m.tag,
+                      position: 'insideTop',
+                      fill: '#92400E',
+                      fontSize: 9,
+                      fontWeight: 700,
+                    }}
+                  />
+                ))}
+                <Bar
+                  yAxisId="bal"
+                  dataKey="balance"
+                  name="Balance"
+                  maxBarSize={28}
+                  isAnimationActive={false}
+                >
+                  {chartRows.map((row) => (
+                    <Cell
+                      key={row.year}
+                      fill={row.balance == null
+                        ? C.border
+                        : row.balance < 0
+                          ? (focusYear === row.year ? '#DC2626' : 'rgba(185, 28, 28, 0.72)')
+                          : (focusYear === row.year ? '#059669' : 'rgba(4, 120, 87, 0.65)')}
+                    />
+                  ))}
+                </Bar>
+                <Line
+                  yAxisId="px"
+                  type="monotone"
+                  dataKey="price"
+                  name="Pt USD/oz"
+                  stroke={C.plat}
+                  strokeWidth={2.5}
+                  connectNulls
+                  dot={{ r: 2.5, fill: C.plat, strokeWidth: 0 }}
+                  activeDot={{ r: 5, fill: C.plat, strokeWidth: 0 }}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div style={{padding: '4px 8px 12px', display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11, color: C.text}}>
+              <span><span style={{color: '#B91C1C', fontWeight: 800}}>▮</span> Deficit (supply &lt; demand)</span>
+              <span><span style={{color: '#047857', fontWeight: 800}}>▮</span> Surplus</span>
+              <span><span style={{color: C.plat, fontWeight: 800}}>—</span> Platinum price (USD/oz)</span>
+              <span style={{color: '#92400E'}}>Dashed markers = WTF moments</span>
+            </div>
+          </div>
+
+          <div style={{height: 1, background: C.borderLight, margin: '0 18px'}}/>
+
+          <div style={{padding: '16px 18px 8px'}}>
+            <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#92400E', marginBottom: 10}}>
+              Why the textbook curve fails here
+            </div>
+            <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 16}}>
+              {[
+                ['Stock buffers', 'Deficits draw warehouses first. AGS cover fell ~7.2 → 2.9 months (2022–26) before spot fully cares.'],
+                ['Investment flows', 'ETF/bar demand is the marginal price setter — can sell into a physical shortfall and print lower prices.'],
+                ['Recycling floor', 'Secondary supply (~1.5–1.8 Moz/yr) cushions mine shocks. Balance ≠ mine output alone.'],
+                ['SA concentration', '~72% mine supply from South Africa — load-shedding & labour distort timing vs the annual WPIC line.'],
+              ].map(([t, b]) => (
+                <div key={t}>
+                  <div style={{fontSize: 12, fontWeight: 700, color: C.textDark, marginBottom: 4}}>{t}</div>
+                  <div style={{fontSize: 11, color: C.text, lineHeight: 1.55}}>{b}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{padding: '0 18px 20px'}}>
+            <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textDark, marginBottom: 8}}>
+              Annotated disconnects
+            </div>
+            <div style={{overflowX: 'auto'}}>
+              <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12}}>
+                <thead>
+                  <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
+                    <th style={{padding: '9px 12px'}}>Year</th>
+                    <th style={{padding: '9px 12px'}}>Tag</th>
+                    <th style={{padding: '9px 12px'}}>What broke the textbook</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {WTF_MOMENTS.map((m) => (
+                    <tr
+                      key={m.year}
+                      style={{
+                        borderTop: `1px solid ${C.borderLight}`,
+                        background: focusYear === m.year ? 'rgba(146, 64, 14, 0.06)' : 'transparent',
+                      }}
+                    >
+                      <td style={{padding: '10px 12px', fontWeight: 700, color: C.textDark}}>{m.year}</td>
+                      <td style={{padding: '10px 12px', fontWeight: 600, color: '#92400E'}}>{m.tag}</td>
+                      <td style={{padding: '10px 12px', color: C.textSecondary, lineHeight: 1.5}}
+                        dangerouslySetInnerHTML={{__html: m.note}} />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{fontSize: 11, color: C.text, marginTop: 14, lineHeight: 1.55, maxWidth: 760}}>
+              Data · WPIC / Metals Focus annual balances (koz) · platinum prices from Metis historical series (LBMA annual avg).
+              Cumulative scarcity view also lives under Fundamentals below. Not investment advice.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     /* ─── FUNDAMENTALS · S&D vs PRICE ─────────────────────────────── */
     function FundamentalsPanel() {
       const [view, setView] = useState('balance');
@@ -7086,6 +7359,9 @@
             <button className={`price-tab ${tab==='bridge'?'active':''}`} onClick={() => setTab('bridge')}>
               Platinum × Conflux
             </button>
+            <button className={`price-tab ${tab==='wtf'?'active':''}`} onClick={() => setTab('wtf')}>
+              Supply vs Price · WTF
+            </button>
           </div>
 
           {tab === 'index' ? (
@@ -7128,6 +7404,13 @@
               <PriceCard indexId="IDX-001" label="Gold — reference" sub="Pt/Au context" color={C.gold}
                 price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
             </div>
+          ) : tab === 'wtf' ? (
+            <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="Live spot vs the WTF curve" color={C.plat}
+                price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
+              <PriceCard indexId="IDX-001" label="Gold — reference" sub="Discount context" color={C.gold}
+                price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
+            </div>
           ) : (
             <>
               <p style={{fontSize:13, color:C.textSecondary, lineHeight:1.65, maxWidth:820, marginBottom:14}}>
@@ -7147,7 +7430,7 @@
 
           {tab === 'index' && <SpreadPanel live={live} />}
 
-          {tab !== 'index' && tab !== 'bridge' && (
+          {tab !== 'index' && tab !== 'bridge' && tab !== 'wtf' && (
             <>
               <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:8}}>Chart period</div>
               <div className="price-tabs" style={{marginBottom:16}}>
@@ -7160,7 +7443,7 @@
             </>
           )}
 
-          {tab !== 'bridge' && (
+          {tab !== 'bridge' && tab !== 'wtf' && (
           <div style={{...cardStyle, display:'flex', gap:6, flexWrap:'wrap', marginBottom:10,
             alignItems:'center', padding:'10px 14px'}}>
             <span style={{fontSize:10, fontWeight:600, color:C.text, letterSpacing:'0.08em', textTransform:'uppercase'}}>Show curves</span>
@@ -7178,6 +7461,8 @@
           <div style={{...cardStyle, marginBottom:14, paddingBottom:0, overflow:'hidden'}}>
             {tab === 'bridge' ? (
               <PlatinumConfluxBridge live={live} perth={perth} audUsd={audUsd} updated={updated} />
+            ) : tab === 'wtf' ? (
+              <PlatinumWtfCurve live={live} />
             ) : (
             <>
             <div style={panelHdr}>
@@ -7268,7 +7553,7 @@
             )}
           </div>
 
-          {tab !== 'bridge' && <CurveIndexLibrary tab={tab} />}
+          {tab !== 'bridge' && tab !== 'wtf' && <CurveIndexLibrary tab={tab} />}
 
           {(error || perthError) && (
             <div style={{fontSize:12, color:'#B91C1C', marginBottom:12, padding:'8px 12px',
