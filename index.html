@@ -1304,6 +1304,9 @@
     const FACE_HOLDINGS_KEY = 'pm_face_holdings_v1';
     const FACE_RARITY_KEY = 'pm_face_rarity_v1';
     const FACE_OCR_RESULTS_KEY = 'pm_face_ocr_results_v1';
+    const FACE_QUOTE_HISTORY_KEY = 'pm_face_quote_history_v1';
+    const FACE_QUOTE_CLEARED_KEY = 'pm_face_quote_cleared_v1';
+    const FACE_ACTIVE_DAYS = 7;
 
     /** Seed rarity / scarcity DB — editable in-tab; overrides persist in localStorage. */
     const FACE_RARITY_DEFAULT = {
@@ -1424,8 +1427,102 @@
     }
 
     function saveFaceOcrResults(rows) {
-      try { localStorage.setItem(FACE_OCR_RESULTS_KEY, JSON.stringify(rows.slice(0, 80))); }
+      try { localStorage.setItem(FACE_OCR_RESULTS_KEY, JSON.stringify(rows.slice(0, 500))); }
       catch (_) {}
+    }
+
+    function loadFaceQuoteHistory() {
+      try { return JSON.parse(localStorage.getItem(FACE_QUOTE_HISTORY_KEY) || '[]'); }
+      catch { return []; }
+    }
+
+    function saveFaceQuoteHistory(rows) {
+      try { localStorage.setItem(FACE_QUOTE_HISTORY_KEY, JSON.stringify(rows.slice(0, 2500))); }
+      catch (_) {}
+    }
+
+    function loadFaceClearedIds() {
+      try { return new Set(JSON.parse(localStorage.getItem(FACE_QUOTE_CLEARED_KEY) || '[]')); }
+      catch { return new Set(); }
+    }
+
+    function saveFaceClearedIds(set) {
+      try { localStorage.setItem(FACE_QUOTE_CLEARED_KEY, JSON.stringify([...set].slice(-2000))); }
+      catch (_) {}
+    }
+
+    function appendFaceQuoteHistory(newRows) {
+      const prev = loadFaceQuoteHistory();
+      const byId = new Map(prev.map((r) => [r.id, r]));
+      for (const r of newRows) byId.set(r.id, r);
+      const merged = [...byId.values()].sort(
+        (a, b) => new Date(b.recordedAt || 0) - new Date(a.recordedAt || 0)
+      );
+      saveFaceQuoteHistory(merged);
+      return merged;
+    }
+
+    function inferDealerSeller(text, fileName) {
+      const blob = `${fileName || ''} ${text || ''}`.toLowerCase();
+      if (/ainslie/.test(blob)) return 'Ainslie';
+      if (/perth\s*mint|perthmint/.test(blob)) return 'Perth Mint';
+      if (/bullion\s*star|bullionstar/.test(blob)) return 'BullionStar';
+      if (/abc\s*bullion/.test(blob)) return 'ABC Bullion';
+      if (/gold\s*company|thegoldcompany/.test(blob)) return 'The Gold Company';
+      if (/jb\s*bullion/.test(blob)) return 'JB Bullion';
+      if (/apmex/.test(blob)) return 'APMEX';
+      if (/hero\s*bullion/.test(blob)) return 'Hero Bullion';
+      return 'Dealer';
+    }
+
+    async function persistFaceQuotesRemote(quotes) {
+      if (!quotes?.length) return { ok: false, skipped: true };
+      try {
+        const res = await fetch('/.netlify/functions/face-quotes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quotes }),
+        });
+        return await res.json().catch(() => ({}));
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }
+
+    async function recallFaceQuotesRemote(all) {
+      try {
+        const res = await fetch(`/.netlify/functions/face-quotes?all=${all ? '1' : '0'}&limit=1000`, { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (!data?.ok || !Array.isArray(data.rows)) return [];
+        return data.rows.map((r) => ({
+          id: r.id,
+          recordedAt: r.recorded_at,
+          seller: r.seller,
+          name: r.coin,
+          coin: r.coin,
+          priceAud: r.value_aud != null ? Number(r.value_aud) : null,
+          valueAud: r.value_aud != null ? Number(r.value_aud) : null,
+          meltAud: r.melt_aud != null ? Number(r.melt_aud) : null,
+          premiumPct: r.premium_pct != null ? Number(r.premium_pct) : null,
+          recommendation: r.recommendation,
+          scarcityScore: r.scarcity_score,
+          metal: r.metal,
+          weightOz: r.weight_oz != null ? Number(r.weight_oz) : null,
+          sourceFile: r.source_file,
+          batchId: r.batch_id,
+          reasoning: r.reasoning,
+          histBand: '—',
+          rarity: '—',
+        }));
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function faceQuoteWithinActiveWindow(row, now = Date.now()) {
+      const t = new Date(row.recordedAt || 0).getTime();
+      if (!t) return false;
+      return now - t <= FACE_ACTIVE_DAYS * 24 * 3600 * 1000;
     }
 
     let tesseractLoadPromise = null;
@@ -1538,7 +1635,7 @@
       // Prefer fewer high-signal rows (dealer pages print many small numbers)
       return items
         .filter((it) => it.priceAud >= 400)
-        .slice(0, 16);
+        .slice(0, 200);
     }
 
     function analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, rarityDb) {
@@ -1626,10 +1723,12 @@
       const [dragOver, setDragOver] = useState(false);
       const [busy, setBusy] = useState(false);
       const [status, setStatus] = useState(null);
-      const [previewUrl, setPreviewUrl] = useState(null);
+      const [previews, setPreviews] = useState([]);
       const [rawOcr, setRawOcr] = useState('');
       const [rarityDb, setRarityDb] = useState(() => loadFaceRarityDb());
-      const [analyzed, setAnalyzed] = useState(() => loadFaceOcrResults());
+      const [history, setHistory] = useState(() => loadFaceQuoteHistory());
+      const [clearedIds, setClearedIds] = useState(() => loadFaceClearedIds());
+      const [viewMode, setViewMode] = useState('active');
       const [showRarityEdit, setShowRarityEdit] = useState(false);
       const [editKey, setEditKey] = useState('');
       const [editRarity, setEditRarity] = useState('medium');
@@ -1638,47 +1737,89 @@
 
       const auSpot = live?.gold?.price;
       const ptSpot = live?.platinum?.price;
-      const portfolioNote = useMemo(() => buildFacePortfolioSuggestion(analyzed), [analyzed]);
 
-      const runAnalysisOnText = useCallback((text, label) => {
+      const visibleRows = useMemo(() => {
+        const now = Date.now();
+        return history.filter((r) => {
+          if (clearedIds.has(r.id)) return false;
+          if (viewMode === 'all') return true;
+          return faceQuoteWithinActiveWindow(r, now);
+        });
+      }, [history, clearedIds, viewMode]);
+
+      const portfolioNote = useMemo(() => buildFacePortfolioSuggestion(visibleRows), [visibleRows]);
+
+      const ingestScored = useCallback(async (scored, meta) => {
+        const recordedAt = new Date().toISOString();
+        const batchId = `batch-${Date.now()}`;
+        const seller = meta.seller || 'Dealer';
+        const enriched = scored.map((row, i) => ({
+          ...row,
+          id: `${batchId}-${i}-${Math.round(row.priceAud || 0)}`,
+          recordedAt,
+          seller,
+          coin: row.name,
+          valueAud: row.priceAud,
+          sourceFile: meta.sourceFile || null,
+          batchId,
+        }));
+        const merged = appendFaceQuoteHistory(enriched);
+        setHistory(merged);
+        saveFaceOcrResults(enriched);
+        const remote = await persistFaceQuotesRemote(enriched);
+        return { enriched, merged, remote };
+      }, []);
+
+      const runAnalysisOnText = useCallback(async (text, label, fileName) => {
         const parsed = parseDealerOcrText(text);
         const db = loadFaceRarityDb();
         setRarityDb(db);
         const scored = parsed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, db));
-        setAnalyzed(scored);
-        saveFaceOcrResults(scored);
-        setStatus(scored.length
-          ? `${label}: ${scored.length} price line${scored.length === 1 ? '' : 's'} scored vs live spot`
-          : `${label}: no AUD prices found — try a clearer crop or paste text`);
-        return scored;
-      }, [auSpot, ptSpot, audUsd]);
+        const seller = inferDealerSeller(text, fileName);
+        const { enriched, remote } = await ingestScored(scored, { seller, sourceFile: fileName || label });
+        setStatus(
+          enriched.length
+            ? `${label}: +${enriched.length} coin${enriched.length === 1 ? '' : 's'} · ${seller}`
+              + (remote?.ok ? ' · saved to quote DB' : ' · saved locally')
+            : `${label}: no AUD prices found — try a clearer crop`
+        );
+        return enriched;
+      }, [auSpot, ptSpot, audUsd, ingestScored]);
 
-      const processFile = async (file) => {
-        if (!file) return;
-        if (!file.type?.startsWith('image/')) {
-          setStatus('Please upload an image (PNG/JPG/WebP) of the dealer page.');
+      const processFiles = async (fileList) => {
+        const files = [...(fileList || [])].filter((f) => f.type?.startsWith('image/'));
+        if (!files.length) {
+          setStatus('Please upload image files (PNG/JPG/WebP).');
           return;
         }
         setBusy(true);
-        setStatus('Loading OCR engine…');
         try {
-          const url = URL.createObjectURL(file);
-          setPreviewUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return url;
-          });
           const Tesseract = await ensureTesseract();
-          setStatus('Reading screenshot (Tesseract)…');
-          const result = await Tesseract.recognize(file, 'eng', {
-            logger: (m) => {
-              if (m.status === 'recognizing text' && m.progress != null) {
-                setStatus(`Reading screenshot… ${Math.round(m.progress * 100)}%`);
-              }
-            },
+          const urls = files.map((f) => URL.createObjectURL(f));
+          setPreviews((prev) => {
+            prev.forEach((u) => URL.revokeObjectURL(u));
+            return urls.slice(0, 12);
           });
-          const text = result?.data?.text || '';
-          setRawOcr(text);
-          runAnalysisOnText(text, file.name || 'Upload');
+          let total = 0;
+          const ocrChunks = [];
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            setStatus(`Reading screenshot ${i + 1}/${files.length}: ${file.name}…`);
+            const result = await Tesseract.recognize(file, 'eng', {
+              logger: (m) => {
+                if (m.status === 'recognizing text' && m.progress != null) {
+                  setStatus(`Screenshot ${i + 1}/${files.length}… ${Math.round(m.progress * 100)}%`);
+                }
+              },
+            });
+            const text = result?.data?.text || '';
+            ocrChunks.push(`--- ${file.name} ---\n${text}`);
+            const rows = await runAnalysisOnText(text, file.name, file.name);
+            total += rows.length;
+          }
+          setRawOcr(ocrChunks.join('\n\n'));
+          setStatus(`Done: ${files.length} screenshot${files.length === 1 ? '' : 's'} · ${total} coins scored · scroll table · history kept`);
+          setViewMode('active');
         } catch (e) {
           setStatus(e.message || 'OCR failed');
         } finally {
@@ -1689,8 +1830,33 @@
       const onDrop = (e) => {
         e.preventDefault();
         setDragOver(false);
-        const f = e.dataTransfer?.files?.[0];
-        if (f) processFile(f);
+        processFiles(e.dataTransfer?.files);
+      };
+
+      const clearActiveView = () => {
+        const now = Date.now();
+        const next = new Set(clearedIds);
+        for (const r of history) {
+          if (faceQuoteWithinActiveWindow(r, now)) next.add(r.id);
+        }
+        setClearedIds(next);
+        saveFaceClearedIds(next);
+        setStatus('Cleared active (7-day) view — full history still recallable.');
+      };
+
+      const recallAll = async () => {
+        setStatus('Recalling quote history…');
+        const remote = await recallFaceQuotesRemote(true);
+        if (remote.length) {
+          const merged = appendFaceQuoteHistory(remote);
+          setHistory(merged);
+        } else {
+          setHistory(loadFaceQuoteHistory());
+        }
+        setClearedIds(new Set());
+        saveFaceClearedIds(new Set());
+        setViewMode('all');
+        setStatus('Showing full historical database (time · seller · value · buy/avoid).');
       };
 
       const saveRarityEdit = () => {
@@ -1706,14 +1872,7 @@
           aliases: [key.toLowerCase()],
         };
         saveFaceRarityOverride(key, entry);
-        const db = loadFaceRarityDb();
-        setRarityDb(db);
-        if (rawOcr) runAnalysisOnText(rawOcr, 'Re-scored');
-        else if (analyzed.length) {
-          const scored = analyzed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, db));
-          setAnalyzed(scored);
-          saveFaceOcrResults(scored);
-        }
+        setRarityDb(loadFaceRarityDb());
         setShowRarityEdit(false);
         setStatus(`Saved rarity profile: ${key}`);
       };
@@ -1723,6 +1882,13 @@
         if (r === 'Buy') return '#0F766E';
         if (r === 'Avoid') return '#B91C1C';
         return '#B45309';
+      };
+
+      const fmtWhen = (iso) => {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '—';
+        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       };
 
       return (
@@ -1737,18 +1903,17 @@
               background: dragOver ? 'rgba(184,134,11,0.08)' : 'rgba(255,255,255,0.65)',
               padding: '22px 18px',
               textAlign: 'center',
-              transition: 'border-color 0.15s, background 0.15s',
             }}
           >
             <div style={{
               fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
               color: C.gold, marginBottom: 8,
             }}>
-              Dealer screenshot → scarcity score
+              Dealer screenshots → live asks → historical DB
             </div>
-            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.5, maxWidth: 520, margin: '0 auto 14px'}}>
-              Drop a screenshot from Ainslie, Perth Mint, BullionStar, etc. We OCR coin names + AUD prices,
-              compare to live LBMA melt, and score scarcity vs a local rarity database.
+            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.5, maxWidth: 560, margin: '0 auto 14px'}}>
+              Upload one or many screenshots. Every coin ask is scored and stored with time · seller · value · buy/avoid.
+              Active view is last {FACE_ACTIVE_DAYS} days; full history is always recallable.
             </p>
             <button
               type="button"
@@ -1763,169 +1928,167 @@
                 boxShadow: '0 6px 18px rgba(184,134,11,0.25)',
               }}
             >
-              {busy ? 'Analysing…' : 'Upload dealer screenshot'}
+              {busy ? 'Analysing…' : 'Upload screenshots (multi)'}
             </button>
             <input
               ref={fileRef}
               type="file"
               accept="image/*"
+              multiple
               style={{display: 'none'}}
-              onChange={(e) => processFile(e.target.files?.[0])}
+              onChange={(e) => processFiles(e.target.files)}
             />
-            {status && (
-              <div style={{fontSize: 12, color: C.textDark, marginTop: 12}}>{status}</div>
-            )}
+            {status && <div style={{fontSize: 12, color: C.textDark, marginTop: 12}}>{status}</div>}
           </div>
 
-          {(previewUrl || rawOcr) && (
-            <div style={{
-              marginTop: 12, display: 'grid',
-              gridTemplateColumns: previewUrl ? 'minmax(140px, 220px) 1fr' : '1fr',
-              gap: 12, alignItems: 'start',
-            }}>
-              {previewUrl && (
-                <img
-                  src={previewUrl}
-                  alt="Upload preview"
-                  style={{width: '100%', borderRadius: 8, border: `1px solid ${C.border}`, maxHeight: 180, objectFit: 'cover'}}
-                />
-              )}
-              <details style={{fontSize: 11, color: C.text}}>
-                <summary style={{cursor: 'pointer', fontWeight: 600, color: C.textDark}}>Raw OCR text (edit & re-score)</summary>
-                <textarea
-                  value={rawOcr}
-                  onChange={(e) => setRawOcr(e.target.value)}
-                  rows={6}
-                  style={{
-                    width: '100%', marginTop: 8, padding: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace',
-                    border: `1px solid ${C.border}`, borderRadius: 6, resize: 'vertical',
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => runAnalysisOnText(rawOcr, 'Pasted text')}
-                  style={{
-                    marginTop: 8, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
-                    border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', color: C.textDark,
-                  }}
-                >Re-score from text</button>
-              </details>
+          {previews.length > 0 && (
+            <div style={{marginTop: 12, display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4}}>
+              {previews.map((url) => (
+                <img key={url} src={url} alt="Upload preview"
+                  style={{height: 88, borderRadius: 6, border: `1px solid ${C.border}`, objectFit: 'cover'}} />
+              ))}
             </div>
           )}
 
-          {analyzed.length > 0 && (
-            <div style={{marginTop: 16}}>
-              <div style={{
-                padding: '12px 14px', marginBottom: 12, borderRadius: 8,
+          {rawOcr && (
+            <details style={{fontSize: 11, color: C.text, marginTop: 10}}>
+              <summary style={{cursor: 'pointer', fontWeight: 600, color: C.textDark}}>Raw OCR text (edit & re-score)</summary>
+              <textarea value={rawOcr} onChange={(e) => setRawOcr(e.target.value)} rows={6}
+                style={{width: '100%', marginTop: 8, padding: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace',
+                  border: `1px solid ${C.border}`, borderRadius: 6, resize: 'vertical'}} />
+              <button type="button" onClick={() => runAnalysisOnText(rawOcr, 'Pasted text', 'pasted-text')}
+                style={{marginTop: 8, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
+                  border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', color: C.textDark}}>
+                Re-score from text
+              </button>
+            </details>
+          )}
+
+          <div style={{marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+            <button type="button" onClick={() => setViewMode('active')}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${viewMode === 'active' ? C.plat : C.border}`,
+                background: viewMode === 'active' ? 'rgba(107,127,150,0.12)' : C.surface,
+                color: viewMode === 'active' ? C.plat : C.textDark}}>
+              Active · {FACE_ACTIVE_DAYS}d ({visibleRows.length})
+            </button>
+            <button type="button" onClick={recallAll}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${viewMode === 'all' ? C.gold : C.border}`,
+                background: viewMode === 'all' ? 'rgba(184,134,11,0.12)' : C.surface,
+                color: viewMode === 'all' ? C.gold : C.textDark}}>
+              Recall all history ({history.length})
+            </button>
+            <button type="button" onClick={clearActiveView}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: C.surface, color: C.textDark}}>
+              Clear active view
+            </button>
+            <span style={{fontSize: 11, color: C.text}}>
+              Auto-hides from active after {FACE_ACTIVE_DAYS} days · kept in history DB forever
+            </span>
+          </div>
+
+          {visibleRows.length > 0 && (
+            <div style={{marginTop: 12}}>
+              <div style={{padding: '12px 14px', marginBottom: 12, borderRadius: 8,
                 background: 'rgba(107,127,150,0.08)', border: `1px solid ${C.borderLight}`,
-                fontSize: 13, color: C.textDark, lineHeight: 1.55,
-              }}>
+                fontSize: 13, color: C.textDark, lineHeight: 1.55}}>
                 <strong style={{color: C.plat}}>Portfolio read:</strong> {portfolioNote}
               </div>
-
-              <div style={{overflowX: 'auto'}}>
-                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 720}}>
-                  <thead>
+              <div style={{maxHeight: 420, overflow: 'auto', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
+                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 880}}>
+                  <thead style={{position: 'sticky', top: 0, zIndex: 1}}>
                     <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
+                      <th style={{padding: '9px 10px'}}>Time</th>
+                      <th style={{padding: '9px 10px'}}>Seller</th>
                       <th style={{padding: '9px 10px'}}>Coin</th>
-                      <th style={{padding: '9px 10px'}}>Price</th>
+                      <th style={{padding: '9px 10px'}}>Value</th>
                       <th style={{padding: '9px 10px'}}>Premium %</th>
                       <th style={{padding: '9px 10px'}}>Scarcity</th>
-                      <th style={{padding: '9px 10px'}}>Rec</th>
+                      <th style={{padding: '9px 10px'}}>Buy / Avoid</th>
                       <th style={{padding: '9px 10px'}}>Reasoning</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {analyzed.map((a) => (
+                    {visibleRows.map((a) => (
                       <tr key={a.id} style={{borderTop: `1px solid ${C.borderLight}`, verticalAlign: 'top'}}>
+                        <td style={{padding: '9px 10px', whiteSpace: 'nowrap', color: C.text, fontVariantNumeric: 'tabular-nums'}}>
+                          {fmtWhen(a.recordedAt)}
+                        </td>
+                        <td style={{padding: '9px 10px', fontWeight: 600, color: C.textDark}}>{a.seller || 'Dealer'}</td>
                         <td style={{padding: '9px 10px'}}>
-                          <div style={{fontWeight: 600, color: C.textDark}}>{a.name}</div>
+                          <div style={{fontWeight: 600, color: C.textDark}}>{a.coin || a.name}</div>
                           <div style={{fontSize: 10, color: C.text, marginTop: 2}}>
-                            {a.metal} · {a.weightOz >= 0.99 ? `${a.weightOz.toFixed(0)} oz` : `${a.weightOz.toFixed(3)} oz`}
-                            {a.rarityKey ? ` · ${a.rarityKey}` : ''}
+                            {a.metal || '—'} · {a.weightOz != null ? (a.weightOz >= 0.99 ? `${Number(a.weightOz).toFixed(0)} oz` : `${Number(a.weightOz).toFixed(3)} oz`) : '—'}
+                            {a.sourceFile ? ` · ${a.sourceFile}` : ''}
                           </div>
                         </td>
                         <td style={{padding: '9px 10px', fontVariantNumeric: 'tabular-nums', fontWeight: 600}}>
-                          {fmtAud(a.priceAud)}
-                          <div style={{fontSize: 10, color: C.text, fontWeight: 400}}>
-                            melt {a.meltAud != null ? fmtAud(a.meltAud) : '—'}
-                          </div>
+                          {(a.valueAud != null || a.priceAud != null) ? fmtAud(a.valueAud ?? a.priceAud) : '—'}
+                          <div style={{fontSize: 10, color: C.text, fontWeight: 400}}>melt {a.meltAud != null ? fmtAud(a.meltAud) : '—'}</div>
                         </td>
-                        <td style={{
-                          padding: '9px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                          color: a.premiumPct == null ? C.text : a.premiumPct > 25 ? '#B45309' : '#047857',
-                        }}>
-                          {a.premiumPct != null ? `${a.premiumPct >= 0 ? '+' : ''}${a.premiumPct.toFixed(1)}%` : '—'}
-                          <div style={{fontSize: 10, color: C.text, fontWeight: 400}}>guide {a.histBand}</div>
+                        <td style={{padding: '9px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                          color: a.premiumPct == null ? C.text : a.premiumPct > 25 ? '#B45309' : '#047857'}}>
+                          {a.premiumPct != null ? `${a.premiumPct >= 0 ? '+' : ''}${Number(a.premiumPct).toFixed(1)}%` : '—'}
                         </td>
                         <td style={{padding: '9px 10px', fontVariantNumeric: 'tabular-nums'}}>
-                          <strong>{a.scarcityScore}</strong>
-                          <div style={{fontSize: 10, color: C.text}}>{a.rarity}</div>
+                          <strong>{a.scarcityScore ?? '—'}</strong>
                         </td>
                         <td style={{padding: '9px 10px', fontWeight: 700, color: recColor(a.recommendation)}}>
-                          {a.recommendation}
+                          {a.recommendation || '—'}
                         </td>
-                        <td style={{padding: '9px 10px', color: C.textSecondary, lineHeight: 1.45, maxWidth: 280}}>
-                          {a.reasoning}
+                        <td style={{padding: '9px 10px', color: C.textSecondary, lineHeight: 1.45, maxWidth: 260}}>
+                          {a.reasoning || '—'}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <div style={{fontSize: 11, color: C.text, marginTop: 6}}>
+                Showing {visibleRows.length} row{visibleRows.length === 1 ? '' : 's'}
+                {viewMode === 'active' ? ` · last ${FACE_ACTIVE_DAYS} days` : ' · full recall'} · scroll for all coins
+              </div>
             </div>
           )}
 
           <div style={{marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
-            <button
-              type="button"
-              onClick={() => setShowRarityEdit((v) => !v)}
-              style={{
-                fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
-                border: `1px solid ${C.border}`, background: C.surface, color: C.textDark,
-              }}
-            >
+            <button type="button" onClick={() => setShowRarityEdit((v) => !v)}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: C.surface, color: C.textDark}}>
               {showRarityEdit ? 'Close rarity editor' : 'Edit / add rarity profile'}
             </button>
             <span style={{fontSize: 11, color: C.text}}>
-              {Object.keys(rarityDb).length} profiles · saved in this browser
+              {Object.keys(rarityDb).length} rarity profiles · {history.length} historical quotes stored
             </span>
           </div>
 
           {showRarityEdit && (
-            <div style={{
-              marginTop: 10, padding: 12, borderRadius: 8,
-              border: `1px solid ${C.border}`, background: C.surface2,
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8,
-            }}>
-              <label style={{fontSize: 11, color: C.textDark}}>
-                Coin key
+            <div style={{marginTop: 10, padding: 12, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2,
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8}}>
+              <label style={{fontSize: 11, color: C.textDark}}>Coin key
                 <input value={editKey} onChange={(e) => setEditKey(e.target.value)} placeholder="2026 Outback Platinum"
                   style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
               </label>
-              <label style={{fontSize: 11, color: C.textDark}}>
-                Rarity
+              <label style={{fontSize: 11, color: C.textDark}}>Rarity
                 <select value={editRarity} onChange={(e) => setEditRarity(e.target.value)}
                   style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}}>
                   {['low', 'medium', 'high', 'ultra'].map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </label>
-              <label style={{fontSize: 11, color: C.textDark}}>
-                Hist premium lo %
+              <label style={{fontSize: 11, color: C.textDark}}>Hist premium lo %
                 <input value={editLo} onChange={(e) => setEditLo(e.target.value)}
                   style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
               </label>
-              <label style={{fontSize: 11, color: C.textDark}}>
-                Hist premium hi %
+              <label style={{fontSize: 11, color: C.textDark}}>Hist premium hi %
                 <input value={editHi} onChange={(e) => setEditHi(e.target.value)}
                   style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
               </label>
               <div style={{display: 'flex', alignItems: 'end'}}>
                 <button type="button" onClick={saveRarityEdit}
-                  style={{
-                    fontSize: 11, fontWeight: 700, padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
-                    border: `1px solid ${C.plat}`, background: C.plat, color: '#fff',
-                  }}>Save profile</button>
+                  style={{fontSize: 11, fontWeight: 700, padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
+                    border: `1px solid ${C.plat}`, background: C.plat, color: '#fff'}}>Save profile</button>
               </div>
             </div>
           )}
