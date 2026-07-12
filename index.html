@@ -1513,6 +1513,91 @@
       { year: 2030, hydrogenDemand: 900 },
     ];
 
+    /**
+     * Forward outlook 2027–2030f — illustrative WPIC-aligned structural path (koz).
+     * Not a live scrape; update when new Platinum Quarterly tables land.
+     * Base = flat-to-slight mine growth; optimistic = Platreef + Booysendal/Eland-style ramps.
+     */
+    const PT_OUTLOOK_HISTORY = platinumSupplyDemand
+      .filter((r) => r.mineSupply != null)
+      .map((r) => ({
+        year: r.year,
+        label: String(r.year),
+        mineSupply: r.mineSupply,
+        recycling: r.recycling,
+        totalSupply: r.totalSupply,
+        totalDemand: r.totalDemand,
+        balance: r.balance,
+        forecast: false,
+      }));
+
+    const PT_OUTLOOK_FORECAST_BASE = [
+      { year: 2027, mineSupply: 5680, recycling: 1850, totalDemand: 7720, balance: -190 },
+      { year: 2028, mineSupply: 5750, recycling: 1920, totalDemand: 7950, balance: -280 },
+      { year: 2029, mineSupply: 5820, recycling: 2000, totalDemand: 8180, balance: -360 },
+      { year: 2030, mineSupply: 5900, recycling: 2100, totalDemand: 8450, balance: -450 },
+    ].map((r) => ({
+      ...r,
+      label: `${r.year}f`,
+      totalSupply: r.mineSupply + r.recycling,
+      forecast: true,
+    }));
+
+    /** Optimistic mine path — extra koz from named expansions (still not enough to erase deficits). */
+    const PT_OUTLOOK_MINE_OPTIMISTIC_EXTRA = {
+      2027: 80,
+      2028: 160,
+      2029: 240,
+      2030: 320,
+    };
+
+    /** High hydrogen/tech demand uplift vs base forecast (koz added to totalDemand). */
+    const PT_OUTLOOK_H2_UPLIFT = {
+      2027: 80,
+      2028: 220,
+      2029: 380,
+      2030: 550,
+    };
+
+    const PT_OUTLOOK_EXPANSIONS = [
+      { year: 2027, tag: 'Platreef', note: 'Ivanhoe Platreef ramp — meaningful but gradual PGM ounces' },
+      { year: 2028, tag: 'Booysendal / Eland', note: 'Northam / sector expansions — marginal SA growth, not a new Bushveld' },
+      { year: 2029, tag: 'Recycling floor', note: 'Secondary supply rises with scrap, still can’t close structural gaps' },
+      { year: 2030, tag: 'H₂ / PEM bid', note: 'Fuel-cell & electrolyser platinum demand scales into hundreds of koz' },
+    ];
+
+    function buildPlatinumOutlookRows(supplyMode = 'base', demandMode = 'base') {
+      const hist = PT_OUTLOOK_HISTORY.map((r) => {
+        const h2 = platinumHydrogenDemand.find((h) => h.year === r.year)?.hydrogenDemand ?? null;
+        return { ...r, hydrogenDemand: h2, deficitFill: r.balance < 0 ? Math.abs(r.balance) : 0 };
+      });
+      const fwd = PT_OUTLOOK_FORECAST_BASE.map((r) => {
+        const mineExtra = supplyMode === 'optimistic' ? (PT_OUTLOOK_MINE_OPTIMISTIC_EXTRA[r.year] || 0) : 0;
+        const demandExtra = demandMode === 'highH2' ? (PT_OUTLOOK_H2_UPLIFT[r.year] || 0) : 0;
+        const mineSupply = r.mineSupply + mineExtra;
+        const recycling = r.recycling;
+        const totalSupply = mineSupply + recycling;
+        const totalDemand = r.totalDemand + demandExtra;
+        const balance = totalSupply - totalDemand;
+        const h2Base = platinumHydrogenDemand.find((h) => h.year === r.year)?.hydrogenDemand
+          ?? (r.year === 2027 ? 220 : r.year === 2029 ? 620 : null);
+        const hydrogenDemand = demandMode === 'highH2'
+          ? Math.round((h2Base || 140) + demandExtra * 0.85)
+          : (h2Base || Math.round(140 + (r.year - 2026) * 140));
+        return {
+          ...r,
+          mineSupply,
+          recycling,
+          totalSupply,
+          totalDemand,
+          balance,
+          hydrogenDemand,
+          deficitFill: balance < 0 ? Math.abs(balance) : 0,
+        };
+      });
+      return [...hist, ...fwd];
+    }
+
     const platinumStockCover = [
       { year: 2022, monthsCover: 7.2 },
       { year: 2023, monthsCover: 5.8 },
@@ -4124,6 +4209,226 @@
       );
     }
 
+    function PlatinumSupplyDemandOutlook({ onOpenWtf }) {
+      const [supplyMode, setSupplyMode] = useState('base');
+      const [demandMode, setDemandMode] = useState('base');
+      const rows = useMemo(
+        () => buildPlatinumOutlookRows(supplyMode, demandMode),
+        [supplyMode, demandMode]
+      );
+      const forecastRows = rows.filter((r) => r.forecast);
+      const avgDef = forecastRows.length
+        ? Math.round(forecastRows.reduce((s, r) => s + r.balance, 0) / forecastRows.length)
+        : null;
+      const fmtVol = (v) => (v == null ? '—' : `${Math.round(v).toLocaleString()} koz`);
+      const tipStyleLocal = {
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
+        padding: '10px 12px',
+        fontSize: 12,
+        boxShadow: '0 8px 24px rgba(26,35,50,0.10)',
+        maxWidth: 300,
+      };
+      const OutlookTip = ({ active, payload, label }) => {
+        if (!active || !payload?.length) return null;
+        const d = payload[0]?.payload || {};
+        const exp = PT_OUTLOOK_EXPANSIONS.find((e) => e.year === d.year);
+        return (
+          <div style={tipStyleLocal}>
+            <div style={{fontWeight: 700, color: C.textDark, marginBottom: 6}}>{label}</div>
+            {d.mineSupply != null && <div style={{color: C.gold, marginBottom: 2}}>Mine · {fmtVol(d.mineSupply)}</div>}
+            {d.recycling != null && <div style={{color: C.plat, marginBottom: 2}}>Recycling · {fmtVol(d.recycling)}</div>}
+            {d.totalDemand != null && <div style={{color: '#B91C1C', marginBottom: 2}}>Demand · {fmtVol(d.totalDemand)}</div>}
+            {d.hydrogenDemand != null && <div style={{color: '#047857', marginBottom: 2}}>H₂ / tech · {fmtVol(d.hydrogenDemand)}</div>}
+            {d.balance != null && (
+              <div style={{fontWeight: 600, color: d.balance < 0 ? '#B91C1C' : '#047857', marginTop: 4}}>
+                Balance · {fmtKoz(d.balance)}{d.balance < 0 ? ' deficit' : ' surplus'}
+              </div>
+            )}
+            {exp && <div style={{fontSize: 11, color: C.text, marginTop: 6, lineHeight: 1.45}}>{exp.tag}: {exp.note}</div>}
+            <div style={{fontSize: 10, color: C.text, marginTop: 6}}>
+              Tightness supports scarcity thesis for miners — lags show up on the WTF curve.
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <div style={{
+          margin: '18px 0 8px',
+          borderTop: `1px solid ${C.border}`,
+          background: 'linear-gradient(180deg, #FBF9F5 0%, #FFFFFF 28%)',
+        }}>
+          <div style={{padding: '20px 18px 8px'}}>
+            <div style={{
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontSize: 'clamp(20px, 2.6vw, 26px)',
+              fontWeight: 400,
+              color: C.textDark,
+              lineHeight: 1.2,
+              marginBottom: 8,
+            }}>
+              Supply–Demand <span style={{color: C.plat}}>Outlook</span>
+            </div>
+            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.6, maxWidth: 760, margin: '0 0 12px'}}>
+              Despite mine expansions, supply growth lags. Demand stays resilient — autos, industry
+              (“in ~30% of manufactured things” as shorthand for catalysts, chemicals, glass, electronics, medical),
+              plus hydrogen/tech upside — so deficits persist. That structural tightness is the macro backdrop
+              for the producer curves above.
+            </p>
+
+            <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10}}>
+              <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.text}}>Supply</span>
+              {[
+                ['base', 'Base mine'],
+                ['optimistic', 'Optimistic expansions'],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setSupplyMode(id)}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                    border: `1px solid ${supplyMode === id ? C.gold : C.border}`,
+                    background: supplyMode === id ? 'rgba(184,134,11,0.12)' : C.surface,
+                    color: supplyMode === id ? C.gold : C.textDark,
+                  }}
+                >{label}</button>
+              ))}
+              <span style={{width: 1, height: 18, background: C.border, margin: '0 4px'}} />
+              <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.text}}>Demand</span>
+              {[
+                ['base', 'Base demand'],
+                ['highH2', 'High H₂ / tech'],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setDemandMode(id)}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                    border: `1px solid ${demandMode === id ? '#B91C1C' : C.border}`,
+                    background: demandMode === id ? 'rgba(185,28,28,0.08)' : C.surface,
+                    color: demandMode === id ? '#B91C1C' : C.textDark,
+                  }}
+                >{label}</button>
+              ))}
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: 10,
+              marginBottom: 12,
+            }}>
+              {[
+                ['Mine (2026)', fmtVol(5622), 'SA ~70% · limited ramp'],
+                ['Total supply', fmtVol(7404), 'Mine + recycling'],
+                ['Avg deficit 27–30f', avgDef != null ? fmtKoz(avgDef) : '—', 'Under current scenario'],
+                ['H₂ path → 2030', '~900 koz', 'WPIC-style trajectory'],
+              ].map(([k, v, sub]) => (
+                <div key={k} style={{padding: '10px 12px', background: C.surface, border: `1px solid ${C.borderLight}`, borderRadius: 6}}>
+                  <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>{k}</div>
+                  <div style={{fontSize: 18, fontWeight: 600, color: C.textDark, fontVariantNumeric: 'tabular-nums', marginTop: 4}}>{v}</div>
+                  <div style={{fontSize: 10, color: C.text, marginTop: 2}}>{sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{padding: '0 8px 4px'}}>
+            <div style={{...panelHdr, paddingTop: 4}}>
+              <span>Production vs demand · koz</span>
+              <span style={{fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: C.text}}>
+                Mine + recycling bars · demand & H₂ lines · deficit depth
+              </span>
+            </div>
+            <ResponsiveContainer width="100%" height={320}>
+              <ComposedChart data={rows} margin={{top: 12, right: 16, left: 4, bottom: 4}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} vertical={false} />
+                <XAxis dataKey="label" tick={{fontSize: 10, fill: C.axis}} axisLine={{stroke: C.border}} tickLine={false} />
+                <YAxis
+                  yAxisId="left"
+                  tick={{fontSize: 10, fill: C.axis}}
+                  axisLine={{stroke: C.border}}
+                  tickLine={false}
+                  tickFormatter={(v) => `${(v / 1000).toFixed(1)}k`}
+                  width={44}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{fontSize: 10, fill: C.axis}}
+                  axisLine={{stroke: C.border}}
+                  tickLine={false}
+                  tickFormatter={(v) => `${v}`}
+                  width={40}
+                  domain={[0, 'auto']}
+                />
+                <Tooltip content={<OutlookTip />} />
+                <Legend wrapperStyle={{fontSize: 11}} />
+                <Bar yAxisId="left" dataKey="mineSupply" name="Mine production" stackId="s" fill={C.gold} fillOpacity={0.85} maxBarSize={28} />
+                <Bar yAxisId="left" dataKey="recycling" name="Recycling" stackId="s" fill={C.plat} fillOpacity={0.55} maxBarSize={28} />
+                <Line yAxisId="left" type="monotone" dataKey="totalDemand" name="Total demand" stroke="#B91C1C" strokeWidth={2.4} dot={{r: 3}} />
+                <Line yAxisId="right" type="monotone" dataKey="hydrogenDemand" name="H₂ / tech (koz)" stroke="#047857" strokeWidth={2} strokeDasharray="5 4" dot={{r: 3}} connectNulls />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div style={{padding: '4px 18px 16px', overflowX: 'auto'}}>
+            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 560}}>
+              <thead>
+                <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
+                  <th style={{padding: '8px 10px'}}>Year</th>
+                  <th style={{padding: '8px 10px'}}>Mine</th>
+                  <th style={{padding: '8px 10px'}}>Recycling</th>
+                  <th style={{padding: '8px 10px'}}>Total supply</th>
+                  <th style={{padding: '8px 10px'}}>Demand</th>
+                  <th style={{padding: '8px 10px'}}>Balance</th>
+                  <th style={{padding: '8px 10px'}}>Callout</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.filter((r) => r.year >= 2024).map((r) => {
+                  const exp = PT_OUTLOOK_EXPANSIONS.find((e) => e.year === r.year);
+                  return (
+                    <tr key={r.year} style={{borderTop: `1px solid ${C.borderLight}`, background: r.forecast ? 'rgba(184,134,11,0.04)' : 'transparent'}}>
+                      <td style={{padding: '8px 10px', fontWeight: 600, color: C.textDark}}>{r.label}</td>
+                      <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums'}}>{fmtVol(r.mineSupply)}</td>
+                      <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums'}}>{fmtVol(r.recycling)}</td>
+                      <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums'}}>{fmtVol(r.totalSupply)}</td>
+                      <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums'}}>{fmtVol(r.totalDemand)}</td>
+                      <td style={{
+                        padding: '8px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                        color: r.balance < 0 ? '#B91C1C' : '#047857',
+                      }}>{fmtKoz(r.balance)}</td>
+                      <td style={{padding: '8px 10px', color: C.text, fontSize: 11}}>{exp ? exp.tag : (r.forecast ? 'Forecast' : '—')}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p style={{fontSize: 11, color: C.text, lineHeight: 1.55, marginTop: 10, maxWidth: 720}}>
+              Narrative: even optimistic expansions leave multi-year deficits if demand holds and H₂ scales.
+              Equity curves above often lockstep on Pt — this is why. Cross-check price lag on{' '}
+              {onOpenWtf ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenWtf('wtf')}
+                  style={{
+                    background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    color: C.plat, fontWeight: 600, textDecoration: 'underline', font: 'inherit',
+                  }}
+                >Supply vs Price · WTF</button>
+              ) : 'Supply vs Price · WTF'}
+              . Illustrative forecasts aligned to WPIC-style structure — not live scrape.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     function ProducerShareSubtitle({ meta }) {
       if (!meta) return null;
       if (meta.marketSharePct == null) return <>{meta.production || ''}</>;
@@ -4549,6 +4854,7 @@
                 </div>
               );
             })}
+            <PlatinumSupplyDemandOutlook onOpenWtf={onOpenTab} />
           </>
         );
       }
@@ -8233,7 +8539,8 @@
                 Top four global platinum mine producers by output — all JSE-listed, with primary production in the
                 South Africa Bushveld (Sibanye-Stillwater also operates US PGM assets in Montana).
                 Their charts often look like echoes of each other: same commodity driver, shared SA risks, and
-                sector flows — that lockstep is expected, not faked. See the note on the charts below.
+                sector flows — that lockstep is expected, not faked. Scroll to Supply–Demand Outlook for
+                forward deficits vs mine expansions.
               </p>
               <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
                 {['IDX-201','IDX-202','IDX-203','IDX-204'].map(id => {
