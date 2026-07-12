@@ -1235,7 +1235,7 @@
         scarcity: 'Limited thematic issue · scarcity > bullion kangaroo',
         askAud: 2569,
         status: 'watch',
-        notes: 'Indicative retail ask — update when you see a firm quote',
+        notes: 'Firm-ish AUD retail ask — update when you see a new quote',
       },
       {
         id: 'us-eagle-half-pt',
@@ -1245,9 +1245,10 @@
         faceValue: 50,
         faceCurrency: 'USD',
         scarcity: 'US legal tender · collector + bullion crossover',
-        askUsd: 1930,
+        // Was wrongly stored as askUsd (double FX). Cart quote was AUD.
+        askAud: 1930,
         status: 'cart',
-        notes: 'Matches recent secondary quotes (~½oz AGE)',
+        notes: 'AUD cart quote — ~½oz AGE; not USD (was double-converting)',
       },
       {
         id: 'ca-1812-half-pt-2017',
@@ -1257,9 +1258,9 @@
         faceValue: 50,
         faceCurrency: 'CAD',
         scarcity: 'Thematic / low float vs Maple — scarcity premium sticky',
-        askUsd: 2831,
+        askAud: 2831,
         status: 'cart',
-        notes: 'High premium vs melt — scarcity + theme, not melt arb',
+        notes: 'AUD cart quote for scarce thematic — premium is real, not melt arb',
       },
       {
         id: 'uk-tudor-dragon-1oz-2024',
@@ -1269,9 +1270,9 @@
         faceValue: 100,
         faceCurrency: 'GBP',
         scarcity: 'Royal Mint series · limited thematic',
-        askUsd: 1852,
+        askAud: 2650,
         status: 'cart',
-        notes: 'Indicative ask from recent listings',
+        notes: 'Indicative AUD ask (~melt + mid-teens %)',
       },
       {
         id: 'cn-panda-30g-au',
@@ -1281,9 +1282,10 @@
         faceValue: 500,
         faceCurrency: 'CNY',
         scarcity: 'Annual design change · Asia collector demand',
-        askUsd: 2800,
+        // Tracks live melt + premium so it can’t print below spot
+        indicativePremiumPct: 12,
         status: 'watch',
-        notes: 'Weight ≈0.9645 oz — premium tracks Chinese demand',
+        notes: '≈0.9645 oz · ask = melt + 12% until you set a firm askAud',
       },
       {
         id: 'au-lunar-1oz-pt',
@@ -7690,10 +7692,13 @@
             askLabel = askAud != null ? 'Perth offer' : 'Perth n/a';
           } else if (coin.askAud != null) {
             askAud = coin.askAud;
-            askLabel = 'Indicative AUD';
+            askLabel = 'Ask AUD';
           } else if (coin.askUsd != null) {
             askAud = usdToAud(coin.askUsd);
-            askLabel = 'Indicative USD→AUD';
+            askLabel = `USD ${fmtUsd(coin.askUsd, 0)} → AUD`;
+          } else if (coin.indicativePremiumPct != null && meltAud != null) {
+            askAud = meltAud * (1 + coin.indicativePremiumPct / 100);
+            askLabel = `Melt + ${coin.indicativePremiumPct}%`;
           }
           const premiumPct = askAud != null && meltAud > 0
             ? ((askAud - meltAud) / meltAud) * 100
@@ -7967,9 +7972,10 @@
           </div>
 
           <div style={{padding: '8px 18px 20px', fontSize: 11, color: C.text, lineHeight: 1.55, maxWidth: 760}}>
-            Melt = weight × LBMA spot ÷ AUDUSD. Asks marked indicative are shopping quotes — replace with your
-            dealer numbers in <code>FACE_VALUE_COINS</code>. Face value is legal tender, not a cash-out floor at melt.
-            Not investment advice.
+            Melt = weight × LBMA spot ÷ AUDUSD. Prefer <code>askAud</code> for AUD shopping quotes —
+            storing AUD figures as <code>askUsd</code> double-converts FX and inflates premiums.
+            Use <code>indicativePremiumPct</code> when you only know “about X% over melt”.
+            Face value is legal tender, not a cash-out floor at melt. Not investment advice.
           </div>
         </div>
       );
