@@ -993,6 +993,52 @@
       return res.json();
     }
 
+    /** Paginated asset history from Supabase (public RLS). Avoids asc+limit=2000 truncating to ancient rows. */
+    async function fetchAssetHistoryFromSupabase(table, asset, days) {
+      if (!SUPABASE_URL.includes('.supabase.co')) return [];
+      let path =
+        `${table}?select=price,recorded_at,recorded_day` +
+        `&asset=eq.${encodeURIComponent(asset)}` +
+        `&order=recorded_at.asc`;
+      if (days != null && Number.isFinite(Number(days)) && Number(days) > 0) {
+        const since = new Date();
+        since.setUTCDate(since.getUTCDate() - Math.ceil(Number(days)) - 3);
+        path += `&recorded_day=gte.${since.toISOString().slice(0, 10)}`;
+      }
+      const out = [];
+      const page = 1000;
+      let from = 0;
+      for (let guard = 0; guard < 40; guard++) {
+        const to = from + page - 1;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+          headers: { ...sbAnonHeaders(), Range: `${from}-${to}` },
+        });
+        if (!res.ok) break;
+        const batch = await res.json();
+        if (!Array.isArray(batch) || !batch.length) break;
+        out.push(...batch);
+        if (batch.length < page) break;
+        from += page;
+      }
+      return out.map((r) => ({
+        ts: Date.UTC(
+          new Date(r.recorded_at).getUTCFullYear(),
+          new Date(r.recorded_at).getUTCMonth(),
+          new Date(r.recorded_at).getUTCDate(),
+          12, 0, 0, 0
+        ),
+        price: Number(r.price),
+      })).filter((p) => Number.isFinite(p.ts) && Number.isFinite(p.price) && p.price > 0);
+    }
+
+    async function fetchMetalHistoryFromSupabase(asset, days) {
+      return fetchAssetHistoryFromSupabase('metal_price_history', asset, days);
+    }
+
+    async function fetchCryptoHistoryFromSupabase(asset, days) {
+      return fetchAssetHistoryFromSupabase('crypto_price_history', asset, days);
+    }
+
     const GECKO_TO_ASSET = {
       bitcoin: 'BTC',
       ethereum: 'ETH',
@@ -1068,8 +1114,17 @@
       { id:'3m',  label:'3 Months',  cgDays:90,   perthKey:'twoYearsHistoricData',    days:90,    maxPts:500 },
       { id:'1y',  label:'1 Year',    cgDays:365,  perthKey:'twoYearsHistoricData',    days:365,   maxPts:600 },
       { id:'3y',  label:'3 Years',   cgDays:1095, perthKey:'threeYearsHistoricData',  days:1095,  maxPts:700 },
-      { id:'5y',  label:'5 Years',   cgDays:null, perthKey:'fiveYearsHistoricData', days:1825, maxPts:800 },
+      { id:'5y',  label:'5 Years',   cgDays:null, perthKey:'fiveYearsHistoricData',   days:1825,  maxPts:800 },
+      // Metals DB runs ~1976→today (~50y). These are metals-first; crypto/producers omit them.
+      { id:'10y', label:'10 Years',  cgDays:null, perthKey:'fiveYearsHistoricData',   days:3650,  maxPts:1000 },
+      { id:'20y', label:'20 Years',  cgDays:null, perthKey:'fiveYearsHistoricData',   days:7300,  maxPts:1200 },
+      { id:'max', label:'All history', cgDays:null, perthKey:'fiveYearsHistoricData', days:null,  maxPts:1400 },
     ];
+
+    const METALS_TIMEFRAMES = TIMEFRAMES;
+    const CRYPTO_TIMEFRAMES = TIMEFRAMES.filter((t) =>
+      ['24h', '1w', '1m', '3m', '1y', '3y', '5y'].includes(t.id)
+    );
 
     // Producer resolution ladder:
     //   24h / 1w / 1m  → hourly bars (producer_price_intraday)
@@ -1135,7 +1190,41 @@
       index: ['IDX-001','IDX-002','IDX-003','IDX-004','IDX-005'],
       perth: ['IDX-103','IDX-104','IDX-101','IDX-102','IDX-107'],
       producers: ['IDX-201','IDX-202','IDX-203','IDX-204'],
+      bridge: ['IDX-002','IDX-005'],
     };
+
+    const PT_CFX_INTERFACE = [
+      {
+        lens: 'What it is',
+        platinum: 'Physical PGM — mined, refined, industrially consumed',
+        cfx: 'Public L1 — Tree-Graph consensus + EVM eSpace',
+      },
+      {
+        lens: 'Scarcity logic',
+        platinum: 'Finite mine + recycling; WPIC multi-year deficits; AGS cover compressing',
+        cfx: 'Fixed-ish issuance + fee burn / staking demand — utility scarcity, not geological',
+      },
+      {
+        lens: 'Demand engine',
+        platinum: 'Auto catalysts, jewellery, industrial, hydrogen/PEM, investment bars/ETFs',
+        cfx: 'Stablecoin rails, cross-border settlement experiments, dapp/fee throughput',
+      },
+      {
+        lens: 'Geography',
+        platinum: '~72% mine supply South Africa; China key for fabrication & investment',
+        cfx: 'China-rooted network; BRI / RMB digitisation narrative (AxCNY & corridor pilots)',
+      },
+      {
+        lens: 'Price driver on the margin',
+        platinum: 'Investment flows + stock cover, not just WPIC balance',
+        cfx: 'Risk appetite + on-chain activity + China crypto policy tone',
+      },
+      {
+        lens: 'Portfolio role',
+        platinum: 'Hard-asset scarcity the paper market keeps mispricing — buy the idiocy, size for lag',
+        cfx: 'High-beta digital rail on Asia settlement / RMB digitisation — not a metal substitute',
+      },
+    ];
 
     const STORAGE_KEY = 'pm_metis_perth_snapshots';
 
@@ -1434,7 +1523,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v17:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v18:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -1489,11 +1578,10 @@
     }
 
     function granularityForDays(days) {
-      // Daily up to 5y — we store that in Supabase. Monthly only for open-ended long views.
-      // (Previously capped at 400d which forced monthly for 3y; combined with Supabase's
-      // 1000-row page limit that produced a ~2.7y wall on charts.)
-      if (days == null) return 'monthly';
-      if (days <= 1825) return 'daily';
+      // Prefer daily from metal_price_history (paginated). We store ~1976→today.
+      // Monthly only as a last-resort compress for absurd open ranges if ever needed.
+      if (days == null) return 'daily';
+      if (days <= 20000) return 'daily';
       return 'monthly';
     }
 
@@ -1511,18 +1599,27 @@
     }
 
     function historyDaysForTf(tf) {
-      if (tf?.cgDays != null) return tf.cgDays;
+      // Prefer explicit calendar window (days) over CoinGecko cgDays so metals
+      // 10y/20y/max use the full Supabase archive, not a CG-shaped cap.
       if (tf?.days != null) return tf.days;
+      if (tf?.cgDays != null) return tf.cgDays;
       return null;
     }
 
     async function fetchMetalProxy(symbol, days) {
+      const asset = symbol === 'PL=F' || symbol === 'XPT' ? 'XPT' : 'XAU';
+      // Prefer direct Supabase read (same data the Netlify function serves).
+      try {
+        const direct = await fetchMetalHistoryFromSupabase(asset, days);
+        if (direct.length >= 8) return direct;
+      } catch (_) {}
+
       const granularity = granularityForDays(days);
       const qs = new URLSearchParams({ symbol, granularity });
       if (days != null) qs.set('days', String(Math.ceil(days) + 3));
       const url = `/.netlify/functions/metals-history?${qs}`;
       try {
-        const res = await pmFetch(url, {}, 15000);
+        const res = await pmFetch(url, {}, 20000);
         const j = await res.json();
         if (!j.ok || !j.prices?.length) return null;
         return j.prices.map(([ts, price]) => ({ ts, price }));
@@ -1553,40 +1650,16 @@
 
       const asset = GECKO_TO_ASSET[coinId];
       if (asset) {
-        const gran = granularityForDays(days);
-        let rows = [];
         try {
-          rows = await fetchSupabaseTableRows(
-            gran === 'monthly' ? 'crypto_price_history_monthly' : 'crypto_price_history',
-            `select=price,recorded_at&asset=eq.${encodeURIComponent(asset)}&order=recorded_at.asc&limit=2000`
-          );
+          const direct = await fetchCryptoHistoryFromSupabase(asset, dayNum);
+          if (direct.length >= 8) return direct;
         } catch (_) {}
 
-        if (!rows.length && gran === 'monthly') {
-          try {
-            const daily = await fetchSupabaseTableRows(
-              'crypto_price_history',
-              `select=price,recorded_at&asset=eq.${encodeURIComponent(asset)}&order=recorded_at.asc&limit=2000`
-            );
-            const byMonth = new Map();
-            for (const r of daily) {
-              const t = new Date(r.recorded_at);
-              if (Number.isNaN(t.getTime())) continue;
-              const key = `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}`;
-              byMonth.set(key, r);
-            }
-            rows = [...byMonth.values()].sort(
-              (a, b) => new Date(a.recorded_at) - new Date(b.recorded_at)
-            );
-          } catch (_) {}
-        }
-
-        if (rows.length) {
-          return rows.map((r) => ({
-            ts: new Date(r.recorded_at).getTime(),
-            price: Number(r.price),
-          }));
-        }
+        // Fallback: monthly compress if daily window somehow empty
+        try {
+          const monthly = await fetchAssetHistoryFromSupabase('crypto_price_history_monthly', asset, dayNum);
+          if (monthly.length >= 4) return monthly;
+        } catch (_) {}
       }
 
       throw new Error('No stored crypto history for ' + coinId);
@@ -1598,6 +1671,10 @@
 
       if (yahooSym) {
         const proxy = await fetchMetalProxy(yahooSym, days);
+        // Real stored history wins — never fall through to tether-gold / ratio clones
+        // when we already have a usable series (causes "31 pts" + lockstep Au/Pt).
+        const minPts = days != null && days <= 40 ? 10 : 40;
+        if (proxy?.length >= minPts) return proxy;
         if (proxy?.length) return proxy;
       }
 
@@ -1657,7 +1734,7 @@
 
       // Weekend / after-hours: wall-clock 24h only keeps a handful of Friday bars.
       // Anchor from the last print and keep a full session (or week) of points.
-      const minKeep = ({ '24h': 40, '1w': 40, '1m': 80, '3m': 40, '1y': 60, '3y': 120, '5y': 180 })[timeframeId] || 0;
+      const minKeep = ({ '24h': 40, '1w': 40, '1m': 80, '3m': 40, '1y': 60, '3y': 120, '5y': 180, '10y': 200, '20y': 240, 'max': 300 })[timeframeId] || 0;
       const lastTs = rows[rows.length - 1]?.ts;
       const marketQuiet = lastTs != null && now - lastTs > 6 * 3600000;
       if (minKeep && (filtered.length < minKeep || (marketQuiet && (timeframeId === '24h' || timeframeId === '1w')))) {
@@ -1740,7 +1817,7 @@
             : maxPtsFor(tf);
           await sleep(CG_FETCH_STAGGER[id] || 0);
           try {
-            let pts = await fetchChartSeries(coinId, tf.cgDays ?? historyDaysForTf(tf));
+            let pts = await fetchChartSeries(coinId, historyDaysForTf(tf));
             pts = filterByTimeframe(pts, tf);
             if (pts.length) cryptoSeries[id] = downsample(pts, maxPts);
           } catch (_) {
@@ -1926,6 +2003,7 @@
       return rows.map((row) => {
         const out = { ...row };
         for (const id of producerIds) {
+          // Price only — never scale share volume by FX.
           if (out[id] != null && !Number.isNaN(out[id])) out[id] = out[id] / zarPerAud;
         }
         return out;
@@ -1956,15 +2034,31 @@
       if (!result) throw new Error(`Yahoo ${ticker}: no data`);
       const currency = result.meta?.currency || 'ZAR';
       const timestamps = result.timestamp || [];
-      const closes = result.indicators?.quote?.[0]?.close || [];
+      const quote = result.indicators?.quote?.[0] || {};
+      const closes = quote.close || [];
+      const vols = quote.volume || [];
       const points = [];
       for (let i = 0; i < timestamps.length; i++) {
         const price = zarFromYahooClose(closes[i], currency);
         if (price == null) continue;
-        points.push({ ts: timestamps[i] * 1000, price, day: new Date(timestamps[i] * 1000).toISOString().slice(0, 10) });
+        const vol = Number(vols[i]);
+        points.push({
+          ts: timestamps[i] * 1000,
+          price,
+          volume: Number.isFinite(vol) && vol > 0 ? vol : null,
+          day: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+        });
       }
       if (!points.length) throw new Error(`Yahoo ${ticker}: empty`);
       return points;
+    }
+
+    function fmtShareVolume(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v) || v <= 0) return '—';
+      if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e7 ? 1 : 2)}M`;
+      if (v >= 1e3) return `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k`;
+      return String(Math.round(v));
     }
 
     async function fetchYahooProducerHistory(ticker, timeframeId) {
@@ -2000,7 +2094,16 @@
         const day = d.getUTCDay();
         const weekStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((day + 6) % 7), 12, 0, 0, 0);
         const prev = byWeek.get(weekStart);
-        if (!prev || p.ts >= prev.ts) byWeek.set(weekStart, { ts: weekStart, price: p.price });
+        if (!prev) {
+          byWeek.set(weekStart, {
+            ts: weekStart,
+            price: p.price,
+            volume: Number(p.volume) || 0,
+          });
+        } else {
+          if (p.ts >= prev.ts) prev.price = p.price;
+          prev.volume = (prev.volume || 0) + (Number(p.volume) || 0);
+        }
       }
       return [...byWeek.keys()].sort((a, b) => a - b).map((k) => byWeek.get(k));
     }
@@ -2019,13 +2122,17 @@
       const sorted = [...tsSet].sort((a, b) => a - b);
       const byId = {};
       Object.entries(filtered).forEach(([id, pts]) => {
-        byId[id] = new Map(pts.map((p) => [p.ts, p.price]));
+        byId[id] = new Map(pts.map((p) => [p.ts, p]));
       });
       return sorted.map((ts) => {
         const row = { ts, label: fmtTs(ts, tfId) };
         Object.keys(filtered).forEach((id) => {
-          const price = byId[id].get(ts);
-          if (price != null) row[id] = price;
+          const hit = byId[id].get(ts);
+          if (!hit) return;
+          row[id] = hit.price;
+          if (hit.volume != null && Number.isFinite(Number(hit.volume)) && Number(hit.volume) > 0) {
+            row[`${id}__vol`] = Number(hit.volume);
+          }
         });
         return row;
       });
@@ -2068,7 +2175,7 @@
     async function sbFetchProducerIntraday(tickers, sinceIso) {
       return sbFetchProducerTable(
         'producer_price_intraday',
-        'ticker,close,recorded_at,interval_min',
+        'ticker,close,volume,recorded_at,interval_min',
         tickers,
         sinceIso
       );
@@ -2213,6 +2320,17 @@
         const rows = await sbFetchProducerIntraday(tickers, sinceIso);
         const preferFine = tfId === '24h' || tfId === '1w';
         const hasFine = rows.some((r) => Number(r.interval_min) === 5);
+        // Sharenet 5m bars often omit volume — keep Yahoo/Sharenet 60m volumes by hour.
+        const volByTickerHour = new Map();
+        for (const r of rows) {
+          if ((Number(r.interval_min) || 60) !== 60) continue;
+          const vol = Number(r.volume);
+          if (!Number.isFinite(vol) || vol <= 0) continue;
+          const ts = new Date(r.recorded_at).getTime();
+          if (!Number.isFinite(ts)) continue;
+          const hourTs = Math.floor(ts / 3600000) * 3600000;
+          volByTickerHour.set(`${r.ticker}|${hourTs}`, vol);
+        }
         for (const r of rows) {
           const iv = Number(r.interval_min) || 60;
           if (preferFine) {
@@ -2226,8 +2344,26 @@
           const ts = new Date(r.recorded_at).getTime();
           const price = normalizeJseZarPrice(r.close, r.ticker);
           if (!Number.isFinite(ts) || price == null) continue;
+          const directVol = Number(r.volume);
+          const volume = (Number.isFinite(directVol) && directVol > 0) ? directVol : null;
           if (!seriesMap[id]) seriesMap[id] = [];
-          seriesMap[id].push({ ts, price });
+          seriesMap[id].push({ ts, price, volume });
+        }
+        // Attach 60m volumes once per hour onto the last bar in that hour (avoid repeating on every 5m print).
+        if (preferFine && hasFine && volByTickerHour.size) {
+          for (const [key, vol] of volByTickerHour) {
+            const sep = key.lastIndexOf('|');
+            const ticker = key.slice(0, sep);
+            const hourTs = Number(key.slice(sep + 1));
+            const id = producers.find((pid) => byId[pid]?.ticker === ticker);
+            const pts = id ? seriesMap[id] : null;
+            if (!pts?.length) continue;
+            let best = null;
+            for (const p of pts) {
+              if (p.ts >= hourTs && p.ts < hourTs + 3600000) best = p;
+            }
+            if (best && !(Number(best.volume) > 0)) best.volume = vol;
+          }
         }
         source = hasFine && preferFine ? 'supabase-producer-5m' : 'supabase-producer-hourly';
         const richest = Math.max(0, ...Object.values(seriesMap).map((pts) => pts.length));
@@ -2386,6 +2522,10 @@
         return d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
       if (tfId === '1m' || tfId === '3m')
         return d.toLocaleDateString([], { month:'short', day:'numeric' });
+      if (tfId === 'max' || tfId === '20y')
+        return String(d.getUTCFullYear());
+      if (tfId === '10y' || tfId === '5y' || tfId === '3y')
+        return d.toLocaleDateString([], { year:'numeric', month:'short' });
       return d.toLocaleDateString([], { year:'numeric', month:'short', day:'numeric' });
     }
 
@@ -3106,7 +3246,7 @@
       return next;
     }
 
-    const TIMELINE_FETCH_TIMEOUT_MS = 25000;
+    const TIMELINE_FETCH_TIMEOUT_MS = 45000;
 
     function fetchMarketTimelineWithTimeout(tab, metalTimeframeId, curveIds, cryptoTimeframeId, cfxTimeframeId) {
       return Promise.race([
@@ -3251,7 +3391,7 @@
       useEffect(() => {
         if (tab !== 'index') return undefined;
         let cancelled = false;
-        const cacheKey = `v12:metals:${metalTimeframe}:${idsKey}`;
+        const cacheKey = `v14:metals:${metalTimeframe}:${idsKey}`;
         const METALS_CACHE_TTL_MS = 30 * 60 * 1000;
 
         async function loadMetals() {
@@ -3297,7 +3437,7 @@
       useEffect(() => {
         if (tab !== 'index') return undefined;
         let cancelled = false;
-        const cacheKey = `v11:crypto:${cryptoTf}:${cfxTf}:${idsKey}`;
+        const cacheKey = `v12:crypto:${cryptoTf}:${cfxTf}:${idsKey}`;
 
         async function loadCrypto() {
           if (!hasData.current) setLoading(true);
@@ -3334,7 +3474,7 @@
       }, [tab, cryptoTf, cfxTf, idsKey]);
 
       useEffect(() => {
-        if (tab === 'index') return undefined;
+        if (tab === 'index' || tab === 'bridge') return undefined;
         let cancelled = false;
         const mergedKey = `v10:${tab}:${metalTimeframe}:${idsKey}`;
 
@@ -3434,7 +3574,7 @@
       return [floor, max + pad];
     }
 
-    function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale, liveSpot, connectNulls, tightScale, chartHeight = 260, subtitle }) {
+    function SingleTimelineChart({ title, unit, rows, curveIds, timeframe, showEvents, events, logScale, liveSpot, connectNulls, tightScale, chartHeight = 260, subtitle, expectDense = true }) {
       const chartRows = useMemo(() => {
         if (!rows?.length || !curveIds?.length) return [];
         let filtered = filterRowsByTimeframe(rows, timeframe);
@@ -3461,8 +3601,9 @@
       })[timeframe] ?? 0;
       const lastPointTs = chartRows.reduce((m, r) => Math.max(m, r.ts || 0), 0);
       const marketQuiet = lastPointTs > 0 && Date.now() - lastPointTs > 6 * 3600000;
-      // Don't nag "propagating" on weekends / after the JSE session is done.
-      const pulling = !marketQuiet && minGood > 0 && pointCount > 0 && pointCount < minGood;
+      // Daily metals/crypto: ~22 trading days/month is complete — don't flash "propagating".
+      // Dense mode is for producer intraday where we expect dozens–hundreds of bars.
+      const pulling = expectDense && !marketQuiet && minGood > 0 && pointCount > 0 && pointCount < minGood;
       const tfLabel = (TIMEFRAMES.find(t => t.id === timeframe)?.label || timeframe);
 
       const yDomain = yDomainForChart(chartRows, curveIds, logScale, { tight: tightScale });
@@ -3564,6 +3705,179 @@
                 {tfLabel} window has {pointCount} points so far. This will look “flat” until more prints land.
               </div>
             </div>
+          )}
+        </div>
+      );
+    }
+
+    function ProducerPriceVolumeChart({ title, subtitle, unit, rows, curveId, timeframe, showEvents, events }) {
+      const volKey = `${curveId}__vol`;
+      const meta = CURVE_INDEX[curveId];
+      const color = meta?.color || C.plat;
+
+      const chartRows = useMemo(() => {
+        if (!rows?.length || !curveId) return [];
+        const filtered = filterRowsByTimeframe(rows, timeframe);
+        const withData = filtered.filter((r) => r[curveId] != null && !isNaN(r[curveId]));
+        return withData.length ? withData : filtered;
+      }, [rows, curveId, timeframe]);
+
+      if (!curveId || !chartRows.length) return null;
+
+      const hasPrice = chartRows.some((r) => r[curveId] != null && !isNaN(r[curveId]));
+      if (!hasPrice) {
+        return (
+          <div style={{marginBottom:8}}>
+            <div style={{...panelHdr, paddingTop:10}}><span>{title}</span></div>
+            <div style={{padding:24, textAlign:'center', color:C.text, fontSize:12}}>
+              No data for selected period — try a longer timeframe or refresh.
+            </div>
+          </div>
+        );
+      }
+
+      const hasVolume = chartRows.some((r) => {
+        const v = Number(r[volKey]);
+        return Number.isFinite(v) && v > 0;
+      });
+      const yDomain = yDomainForChart(chartRows, [curveId], false, { tight: true });
+      const syncId = `producer-pv-${curveId}`;
+      const fmtY = (v) => {
+        if (unit === 'AUD') return fmtAud(v).replace(' AUD', '');
+        if (unit === 'ZAR') return fmtZar(v);
+        return fmtUsd(v);
+      };
+      const paneLabel = {
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        marginBottom: 2,
+        paddingLeft: 4,
+      };
+
+      const ProducerTip = ({ active, payload }) => {
+        if (!active || !payload?.length) return null;
+        const row = payload[0]?.payload || {};
+        const price = row[curveId];
+        const vol = row[volKey];
+        return (
+          <div style={tipStyle}>
+            <div style={{color: C.textDark, marginBottom: 8, fontSize: 12, fontWeight: 600}}>
+              {fmtTs(row.ts, timeframe)}
+            </div>
+            {price != null && !isNaN(price) && (
+              <div style={{color, marginBottom: 4, fontWeight: 600}}>
+                Share price · {unit === 'AUD' ? fmtAud(price) : fmtY(price)}
+              </div>
+            )}
+            {vol != null && Number(vol) > 0 ? (
+              <div style={{color: '#475569', fontWeight: 600}}>
+                Volume · {fmtShareVolume(vol)} shares
+              </div>
+            ) : (
+              <div style={{color: C.text, fontSize: 11}}>Volume · not in this print</div>
+            )}
+          </div>
+        );
+      };
+
+      return (
+        <div style={{marginBottom: 14}}>
+          <div style={{...panelHdr, paddingTop: 10}}>
+            <span>{title}</span>
+          </div>
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 14,
+            padding: '4px 4px 10px',
+            fontSize: 11,
+            color: C.textSecondary,
+          }}>
+            <span style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+              <span style={{width: 18, height: 2, background: color, borderRadius: 1}}/>
+              <span style={{fontWeight: 600, color: C.textDark}}>Share price</span>
+              <span>· {unit}</span>
+            </span>
+            <span style={{display: 'inline-flex', alignItems: 'center', gap: 6}}>
+              <span style={{
+                width: 10, height: 10, borderRadius: 2,
+                background: 'rgba(71, 85, 105, 0.45)',
+                border: '1px solid rgba(71, 85, 105, 0.7)',
+              }}/>
+              <span style={{fontWeight: 600, color: C.textDark}}>Volume</span>
+              <span>· shares traded</span>
+            </span>
+          </div>
+
+          <div style={{...paneLabel, color}}>Share price · {unit}</div>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={chartRows} syncId={syncId} margin={{top: 8, right: 16, left: 8, bottom: 0}}>
+              <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+              <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                tickFormatter={(ts) => fmtTs(ts, timeframe)}
+                interval="preserveStartEnd" minTickGap={44} {...axP} hide/>
+              <YAxis {...axP} width={62} domain={yDomain} tickFormatter={fmtY}/>
+              <Tooltip content={<ProducerTip/>} cursor={{stroke: C.border}}/>
+              {showEvents && (events || []).map((e) => {
+                const xTs = eventXLabel(e.ts, chartRows);
+                if (xTs == null) return null;
+                return (
+                  <ReferenceLine key={`${e.ts}-price`} x={xTs} stroke={e.c}
+                    strokeDasharray="4 3" strokeWidth={1.5} label={mkTsLbl(e.s, e.c)}/>
+                );
+              })}
+              <Line type="monotone" dataKey={curveId} name="price"
+                stroke={color} strokeWidth={2.25} dot={false}
+                connectNulls={false} activeDot={{r: 4, strokeWidth: 0, fill: color}}/>
+            </LineChart>
+          </ResponsiveContainer>
+
+          <div style={{
+            height: 1,
+            background: C.borderLight,
+            margin: '6px 4px 10px',
+          }}/>
+
+          <div style={{...paneLabel, color: '#475569'}}>Volume · shares traded</div>
+          {hasVolume ? (
+            <ResponsiveContainer width="100%" height={96}>
+              <BarChart data={chartRows} syncId={syncId} margin={{top: 4, right: 16, left: 8, bottom: 4}}>
+                <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                  tickFormatter={(ts) => fmtTs(ts, timeframe)}
+                  interval="preserveStartEnd" minTickGap={44} {...axP}/>
+                <YAxis {...axP} width={62} tickFormatter={fmtShareVolume}
+                  domain={[0, (max) => (max > 0 ? max * 1.15 : 1)]}/>
+                <Tooltip content={<ProducerTip/>} cursor={{fill: 'rgba(148, 163, 184, 0.12)'}}/>
+                <Bar dataKey={volKey} name="volume" fill="rgba(71, 85, 105, 0.48)"
+                  stroke="rgba(71, 85, 105, 0.75)" strokeWidth={0.5}
+                  isAnimationActive={false} maxBarSize={14}/>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{
+              height: 72,
+              margin: '0 4px 4px',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '0 12px',
+              fontSize: 11,
+              color: C.text,
+              background: C.surface2,
+              borderRadius: 8,
+              border: `1px dashed ${C.border}`,
+              lineHeight: 1.45,
+            }}>
+              Volume not available on this feed for the selected period.
+              Try <strong style={{margin: '0 4px'}}>24h–1 Month</strong>
+              (hourly prints with Yahoo/Sharenet volume). Daily multi-year history is price-only.
+            </div>
+          )}
+
+          {subtitle && (
+            <div style={{fontSize: 11, color: C.text, padding: '8px 4px 0', lineHeight: 1.5}}>{subtitle}</div>
           )}
         </div>
       );
@@ -3715,7 +4029,7 @@
           <>
             {hasMetals && (
               <>
-                <TimeframeBar label="Metals chart period" value={metalTimeframe} onChange={onMetalTimeframeChange} />
+                <TimeframeBar label="Metals chart period · Supabase archive from 1976" value={metalTimeframe} onChange={onMetalTimeframeChange} options={METALS_TIMEFRAMES} />
                 {technical ? (
                   metalIds.map((id) => (
                     <AssetTaChart
@@ -3733,13 +4047,13 @@
                     title={`Precious metals · USD per troy ounce · ${TIMEFRAMES.find(t=>t.id===metalTimeframe)?.label || ''}`}
                     unit="USD" rows={metalChartRows} curveIds={metalIds} timeframe={metalTimeframe}
                     showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}
-                    liveSpot={liveSpot} connectNulls={true}/>
+                    liveSpot={liveSpot} connectNulls={true} expectDense={false}/>
                 )}
               </>
             )}
             {cryptoMajorIds.length > 0 && cryptoChartRows.length > 0 && (
               <>
-                <TimeframeBar label="Crypto chart period" value={cryptoTimeframe} onChange={onCryptoTimeframeChange} />
+                <TimeframeBar label="Crypto chart period" value={cryptoTimeframe} onChange={onCryptoTimeframeChange} options={CRYPTO_TIMEFRAMES} />
                 {technical ? (
                   cryptoMajorIds.map((id) => (
                     <AssetTaChart
@@ -3780,7 +4094,7 @@
             )}
             {cfxIds.length > 0 && cryptoChartRows.length > 0 && (
               <>
-                <TimeframeBar label="Conflux (CFX) chart period" value={cfxTimeframe} onChange={onCfxTimeframeChange} />
+                <TimeframeBar label="Conflux (CFX) chart period" value={cfxTimeframe} onChange={onCfxTimeframeChange} options={CRYPTO_TIMEFRAMES} />
                 {technical ? (
                   <AssetTaChart
                     rows={cryptoChartRows}
@@ -3830,13 +4144,12 @@
               const subtitle = <ProducerShareSubtitle meta={meta} />;
               if (hasHistory) {
                 return (
-                  <SingleTimelineChart
+                  <ProducerPriceVolumeChart
                     key={id}
                     title={`${meta.name} · ${meta.ticker} · AUD`}
                     subtitle={subtitle}
-                    unit="AUD" rows={audRows} curveIds={[id]} timeframe={producerTf}
-                    showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}
-                    connectNulls={false}/>
+                    unit="AUD" rows={audRows} curveId={id} timeframe={producerTf}
+                    showEvents={showEvents} events={eventsForCurves(eventsInRange, [id])}/>
                 );
               }
               return (
@@ -6036,8 +6349,254 @@
       );
     }
 
-    /* ─── FUNDAMENTALS · S&D vs PRICE ─────────────────────────────── */
-    function FundamentalsPanel() {
+    /* ─── PLATINUM × CONFLUX BRIDGE TAB ───────────────────────────── */
+    function PlatinumConfluxBridge({ live, perth, audUsd, updated }) {
+      const [ptPts, setPtPts] = useState([]);
+      const [cfxPts, setCfxPts] = useState([]);
+      const [loadErr, setLoadErr] = useState(null);
+
+      useEffect(() => {
+        let cancelled = false;
+        (async () => {
+          try {
+            const [pt, cfx] = await Promise.all([
+              fetchMetalHistoryFromSupabase('XPT', 365),
+              fetchCryptoHistoryFromSupabase('CFX', 365),
+            ]);
+            if (cancelled) return;
+            setPtPts(downsample(pt, 220));
+            setCfxPts(downsample(cfx, 220));
+          } catch (e) {
+            if (!cancelled) setLoadErr(e.message || 'Bridge charts unavailable');
+          }
+        })();
+        return () => { cancelled = true; };
+      }, []);
+
+      const pt = live?.platinum?.price;
+      const au = live?.gold?.price;
+      const cfx = live?.cfx?.price;
+      const ratio = pt != null && au > 0 ? pt / au : null;
+      const recentDeficits = platinumSupplyDemand.filter((r) => r.year >= 2023 && r.balance != null);
+      const cumDef = recentDeficits.reduce((s, r) => s + r.balance, 0);
+      const cover = platinumStockCover[platinumStockCover.length - 1];
+      const ptMetal = perth?.result?.find((m) => m.metal === 'Platinum');
+      const ptLast = ptMetal?.oneWeekHistoricData?.slice(-1)[0];
+      const ptPrem = ptLast && pt && audUsd
+        ? ((ptLast.offer * audUsd / pt) - 1) * 100
+        : null;
+
+      const axPLocal = {
+        tick: { fill: C.axis, fontSize: 10 },
+        axisLine: { stroke: C.border },
+        tickLine: false,
+      };
+
+      return (
+        <div>
+          <div style={{
+            padding: '28px 22px 22px',
+            background: 'linear-gradient(160deg, #F7F9FC 0%, #EEF2F6 48%, #E8EEF4 100%)',
+            borderBottom: `1px solid ${C.border}`,
+          }}>
+            <div style={{
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontSize: 'clamp(28px, 4vw, 40px)',
+              fontWeight: 400,
+              letterSpacing: '0.02em',
+              color: C.textDark,
+              lineHeight: 1.15,
+              marginBottom: 10,
+            }}>
+              Platinum <span style={{color: C.plat}}>×</span> Conflux
+            </div>
+            <p style={{fontSize: 15, color: C.textSecondary, lineHeight: 1.55, maxWidth: 680, margin: 0}}>
+              Two theses, one desk: platinum&apos;s pricing is structurally stupid relative to scarcity —
+              and Conflux is the China-adjacent settlement rail bet, not a metal substitute.
+            </p>
+            <div style={{
+              marginTop: 18,
+              fontSize: 13,
+              color: C.textDark,
+              fontVariantNumeric: 'tabular-nums',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '6px 18px',
+            }}>
+              <span>Pt <strong>{pt != null ? fmtUsd(pt, 0) : '—'}</strong>
+                {live?.platinum?.chg != null && (
+                  <span style={{color: live.platinum.chg >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
+                    {fmtPct(live.platinum.chg)}
+                  </span>
+                )}
+              </span>
+              <span>CFX <strong>{cfx != null ? fmtUsd(cfx, 4) : '—'}</strong>
+                {live?.cfx?.chg != null && (
+                  <span style={{color: live.cfx.chg >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
+                    {fmtPct(live.cfx.chg)}
+                  </span>
+                )}
+              </span>
+              <span>Pt/Au <strong>{ratio != null ? `${(ratio * 100).toFixed(1)}%` : '—'}</strong></span>
+              {ptPrem != null && (
+                <span>Perth coin prem <strong>+{ptPrem.toFixed(1)}%</strong></span>
+              )}
+            </div>
+          </div>
+
+          {loadErr && (
+            <div style={{padding: '10px 18px', fontSize: 12, color: '#92400E'}}>{loadErr}</div>
+          )}
+
+          <div style={{padding: '20px 18px 8px'}}>
+            <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.plat, marginBottom: 8}}>
+              Thesis · the idiocy of platinum pricing
+            </div>
+            <p style={{fontSize: 14, color: C.textDark, lineHeight: 1.65, maxWidth: 740, marginBottom: 10, fontWeight: 500}}>
+              WPIC keeps printing deficits. Above-ground stock cover is crushing toward
+              ~{cover?.monthsCover ?? '—'} months. Platinum still trades at a deep discount to gold
+              {ratio != null ? ` (Pt/Au ~${(ratio * 100).toFixed(0)}%)` : ''}. That is not “efficient discovery” —
+              it is a market that prices paper flows and warehouse buffers harder than geology.
+            </p>
+            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.65, maxWidth: 740, marginBottom: 12}}>
+              Deficits can widen while spot barely moves (stocks absorb). Then investment / ETF unwind
+              can knock price down <em>while the physical market is still short</em>. Price eventually
+              catches when cover gets tight — 2025 was the reminder — but the lag is the insult.
+              Balance sheets and stock cover matter more than a single year&apos;s WPIC line.
+            </p>
+            <div style={{fontSize: 12, color: C.textDark, marginBottom: 10, lineHeight: 1.55}}>
+              Cumulative WPIC balance {recentDeficits[0]?.year}–{recentDeficits[recentDeficits.length - 1]?.year}:{' '}
+              <strong style={{color: cumDef < 0 ? '#B91C1C' : '#047857'}}>
+                {cumDef > 0 ? '+' : ''}{Math.round(cumDef).toLocaleString()} koz
+              </strong>
+              {' · '}SA ~72% of mine supply · investment demand swings the margin more than auto
+            </div>
+            <div style={{overflowX: 'auto', marginBottom: 14}}>
+              <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 11, maxWidth: 720}}>
+                <thead>
+                  <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
+                    <th style={{padding: '8px 10px'}}>Year</th>
+                    <th style={{padding: '8px 10px'}}>Balance</th>
+                    <th style={{padding: '8px 10px'}}>Price reaction</th>
+                    <th style={{padding: '8px 10px'}}>What happened</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { y: 2023, bal: '−1,000 koz', move: '+1.5%', note: 'Deficit widens — price barely cares (stocks absorb)' },
+                    { y: 2024, bal: '−930 koz', move: '−4.1%', note: 'Still short — price falls on ETF / investment unwind' },
+                    { y: 2025, bal: '−1,082 koz', move: '+87%', note: 'Record deficit — price finally catches as cover tightens' },
+                    { y: 2026, bal: '−297 koz', move: 'est.', note: 'Deficit narrows on demand drop — AGS cover still &lt;3 mo' },
+                  ].map((row) => (
+                    <tr key={row.y} style={{borderTop: `1px solid ${C.borderLight}`}}>
+                      <td style={{padding: '8px 10px', fontWeight: 600, color: C.textDark}}>{row.y}</td>
+                      <td style={{padding: '8px 10px', color: '#B91C1C', fontVariantNumeric: 'tabular-nums'}}>{row.bal}</td>
+                      <td style={{padding: '8px 10px', color: C.plat, fontVariantNumeric: 'tabular-nums'}}>{row.move}</td>
+                      <td style={{padding: '8px 10px', color: C.textSecondary}} dangerouslySetInnerHTML={{__html: row.note}} />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {ptPts.length > 0 && (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={ptPts} margin={{top: 8, right: 12, left: 0, bottom: 0}}>
+                  <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                  <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                    tickFormatter={(ts) => fmtTs(ts, '1y')} minTickGap={40} {...axPLocal}/>
+                  <YAxis width={56} domain={['auto', 'auto']} tickFormatter={(v) => `$${Math.round(v)}`} {...axPLocal}/>
+                  <Tooltip
+                    labelFormatter={(ts) => fmtTs(ts, '1y')}
+                    formatter={(v) => [fmtUsd(v, 0), 'Platinum']}
+                    contentStyle={{fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}`}}
+                  />
+                  <Line type="monotone" dataKey="price" stroke={C.plat} strokeWidth={2} dot={false}/>
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div style={{height: 1, background: C.borderLight, margin: '8px 18px'}}/>
+
+          <div style={{padding: '16px 18px 8px'}}>
+            <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.cfx, marginBottom: 8}}>
+              Thesis · Conflux as digital settlement rails
+            </div>
+            <p style={{fontSize: 14, color: C.textDark, lineHeight: 1.65, maxWidth: 740, marginBottom: 10, fontWeight: 500}}>
+              Conflux is not “crypto platinum.” It is a China-rooted public L1 (Tree-Graph + EVM eSpace)
+              positioned for <em>settlement infrastructure</em> — stablecoins, cross-border pilots, BRI /
+              RMB digitisation corridors (AxCNY-style experiments) — while Western chains chase apps and memes.
+            </p>
+            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.65, maxWidth: 740, marginBottom: 12}}>
+              The bet: as Asia builds digital rails for trade and currency settlement, a chain that already
+              lives next to Chinese policy geography and eSpace tooling gets the call option. High beta,
+              policy-sensitive, not a substitute for ounces — a complementary exposure to the same
+              East-facing macro that matters for platinum fabrication and yuan metals trade.
+            </p>
+            <div style={{fontSize: 12, color: C.text, lineHeight: 1.55, marginBottom: 12, maxWidth: 740}}>
+              Watch: eSpace stablecoin / bridge volume, fee burn &amp; staking demand, listing liquidity,
+              and official RMB digitisation tone. Chart below is spot history from Supabase (Binance ingest) —
+              not a fake TPS gauge.
+            </div>
+            {cfxPts.length > 0 && (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={cfxPts} margin={{top: 8, right: 12, left: 0, bottom: 0}}>
+                  <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false}/>
+                  <XAxis dataKey="ts" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                    tickFormatter={(ts) => fmtTs(ts, '1y')} minTickGap={40} {...axPLocal}/>
+                  <YAxis width={56} domain={['auto', 'auto']} tickFormatter={(v) => fmtUsd(v, 4)} {...axPLocal}/>
+                  <Tooltip
+                    labelFormatter={(ts) => fmtTs(ts, '1y')}
+                    formatter={(v) => [fmtUsd(v, 4), 'CFX']}
+                    contentStyle={{fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}`}}
+                  />
+                  <Line type="monotone" dataKey="price" stroke={C.cfx} strokeWidth={2} dot={false}/>
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div style={{height: 1, background: C.borderLight, margin: '8px 18px'}}/>
+
+          <div style={{padding: '16px 18px 20px'}}>
+            <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textDark, marginBottom: 10}}>
+              The interface
+            </div>
+            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.6, maxWidth: 740, marginBottom: 14}}>
+              Same theatre, different instruments: platinum is the physical scarcity argument the market
+              keeps underpricing; Conflux is the digital-rail call on China-adjacent settlement. Hold both
+              as complementary theses — not a mechanical pair trade.
+            </p>
+            <div style={{overflowX: 'auto'}}>
+              <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12}}>
+                <thead>
+                  <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
+                    <th style={{padding: '10px 12px', fontWeight: 600, width: '18%'}}>Lens</th>
+                    <th style={{padding: '10px 12px', fontWeight: 600, color: C.plat}}>Platinum</th>
+                    <th style={{padding: '10px 12px', fontWeight: 600, color: C.cfx}}>Conflux</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {PT_CFX_INTERFACE.map((row) => (
+                    <tr key={row.lens} style={{borderTop: `1px solid ${C.borderLight}`}}>
+                      <td style={{padding: '11px 12px', fontWeight: 600, color: C.textDark, verticalAlign: 'top'}}>{row.lens}</td>
+                      <td style={{padding: '11px 12px', color: C.textSecondary, lineHeight: 1.5, verticalAlign: 'top'}}>{row.platinum}</td>
+                      <td style={{padding: '11px 12px', color: C.textSecondary, lineHeight: 1.5, verticalAlign: 'top'}}>{row.cfx}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{fontSize: 11, color: C.text, marginTop: 16, lineHeight: 1.55, maxWidth: 760}}>
+              Sources · LBMA/Metals.Dev via Supabase · WPIC balance & stock-cover series · Binance CFXUSDT daily ingest ·
+              Perth Mint retail history when available. Not investment advice.
+              {updated && <> · Live strip {updated.toLocaleTimeString()} ({timeAgo(updated)})</>}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
       const [view, setView] = useState('balance');
 
       const paradoxRows = [
@@ -6457,6 +7016,15 @@
           const auLast = au?.oneWeekHistoricData?.slice(-1)[0];
           if (ptLast) updateTickerPerth({ ptOffer: ptLast.offer, ptBid: ptLast.bid, auOffer: auLast?.offer, fx: audUsd });
         }
+        if (tab === 'bridge' && live) {
+          const el = document.getElementById('ticker');
+          if (!el) return;
+          el.innerHTML = `
+            <div class="ticker-item"><span class="ticker-sym">XPT</span><span class="ticker-price">${fmtUsd(live.platinum?.price, 0)}</span></div>
+            <div class="ticker-item"><span class="ticker-sym">CFX</span><span class="ticker-price">${fmtUsd(live.cfx?.price, 4)}</span></div>
+            <div class="ticker-item"><span class="ticker-sym">XAU</span><span class="ticker-price">${fmtUsd(live.gold?.price, 0)}</span></div>
+          `;
+        }
         if (tab === 'producers' && producerMeta?.quotes?.length) {
           const el = document.getElementById('ticker');
           if (!el) return;
@@ -6513,6 +7081,9 @@
             <button className={`price-tab ${tab==='producers'?'active':''}`} onClick={() => setTab('producers')}>
               Platinum Producers
             </button>
+            <button className={`price-tab ${tab==='bridge'?'active':''}`} onClick={() => setTab('bridge')}>
+              Platinum × Conflux
+            </button>
           </div>
 
           {tab === 'index' ? (
@@ -6546,6 +7117,15 @@
                 </div>
               )}
             </div>
+          ) : tab === 'bridge' ? (
+            <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="LBMA spot" color={C.plat}
+                price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
+              <PriceCard indexId="IDX-005" label={CURVE_INDEX['IDX-005'].label} sub="24 hour change" color={C.cfx}
+                price={live?.cfx?.price} chg={live?.cfx?.chg} loading={loading} />
+              <PriceCard indexId="IDX-001" label="Gold — reference" sub="Pt/Au context" color={C.gold}
+                price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
+            </div>
           ) : (
             <>
               <p style={{fontSize:13, color:C.textSecondary, lineHeight:1.65, maxWidth:820, marginBottom:14}}>
@@ -6565,7 +7145,7 @@
 
           {tab === 'index' && <SpreadPanel live={live} />}
 
-          {tab !== 'index' && (
+          {tab !== 'index' && tab !== 'bridge' && (
             <>
               <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:8}}>Chart period</div>
               <div className="price-tabs" style={{marginBottom:16}}>
@@ -6578,6 +7158,7 @@
             </>
           )}
 
+          {tab !== 'bridge' && (
           <div style={{...cardStyle, display:'flex', gap:6, flexWrap:'wrap', marginBottom:10,
             alignItems:'center', padding:'10px 14px'}}>
             <span style={{fontSize:10, fontWeight:600, color:C.text, letterSpacing:'0.08em', textTransform:'uppercase'}}>Show curves</span>
@@ -6590,8 +7171,13 @@
               {showEvents ? 'Market events on' : 'Market events off'}
             </Btn>
           </div>
+          )}
 
-          <div style={{...cardStyle, marginBottom:14, paddingBottom:0}}>
+          <div style={{...cardStyle, marginBottom:14, paddingBottom:0, overflow:'hidden'}}>
+            {tab === 'bridge' ? (
+              <PlatinumConfluxBridge live={live} perth={perth} audUsd={audUsd} updated={updated} />
+            ) : (
+            <>
             <div style={panelHdr}>
               <span>{
                 tab === 'index'
@@ -6673,12 +7259,14 @@
               {tab === 'perth'
                 ? 'Separate charts for gold and platinum 1oz coins (AUD, estimated). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
                 : tab === 'producers'
-                  ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Share prices in AUD (converted from JSE ZAR).'
+                  ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Share price (AUD) and volume (shares) on the same chart for 24h–1m; longer windows are price-only daily history.'
                   : 'Separate charts for precious metals and cryptocurrency — each with its own price scale so no curve is flattened. Toggle Technical structure for support/resistance, breakouts, and chart patterns on the same history.'}
             </div>
+            </>
+            )}
           </div>
 
-          <CurveIndexLibrary tab={tab} />
+          {tab !== 'bridge' && <CurveIndexLibrary tab={tab} />}
 
           {(error || perthError) && (
             <div style={{fontSize:12, color:'#B91C1C', marginBottom:12, padding:'8px 12px',
