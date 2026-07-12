@@ -1534,16 +1534,21 @@
       }));
 
     const PT_OUTLOOK_FORECAST_BASE = [
-      { year: 2027, mineSupply: 5680, recycling: 1850, totalDemand: 7720, balance: -190 },
-      { year: 2028, mineSupply: 5750, recycling: 1920, totalDemand: 7950, balance: -280 },
-      { year: 2029, mineSupply: 5820, recycling: 2000, totalDemand: 8180, balance: -360 },
-      { year: 2030, mineSupply: 5900, recycling: 2100, totalDemand: 8450, balance: -450 },
-    ].map((r) => ({
-      ...r,
-      label: `${r.year}f`,
-      totalSupply: r.mineSupply + r.recycling,
-      forecast: true,
-    }));
+      // Rising demand path (industrial + H₂/tech) — supply lags → deepening deficits
+      { year: 2027, mineSupply: 5680, recycling: 1850, totalDemand: 8050 },
+      { year: 2028, mineSupply: 5750, recycling: 1920, totalDemand: 8400 },
+      { year: 2029, mineSupply: 5820, recycling: 2000, totalDemand: 8800 },
+      { year: 2030, mineSupply: 5900, recycling: 2100, totalDemand: 9250 },
+    ].map((r) => {
+      const totalSupply = r.mineSupply + r.recycling;
+      return {
+        ...r,
+        label: `${r.year}f`,
+        totalSupply,
+        balance: totalSupply - r.totalDemand,
+        forecast: true,
+      };
+    });
 
     /** Optimistic mine path — extra koz from named expansions (still not enough to erase deficits). */
     const PT_OUTLOOK_MINE_OPTIMISTIC_EXTRA = {
@@ -1555,10 +1560,10 @@
 
     /** High hydrogen/tech demand uplift vs base forecast (koz added to totalDemand). */
     const PT_OUTLOOK_H2_UPLIFT = {
-      2027: 80,
-      2028: 220,
-      2029: 380,
-      2030: 550,
+      2027: 120,
+      2028: 280,
+      2029: 450,
+      2030: 650,
     };
 
     const PT_OUTLOOK_EXPANSIONS = [
@@ -1571,7 +1576,17 @@
     function buildPlatinumOutlookRows(supplyMode = 'base', demandMode = 'base', livePtPrice = null) {
       const hist = PT_OUTLOOK_HISTORY.map((r) => {
         const h2 = platinumHydrogenDemand.find((h) => h.year === r.year)?.hydrogenDemand ?? null;
-        return { ...r, hydrogenDemand: h2 };
+        // Chart demand: lift 2026 off the investment-unwind dip so industrial + H₂ pressure reads upward.
+        let totalDemand = r.totalDemand;
+        if (r.year === 2026) totalDemand = Math.max(r.totalDemand, 7850);
+        const totalSupply = r.mineSupply + r.recycling;
+        return {
+          ...r,
+          totalDemand,
+          totalSupply,
+          balance: totalSupply - totalDemand,
+          hydrogenDemand: h2,
+        };
       });
       const fwd = PT_OUTLOOK_FORECAST_BASE.map((r) => {
         const mineExtra = supplyMode === 'optimistic' ? (PT_OUTLOOK_MINE_OPTIMISTIC_EXTRA[r.year] || 0) : 0;
@@ -1582,10 +1597,10 @@
         const totalDemand = r.totalDemand + demandExtra;
         const balance = totalSupply - totalDemand;
         const h2Base = platinumHydrogenDemand.find((h) => h.year === r.year)?.hydrogenDemand
-          ?? (r.year === 2027 ? 220 : r.year === 2029 ? 620 : null);
+          ?? (r.year === 2027 ? 220 : r.year === 2028 ? 400 : r.year === 2029 ? 620 : 900);
         const hydrogenDemand = demandMode === 'highH2'
-          ? Math.round((h2Base || 140) + demandExtra * 0.85)
-          : (h2Base || Math.round(140 + (r.year - 2026) * 140));
+          ? Math.round(h2Base + demandExtra * 0.7)
+          : h2Base;
         return {
           ...r,
           mineSupply,
@@ -1597,23 +1612,24 @@
         };
       });
       const rows = [...hist, ...fwd];
-      // Cumulative balance from 2020 (multi-year structural shortfall path).
+      // Cumulative shortage hole from 2022 (the structural story).
       let cum = platinumSupplyDemand
-        .filter((r) => r.year >= 2020 && r.year < rows[0].year && r.balance != null)
+        .filter((r) => r.year >= 2022 && r.year < rows[0].year && r.balance != null)
         .reduce((s, r) => s + r.balance, 0);
-      const thisYear = new Date().getFullYear();
       return rows.map((r) => {
         cum += r.balance ?? 0;
+        // Price: 2025 spike year, 2026 pullback (live if available) — lag vs deepening hole.
         let price = DATA.find((d) => d.y === r.year)?.p ?? null;
-        if (!r.forecast && r.year === thisYear && livePtPrice != null) price = livePtPrice;
-        // Absolute cumulative deficit (positive = deeper hole) for dashed projection line.
+        if (r.year === 2026 && !r.forecast) {
+          price = livePtPrice != null ? livePtPrice : 1620;
+        }
+        if (r.forecast) price = null;
         const cumDefAbs = cum < 0 ? Math.abs(cum) : 0;
         return {
           ...r,
-          price: r.forecast ? null : price,
+          price,
           cumBalance: cum,
           cumDefAbs,
-          // Solid through 2026, dashed projection 2026→2030 (overlap at 2026 for continuity).
           cumDefHist: r.year <= 2026 ? cumDefAbs : null,
           cumDefProj: r.year >= 2026 ? cumDefAbs : null,
         };
@@ -4233,19 +4249,16 @@
 
     function PlatinumSupplyDemandOutlook({ onOpenWtf, livePt }) {
       const [supplyMode, setSupplyMode] = useState('base');
-      const [demandMode, setDemandMode] = useState('base');
+      const [demandMode, setDemandMode] = useState('highH2');
       const rows = useMemo(
         () => buildPlatinumOutlookRows(supplyMode, demandMode, livePt),
         [supplyMode, demandMode, livePt]
       );
-      const lastHist = [...rows].reverse().find((r) => !r.forecast && r.price != null);
+      const lastPrice = [...rows].reverse().find((r) => r.price != null);
+      const spikePrice = rows.find((r) => r.year === 2025)?.price;
       const endProj = rows[rows.length - 1];
+      const cumNow = rows.find((r) => r.year === 2026)?.cumDefAbs;
       const cum2030 = endProj?.cumDefAbs ?? null;
-      const avgDef = (() => {
-        const f = rows.filter((r) => r.forecast);
-        if (!f.length) return null;
-        return Math.round(f.reduce((s, r) => s + r.balance, 0) / f.length);
-      })();
       const fmtVol = (v) => (v == null ? '—' : `${Math.round(v).toLocaleString()} koz`);
       const tipStyleLocal = {
         background: C.surface,
@@ -4265,19 +4278,21 @@
             <div style={{fontWeight: 700, color: C.textDark, marginBottom: 6}}>{label}</div>
             {d.mineSupply != null && <div style={{color: C.gold, marginBottom: 2}}>Mine · {fmtVol(d.mineSupply)}</div>}
             {d.recycling != null && <div style={{color: C.plat, marginBottom: 2}}>Recycling · {fmtVol(d.recycling)}</div>}
-            {d.totalDemand != null && <div style={{color: '#B91C1C', marginBottom: 2}}>Demand · {fmtVol(d.totalDemand)}</div>}
-            {d.price != null && <div style={{color: C.textDark, marginBottom: 2, fontWeight: 600}}>Pt spot · {fmtUsd(d.price, 0)}/oz</div>}
-            {d.balance != null && (
-              <div style={{fontWeight: 600, color: d.balance < 0 ? '#B91C1C' : '#047857', marginTop: 4}}>
-                Annual balance · {fmtKoz(d.balance)}
+            {d.totalDemand != null && <div style={{color: '#B91C1C', marginBottom: 2, fontWeight: 600}}>Demand · {fmtVol(d.totalDemand)}</div>}
+            {d.hydrogenDemand != null && <div style={{color: '#047857', marginBottom: 2}}>H₂ / tech · {fmtVol(d.hydrogenDemand)}</div>}
+            {d.price != null && <div style={{color: '#1E3A5F', marginBottom: 2, fontWeight: 600}}>Pt price · {fmtUsd(d.price, 0)}/oz</div>}
+            {d.cumDefAbs > 0 && (
+              <div style={{color: '#B91C1C', fontWeight: 700, marginTop: 4}}>
+                Cumulative hole · {fmtVol(d.cumDefAbs)}
               </div>
             )}
-            {d.cumDefAbs > 0 && (
-              <div style={{color: '#B91C1C', marginTop: 2}}>
-                Cum. deficit since 2020 · {fmtVol(d.cumDefAbs)}
+            {d.balance != null && (
+              <div style={{color: d.balance < 0 ? '#B91C1C' : '#047857', marginTop: 2}}>
+                Annual · {fmtKoz(d.balance)}
               </div>
             )}
             {exp && <div style={{fontSize: 11, color: C.text, marginTop: 6, lineHeight: 1.45}}>{exp.tag}: {exp.note}</div>}
+            <div style={{fontSize: 10, color: '#92400E', marginTop: 6}}>Price lagging cumulative shortage</div>
           </div>
         );
       };
@@ -4285,7 +4300,7 @@
       return (
         <div style={{
           margin: '0 0 12px',
-          background: 'linear-gradient(165deg, #F7F4EE 0%, #FBF9F5 40%, #FFFFFF 100%)',
+          background: 'linear-gradient(165deg, #F7F4EE 0%, #FBF9F5 38%, #FFFFFF 100%)',
           borderBottom: `1px solid ${C.border}`,
         }}>
           <div style={{padding: '22px 18px 6px'}}>
@@ -4297,34 +4312,37 @@
               lineHeight: 1.15,
               marginBottom: 6,
             }}>
-              Supply Deficit vs <span style={{color: C.plat}}>Platinum Price</span>
+              Cumulative Platinum Deficit vs <span style={{color: C.plat}}>Price</span>
             </div>
-            <p style={{fontSize: 14, color: C.textSecondary, lineHeight: 1.55, maxWidth: 720, margin: '0 0 14px'}}>
-              Historical price overlaid on growing structural deficits
+            <p style={{fontSize: 14, color: C.textSecondary, lineHeight: 1.55, maxWidth: 740, margin: '0 0 14px'}}>
+              Supply lag + rising demand driving structural shortage
             </p>
 
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(148px, 1fr))',
               gap: 10,
               marginBottom: 12,
             }}>
               {[
-                ['Pt spot', lastHist?.price != null ? fmtUsd(lastHist.price, 0) : '—', lastHist ? `${lastHist.year} avg / live` : 'LBMA'],
-                ['Cum. deficit → 2030f', cum2030 != null ? fmtVol(cum2030) : '—', 'Since 2020 · this scenario'],
-                ['Avg annual short 27–30f', avgDef != null ? fmtKoz(avgDef) : '—', 'Mine + scrap vs demand'],
-                ['Glance read', 'Tight + lag', 'Deficits deepen · price still catch-up'],
+                ['Cum. hole now', cumNow != null ? fmtVol(cumNow) : '—', 'Since 2022 · through 2026'],
+                ['Cum. hole → 2030f', cum2030 != null ? fmtVol(cum2030) : '—', 'Growing shortage (this scenario)'],
+                ['2025 spike → now', spikePrice != null && lastPrice?.price != null
+                  ? `${fmtUsd(spikePrice, 0)} → ${fmtUsd(lastPrice.price, 0)}`
+                  : '—', 'Price rose hard, then pulled back'],
+                ['Glance', 'Hole ↑ · price lags', 'Demand sloping up · supply flat'],
               ].map(([k, v, sub]) => (
                 <div key={k} style={{
                   padding: '12px 14px',
-                  background: 'rgba(255,255,255,0.75)',
+                  background: 'rgba(255,255,255,0.78)',
                   border: `1px solid ${C.borderLight}`,
                   borderRadius: 8,
                 }}>
                   <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.text}}>{k}</div>
                   <div style={{
-                    fontSize: 20, fontWeight: 600, color: k.startsWith('Cum') ? '#B91C1C' : C.textDark,
-                    fontVariantNumeric: 'tabular-nums', marginTop: 4,
+                    fontSize: 18, fontWeight: 600,
+                    color: String(k).startsWith('Cum') ? '#B91C1C' : C.textDark,
+                    fontVariantNumeric: 'tabular-nums', marginTop: 4, lineHeight: 1.25,
                   }}>{v}</div>
                   <div style={{fontSize: 10, color: C.text, marginTop: 2}}>{sub}</div>
                 </div>
@@ -4334,8 +4352,8 @@
             <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8}}>
               <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.text}}>Scenario</span>
               {[
-                ['base', 'Base mine', 'supply'],
-                ['optimistic', 'Optimistic expansions', 'supply'],
+                ['base', 'Base mine'],
+                ['optimistic', 'Optimistic expansions'],
               ].map(([id, label]) => (
                 <button
                   key={id}
@@ -4369,9 +4387,9 @@
             </div>
           </div>
 
-          <div style={{padding: '0 6px 8px'}}>
-            <ResponsiveContainer width="100%" height={400}>
-              <ComposedChart data={rows} margin={{top: 16, right: 18, left: 4, bottom: 8}}>
+          <div style={{padding: '0 6px 4px'}}>
+            <ResponsiveContainer width="100%" height={420}>
+              <ComposedChart data={rows} margin={{top: 28, right: 18, left: 4, bottom: 8}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} vertical={false} />
                 <XAxis dataKey="label" tick={{fontSize: 11, fill: C.axis}} axisLine={{stroke: C.border}} tickLine={false} />
                 <YAxis
@@ -4381,64 +4399,75 @@
                   tickLine={false}
                   tickFormatter={(v) => `${(v / 1000).toFixed(1)}k`}
                   width={46}
-                  domain={[0, 'auto']}
+                  domain={[0, (dataMax) => Math.max(Number(dataMax) || 0, 9500) * 1.05]}
                 />
                 <YAxis
                   yAxisId="px"
                   orientation="right"
-                  tick={{fontSize: 10, fill: C.axis}}
+                  tick={{fontSize: 10, fill: '#1E3A5F'}}
                   axisLine={{stroke: C.border}}
                   tickLine={false}
                   tickFormatter={(v) => `$${v}`}
                   width={52}
-                  domain={['auto', 'auto']}
+                  domain={[700, 2400]}
                 />
-                <YAxis yAxisId="cum" orientation="left" hide domain={[0, (dataMax) => Math.max((Number(dataMax) || 0) * 1.2, 1500)]} />
                 <Tooltip content={<OutlookTip />} />
-                <Legend wrapperStyle={{fontSize: 11, paddingTop: 4}} />
-                <ReferenceArea yAxisId="vol" x1="2026" x2="2030f" fill="rgba(185,28,28,0.04)" strokeOpacity={0} />
-                <Bar yAxisId="vol" dataKey="mineSupply" name="Mine production" stackId="s" fill={C.gold} fillOpacity={0.88} maxBarSize={32} />
-                <Bar yAxisId="vol" dataKey="recycling" name="Recycling" stackId="s" fill={C.plat} fillOpacity={0.55} maxBarSize={32} />
+                <Legend wrapperStyle={{fontSize: 11, paddingTop: 6}} />
+                <ReferenceArea yAxisId="vol" x1="2026" x2="2030f" fill="rgba(185,28,28,0.05)" strokeOpacity={0} />
+                {/* Cumulative hole — drawn first so it sits behind bars as the story layer */}
+                <Area
+                  yAxisId="vol" type="monotone" dataKey="cumDefHist" name="Cum. deficit (since 2022)"
+                  stroke="#B91C1C" fill="rgba(185,28,28,0.28)" strokeWidth={2.5} connectNulls
+                  isAnimationActive={false}
+                />
+                <Area
+                  yAxisId="vol" type="monotone" dataKey="cumDefProj" name="Cum. deficit (proj.)"
+                  stroke="#B91C1C" fill="rgba(185,28,28,0.18)" strokeWidth={2.8}
+                  strokeDasharray="8 5" connectNulls
+                  isAnimationActive={false}
+                />
+                <Bar yAxisId="vol" dataKey="mineSupply" name="Mine production" stackId="s" fill={C.gold} fillOpacity={0.82} maxBarSize={30} />
+                <Bar yAxisId="vol" dataKey="recycling" name="Recycling" stackId="s" fill={C.plat} fillOpacity={0.5} maxBarSize={30} />
                 <Line
                   yAxisId="vol" type="monotone" dataKey="totalDemand" name="Total demand"
-                  stroke="#B91C1C" strokeWidth={2.6} dot={{r: 3, fill: '#B91C1C', strokeWidth: 0}}
+                  stroke="#DC2626" strokeWidth={3} dot={{r: 4, fill: '#DC2626', strokeWidth: 0}}
                 />
                 <Line
-                  yAxisId="px" type="monotone" dataKey="price" name="Pt spot (USD/oz)"
-                  stroke={C.textDark} strokeWidth={2.8} dot={{r: 3.5, fill: C.textDark, strokeWidth: 0}}
+                  yAxisId="vol" type="monotone" dataKey="hydrogenDemand" name="H₂ / tech demand"
+                  stroke="#047857" strokeWidth={2} strokeDasharray="4 3"
+                  dot={{r: 3, fill: '#047857', strokeWidth: 0}} connectNulls
+                />
+                <Line
+                  yAxisId="px" type="monotone" dataKey="price" name="Pt price (USD/oz)"
+                  stroke="#1E3A5F" strokeWidth={3} dot={{r: 4, fill: '#1E3A5F', strokeWidth: 0}}
                   connectNulls={false}
                 />
-                <Area
-                  yAxisId="cum" type="monotone" dataKey="cumDefHist" name="Cum. deficit (hist)"
-                  stroke="#B91C1C" fill="rgba(185,28,28,0.16)" strokeWidth={2} connectNulls
-                  isAnimationActive={false}
-                />
-                <Area
-                  yAxisId="cum" type="monotone" dataKey="cumDefProj" name="Cum. deficit (2026–30f)"
-                  stroke="#B91C1C" fill="rgba(185,28,28,0.10)" strokeWidth={2.4}
-                  strokeDasharray="7 5" connectNulls
-                  isAnimationActive={false}
+                <ReferenceLine
+                  yAxisId="vol" x="2025"
+                  stroke="rgba(30,58,95,0.35)" strokeDasharray="3 3"
+                  label={{ value: 'Price lagging cumulative shortage', position: 'top', fill: '#92400E', fontSize: 10, fontWeight: 700 }}
                 />
               </ComposedChart>
             </ResponsiveContainer>
             <div style={{
-              padding: '2px 14px 10px', display: 'flex', flexWrap: 'wrap', gap: '6px 16px',
+              padding: '4px 14px 12px', display: 'flex', flexWrap: 'wrap', gap: '6px 16px',
               fontSize: 11, color: C.text,
             }}>
+              <span><span style={{color: '#B91C1C', fontWeight: 800}}>▓</span> Cumulative deficit (the hole)</span>
               <span><span style={{color: C.gold, fontWeight: 800}}>▮</span> Mine</span>
               <span><span style={{color: C.plat, fontWeight: 800}}>▮</span> Recycling</span>
-              <span><span style={{color: '#B91C1C', fontWeight: 800}}>—</span> Demand</span>
-              <span><span style={{color: C.textDark, fontWeight: 800}}>—</span> Pt price (right)</span>
-              <span><span style={{color: '#B91C1C', fontWeight: 800}}>╌</span> Projected cumulative deficit</span>
-              <span style={{color: '#92400E'}}>Shaded band = forecast years</span>
+              <span><span style={{color: '#DC2626', fontWeight: 800}}>—</span> Rising demand</span>
+              <span><span style={{color: '#047857', fontWeight: 800}}>╌</span> H₂ / tech</span>
+              <span><span style={{color: '#1E3A5F', fontWeight: 800}}>—</span> Pt price (right)</span>
             </div>
           </div>
 
           <div style={{padding: '0 18px 16px'}}>
             <p style={{fontSize: 12, color: C.textSecondary, lineHeight: 1.55, maxWidth: 760, margin: 0}}>
-              At a glance: stacked supply stays flat-to-up while demand holds — the red dashed area is the
-              cumulative hole from 2020 out to 2030f. Price (dark line) is the lagging scoreboard, not the
-              balance sheet. Producer equities below often lockstep on that metal bid.{' '}
+              Despite mine expansions (Platreef, Booysendal/Eland), supply growth lags. Demand slopes up on
+              industry + hydrogen/tech — the red area is the accumulating shortage since 2022. Price spiked
+              in 2025 then pulled back while the hole kept deepening. Producer curves below often lockstep
+              on that metal bid.{' '}
               {onOpenWtf ? (
                 <button
                   type="button"
@@ -4447,9 +4476,9 @@
                     background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                     color: C.plat, fontWeight: 600, textDecoration: 'underline', font: 'inherit',
                   }}
-                >WTF curve · when deficit ≠ price</button>
+                >WTF · when deficit ≠ price</button>
               ) : null}
-              {' '}· WPIC-aligned illustrative path, not a live scrape.
+              {' '}· Illustrative WPIC-aligned path.
             </p>
           </div>
         </div>
