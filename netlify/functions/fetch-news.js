@@ -35,6 +35,8 @@ const WEB_SWEEPS = [
       'platinum deficit OR surplus OR WPIC when:7d',
       'palladium OR rhodium PGM price when:3d',
       'platinum gold ratio OR precious metals when:3d',
+      'platinum ETF holdings OR GLTR OR PPLT when:7d',
+      'Kitco OR Mining.com platinum when:3d',
     ],
   },
   {
@@ -45,6 +47,7 @@ const WEB_SWEEPS = [
       'South Africa platinum mining OR Bushveld OR Eskom when:7d',
       'Anglo American Platinum OR Amplats OR Norilsk PGM when:7d',
       'JSE platinum OR PGM production strike OR smelter when:7d',
+      'platinum mine output OR refined production OR recycling when:7d',
     ],
   },
   {
@@ -55,6 +58,7 @@ const WEB_SWEEPS = [
       'China platinum OR palladium demand OR jewellery when:7d',
       'platinum ETF OR investment demand when:7d',
       'platinum automotive catalyst OR EV substitution when:7d',
+      'Japan OR India platinum jewellery OR industrial demand when:7d',
     ],
   },
 ];

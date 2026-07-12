@@ -1192,7 +1192,114 @@
       producers: ['IDX-201','IDX-202','IDX-203','IDX-204'],
       bridge: ['IDX-002','IDX-005'],
       wtf: ['IDX-002'],
+      face: ['IDX-001','IDX-002'],
     };
+
+    /**
+     * Modular sovereign / limited-mintage coin catalogue.
+     * askUsd = indicative secondary-market ask (update as you shop).
+     * Add rows here — UI recalculates melt + premium vs live LBMA spots.
+     */
+    const FACE_VALUE_COINS = [
+      {
+        id: 'pm-kangaroo-1oz-au',
+        name: 'Australian Kangaroo 1oz',
+        metal: 'gold',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'AUD',
+        scarcity: 'Annual bullion · high mintage · liquid',
+        askSource: 'perth',
+        status: 'benchmark',
+        notes: 'Perth Mint sell = live offer when available',
+      },
+      {
+        id: 'pm-platypus-1oz-pt',
+        name: 'Australian Platinum Kangaroo / Platypus 1oz',
+        metal: 'platinum',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'AUD',
+        scarcity: 'Annual Pt bullion · thinner than Au kangaroo',
+        askSource: 'perth',
+        status: 'benchmark',
+        notes: 'Perth Mint Pt sell vs LBMA melt',
+      },
+      {
+        id: 'pm-outback-pt-2026',
+        name: '2026 Perth Mint Outback · Wonders of the Outback 1oz',
+        metal: 'platinum',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'AUD',
+        scarcity: 'Limited thematic issue · scarcity > bullion kangaroo',
+        askAud: 2569,
+        status: 'watch',
+        notes: 'Indicative retail ask — update when you see a firm quote',
+      },
+      {
+        id: 'us-eagle-half-pt',
+        name: 'American Platinum Eagle ½oz ($50)',
+        metal: 'platinum',
+        weightOz: 0.5,
+        faceValue: 50,
+        faceCurrency: 'USD',
+        scarcity: 'US legal tender · collector + bullion crossover',
+        askUsd: 1930,
+        status: 'cart',
+        notes: 'Matches recent secondary quotes (~½oz AGE)',
+      },
+      {
+        id: 'ca-1812-half-pt-2017',
+        name: '2017 Canada War of 1812 ½oz ($50)',
+        metal: 'platinum',
+        weightOz: 0.5,
+        faceValue: 50,
+        faceCurrency: 'CAD',
+        scarcity: 'Thematic / low float vs Maple — scarcity premium sticky',
+        askUsd: 2831,
+        status: 'cart',
+        notes: 'High premium vs melt — scarcity + theme, not melt arb',
+      },
+      {
+        id: 'uk-tudor-dragon-1oz-2024',
+        name: '2024 UK Tudor Beast · Royal Dragon 1oz (£100)',
+        metal: 'platinum',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'GBP',
+        scarcity: 'Royal Mint series · limited thematic',
+        askUsd: 1852,
+        status: 'cart',
+        notes: 'Indicative ask from recent listings',
+      },
+      {
+        id: 'cn-panda-30g-au',
+        name: 'Chinese Panda 30g Gold',
+        metal: 'gold',
+        weightOz: 30 / 31.1034768,
+        faceValue: 500,
+        faceCurrency: 'CNY',
+        scarcity: 'Annual design change · Asia collector demand',
+        askUsd: 2800,
+        status: 'watch',
+        notes: 'Weight ≈0.9645 oz — premium tracks Chinese demand',
+      },
+      {
+        id: 'au-lunar-1oz-pt',
+        name: 'Perth Mint Lunar Series 1oz Platinum',
+        metal: 'platinum',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'AUD',
+        scarcity: '12-year cycle · year-animal scarcity after sell-out',
+        askAud: 2800,
+        status: 'watch',
+        notes: 'Update askAud per year/design',
+      },
+    ];
+
+    const FACE_HOLDINGS_KEY = 'pm_face_holdings_v1';
 
     /** Annotated disconnect years — price refused to follow the textbook S&D script. */
     const WTF_MOMENTS = [
@@ -3504,7 +3611,7 @@
       }, [tab, cryptoTf, cfxTf, idsKey]);
 
       useEffect(() => {
-        if (tab === 'index' || tab === 'bridge' || tab === 'wtf') return undefined;
+        if (tab === 'index' || tab === 'bridge' || tab === 'wtf' || tab === 'face') return undefined;
         let cancelled = false;
         const mergedKey = `v10:${tab}:${metalTimeframe}:${idsKey}`;
 
@@ -4043,7 +4150,233 @@
       );
     }
 
-    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, cfxTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, onCfxTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot, chartView = 'timeline', zarPerAud }) {
+    function producerTfToDays(tfId) {
+      const map = { '24h': 5, '1w': 7, '1m': 32, '3m': 95, '1y': 370, '3y': 1100, '5y': 1850 };
+      return map[effectiveProducerTimeframe(tfId)] || 370;
+    }
+
+    /** Rebase series to 100 at first overlapping print — makes sector lockstep readable. */
+    function rebaseToHundred(points, valueKey) {
+      let base = null;
+      return points.map((p) => {
+        const v = p[valueKey];
+        if (v == null || Number.isNaN(v)) return { ...p, [valueKey]: null };
+        if (base == null || base === 0) base = v;
+        return { ...p, [valueKey]: (v / base) * 100 };
+      });
+    }
+
+    function ProducerSectorCorrelationNote({ onOpenWtf }) {
+      return (
+        <div style={{
+          margin: '0 0 16px',
+          padding: '18px 18px 16px',
+          background: 'linear-gradient(165deg, #F7F4EE 0%, #F1EEE8 50%, #EAE6DF 100%)',
+          borderBottom: `1px solid ${C.border}`,
+        }}>
+          <div style={{
+            fontFamily: 'Georgia, "Times New Roman", serif',
+            fontSize: 'clamp(20px, 2.6vw, 26px)',
+            fontWeight: 400,
+            color: C.textDark,
+            lineHeight: 1.2,
+            marginBottom: 8,
+          }}>
+            Why the curves look the <span style={{color: C.plat}}>same</span>
+          </div>
+          <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.6, maxWidth: 760, margin: '0 0 14px'}}>
+            Valterra, Impala, Sibanye-Stillwater, Northam tracking each other is expected sector behaviour —
+            not a coincidence and not a conspiracy. Shared platinum driver + shared SA risks = lockstep shapes
+            on multi-year views. Similarity <strong style={{fontWeight: 600, color: C.textDark}}>validates</strong> the
+            macro thesis; dig deeper when someone <em>diverges</em> on big news.
+          </p>
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: 14,
+            marginBottom: 12,
+          }}>
+            <div>
+              <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.plat, marginBottom: 6}}>
+                Why they move together
+              </div>
+              <ul style={{margin: 0, paddingLeft: 16, fontSize: 12, color: C.textDark, lineHeight: 1.55}}>
+                <li style={{marginBottom: 4}}><strong style={{fontWeight: 600}}>Same commodity</strong> — Pt spot dominates revenue for pure-plays</li>
+                <li style={{marginBottom: 4}}><strong style={{fontWeight: 600}}>Shared SA risks</strong> — Eskom, labour, politics hit the Bushveld basket</li>
+                <li style={{marginBottom: 4}}><strong style={{fontWeight: 600}}>Sector flows</strong> — investors buy/sell “PGM miners” as a group</li>
+                <li><strong style={{fontWeight: 600}}>By-product overlap</strong> — Pd/Rh + similar cost structures</li>
+              </ul>
+            </div>
+            <div>
+              <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#B45309', marginBottom: 6}}>
+                Nuance · not bullshit
+              </div>
+              <ul style={{margin: 0, paddingLeft: 16, fontSize: 12, color: C.textDark, lineHeight: 1.55}}>
+                <li style={{marginBottom: 4}}>Company debt, mines, and management still create real divergences</li>
+                <li style={{marginBottom: 4}}>Smaller names often mirror leaders with higher beta</li>
+                <li style={{marginBottom: 4}}>Short-term noise / thin JSE volume can exaggerate sameness</li>
+                <li>No evidence of chart fakery — efficient(ish) markets on shared fundamentals</li>
+              </ul>
+            </div>
+          </div>
+
+          <div style={{
+            fontSize: 12,
+            color: C.textSecondary,
+            lineHeight: 1.55,
+            padding: '10px 12px',
+            background: 'rgba(255,255,255,0.55)',
+            borderRadius: 6,
+            border: `1px solid ${C.borderLight}`,
+            maxWidth: 760,
+          }}>
+            <strong style={{color: C.textDark, fontWeight: 600}}>Validation tip:</strong> miners should track LBMA platinum
+            with leverage (amplified moves). If they fail to diverge on major news, dig into that name.
+            Cross-check deficits vs equity reaction on{' '}
+            {onOpenWtf ? (
+              <button
+                type="button"
+                onClick={() => onOpenWtf('wtf')}
+                style={{
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                  color: C.plat, fontWeight: 600, textDecoration: 'underline', font: 'inherit',
+                }}
+              >Supply vs Price · WTF</button>
+            ) : (
+              <span style={{color: C.plat, fontWeight: 600}}>Supply vs Price · WTF</span>
+            )}
+            . Event markers (IRAN, elections, tariffs, GZ ETF) on these charts are the shared shock layer.
+          </div>
+        </div>
+      );
+    }
+
+    function ProducerVsSpotNormalizedChart({ rows, producerIds, zarPerAud, timeframe }) {
+      const [show, setShow] = useState(true);
+      const [ptPts, setPtPts] = useState([]);
+      const [ptErr, setPtErr] = useState(null);
+
+      useEffect(() => {
+        let cancelled = false;
+        (async () => {
+          try {
+            const days = producerTfToDays(timeframe);
+            const pts = await fetchMetalHistoryFromSupabase('XPT', days);
+            if (cancelled) return;
+            setPtPts(downsample(pts, 280));
+            setPtErr(null);
+          } catch (e) {
+            if (!cancelled) setPtErr(e.message || 'Pt history unavailable');
+          }
+        })();
+        return () => { cancelled = true; };
+      }, [timeframe]);
+
+      const chartData = useMemo(() => {
+        if (!show || !rows?.length || !producerIds?.length) return [];
+        const audRows = convertProducerRowsToAud(rows, producerIds, zarPerAud);
+        const filtered = filterRowsByTimeframe(audRows, effectiveProducerTimeframe(timeframe));
+        if (!filtered.length) return [];
+
+        const ptByDay = new Map();
+        ptPts.forEach((p) => {
+          const d = new Date(p.ts || p.t || p.date);
+          if (Number.isNaN(d.getTime())) return;
+          const key = d.toISOString().slice(0, 10);
+          const price = p.price ?? p.close ?? p.v;
+          if (price != null) ptByDay.set(key, price);
+        });
+
+        let merged = filtered.map((r) => {
+          const out = { ts: r.ts, label: r.label };
+          producerIds.forEach((id) => {
+            if (r[id] != null && !Number.isNaN(r[id])) out[id] = r[id];
+          });
+          const day = new Date(r.ts).toISOString().slice(0, 10);
+          if (ptByDay.has(day)) out.XPT = ptByDay.get(day);
+          return out;
+        });
+
+        producerIds.forEach((id) => {
+          merged = rebaseToHundred(merged, id);
+        });
+        merged = rebaseToHundred(merged, 'XPT');
+        return merged.filter((r) => producerIds.some((id) => r[id] != null) || r.XPT != null);
+      }, [show, rows, producerIds, zarPerAud, timeframe, ptPts]);
+
+      if (!producerIds?.length) return null;
+
+      return (
+        <div style={{marginBottom: 16, padding: '0 4px 8px'}}>
+          <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8, padding: '0 10px'}}>
+            <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.text}}>
+              Sector vs metal
+            </span>
+            <Btn active={show} color={C.plat} onClick={() => setShow((v) => !v)}>
+              {show ? 'Normalized overlay on' : 'Normalized overlay off'}
+            </Btn>
+            <span style={{fontSize: 11, color: C.text, maxWidth: 520}}>
+              Rebased to 100 at period start — miners + LBMA Pt on one axis so lockstep is obvious
+            </span>
+          </div>
+          {show && (
+            <>
+              {ptErr && (
+                <div style={{fontSize: 11, color: '#92400E', padding: '0 14px 8px'}}>{ptErr}</div>
+              )}
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={chartData} margin={{top: 8, right: 16, left: 4, bottom: 4}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} />
+                    <XAxis dataKey="label" tick={{fontSize: 10, fill: C.axis}} minTickGap={40} axisLine={{stroke: C.border}} tickLine={false} />
+                    <YAxis
+                      domain={['auto', 'auto']}
+                      tick={{fontSize: 10, fill: C.axis}}
+                      axisLine={{stroke: C.border}}
+                      tickLine={false}
+                      tickFormatter={(v) => `${Math.round(v)}`}
+                      width={40}
+                    />
+                    <Tooltip
+                      contentStyle={{background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12}}
+                      formatter={(v, name) => [
+                        v != null ? `${Number(v).toFixed(1)}` : '—',
+                        name === 'XPT' ? 'LBMA Platinum (norm.)' : (CURVE_INDEX[name]?.label || name),
+                      ]}
+                    />
+                    <Legend
+                      wrapperStyle={{fontSize: 11}}
+                      formatter={(id) => (id === 'XPT' ? 'LBMA Pt (normalized)' : (CURVE_INDEX[id]?.label || id))}
+                    />
+                    <Line
+                      type="monotone" dataKey="XPT" name="XPT" stroke={C.plat} strokeWidth={2.5}
+                      dot={false} connectNulls strokeDasharray="5 4"
+                    />
+                    {producerIds.map((id) => (
+                      <Line
+                        key={id}
+                        type="monotone"
+                        dataKey={id}
+                        name={id}
+                        stroke={CURVE_INDEX[id]?.color || C.text}
+                        strokeWidth={1.6}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{padding: '16px 14px', fontSize: 12, color: C.text}}>Waiting on producer / Pt history…</div>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    function TimelineCharts({ tab, rows, metalsRows, cryptoRows, metalTimeframe, cryptoTimeframe, cfxTimeframe, onMetalTimeframeChange, onCryptoTimeframeChange, onCfxTimeframeChange, activeCurves, showEvents, eventsInRange, producerMeta, liveSpot, chartView = 'timeline', zarPerAud, onOpenTab }) {
       if (tab === 'index') {
         const metalIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'metals');
         const cryptoMajorIds = activeCurves.filter(id =>
@@ -4147,16 +4480,17 @@
         );
       }
 
-      if (!rows?.length) return null;
-
       if (tab === 'producers') {
         const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
-        if (!producerIds.length) return null;
+        if (!producerIds.length) {
+          return <ProducerSectorCorrelationNote onOpenWtf={onOpenTab} />;
+        }
         const producerTf = effectiveProducerTimeframe(metalTimeframe);
         const quotesById = Object.fromEntries((producerMeta?.quotes || []).map(q => [q.id, q]));
-        const audRows = convertProducerRowsToAud(rows, producerIds, zarPerAud);
+        const audRows = rows?.length ? convertProducerRowsToAud(rows, producerIds, zarPerAud) : [];
         return (
           <>
+            <ProducerSectorCorrelationNote onOpenWtf={onOpenTab} />
             <TimeframeBar
               label={`Producer chart period · ${({
                 hourly: 'hourly',
@@ -4167,7 +4501,17 @@
               onChange={onMetalTimeframeChange}
               options={PRODUCER_TIMEFRAMES}
             />
-            {producerIds.map((id) => {
+            <ProducerVsSpotNormalizedChart
+              rows={rows}
+              producerIds={producerIds}
+              zarPerAud={zarPerAud}
+              timeframe={producerTf}
+            />
+            {!audRows.length ? (
+              <div style={{padding: '16px 18px', fontSize: 12, color: C.text}}>
+                Producer history loading or unavailable — advice above still applies. Try Refresh.
+              </div>
+            ) : producerIds.map((id) => {
               const meta = CURVE_INDEX[id];
               const quote = quotesById[id];
               const hasHistory = audRows?.some((r) => r[id] != null && !isNaN(r[id]));
@@ -4208,6 +4552,8 @@
           </>
         );
       }
+
+      if (!rows?.length) return null;
 
       const goldIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'gold');
       const platIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'platinum');
@@ -5700,10 +6046,35 @@
     }
 
     async function propagateNewsIngest() {
-      const res = await fetch('/.netlify/functions/fetch-news', { cache: 'no-store' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok && !data?.ok) throw new Error(data.error || `News ingest HTTP ${res.status}`);
-      return data;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 45000);
+      try {
+        const res = await fetch('/.netlify/functions/fetch-news', {
+          cache: 'no-store',
+          signal: ctrl.signal,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `News ingest HTTP ${res.status}`);
+        if (!data?.ok) throw new Error(data.error || 'News ingest returned empty / failed');
+        return data;
+      } catch (e) {
+        if (e?.name === 'AbortError') throw new Error('Web search timed out (~45s) — try Refresh again');
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function newsDbNewestMs() {
+      try {
+        const rows = await fetchNewsRowsFromSupabase();
+        return rows.reduce(
+          (m, r) => Math.max(m, new Date(r.fetched_at || r.published_at || 0).getTime() || 0),
+          0
+        );
+      } catch (_) {
+        return 0;
+      }
     }
 
     async function buildLensDigestFromSupabase() {
@@ -5722,13 +6093,14 @@
       const allTop = [];
       const allArchive = [];
       for (const lensId of ['price', 'supply', 'demand']) {
-        const { top, rest } = clientPickTopStories(grouped[lensId], 3);
+        const { top, rest } = clientPickTopStories(grouped[lensId], 6);
         lenses[lensId] = {
           stories: top.map((s, i) => mapClientStory({ ...s, rank: i + 1 })),
           archive: rest.slice(0, 20).map((r) => ({
             ...mapClientStory(r),
             digestDate: (r.fetched_at || r.published_at || '').slice(0, 10),
           })),
+          corpusCount: grouped[lensId].length,
         };
         allTop.push(...top);
         allArchive.push(...rest.slice(0, 15));
@@ -5762,6 +6134,8 @@
         })),
         progression,
         unfoldingCount: unfolding.length,
+        corpusTotal: analyzedAll.length,
+        dbRowCount: rows.length,
         newestFetchedAt: newestFetched ? new Date(newestFetched).toISOString() : null,
         dailyBrief: null,
         source: 'supabase-news',
@@ -6148,6 +6522,7 @@
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
       const [localDays, setLocalDays] = useState(0);
+      const [newsStatus, setNewsStatus] = useState(null);
       const newsFetchGen = useRef(0);
 
       const applyNewsFallback = useCallback((note) => {
@@ -6168,53 +6543,69 @@
         const today = digestDateLocal();
         const localHist = loadLocalNewsHistory();
         const cached = localHist[0];
-        const isNewDay = !cached || cached.date !== today;
-        const mustFetch = force || isNewDay;
 
-        if (!mustFetch && cached?.date === today) {
-          if (gen !== newsFetchGen.current) return;
-          setDigest({ ...cached, persistNote: `Today's digest · ${today}`, fromCache: true });
-          setPastStories(mergePastStories(cached, localHist));
-          setLocalDays(localHist.length);
-          setLoading(false);
-          return;
+        // Instant paint from today's cache, then always hit DB (and web if stale / Refresh).
+        if (!force && cached?.date === today && (cached?.lenses || cached?.stories?.length)) {
+          if (gen === newsFetchGen.current) {
+            setDigest({ ...cached, persistNote: `Cached today · checking for newer…`, fromCache: true });
+            setPastStories(mergePastStories(cached, localHist));
+            setLocalDays(localHist.length);
+          }
         }
 
         try {
           let ingestNote = null;
-          if (force) {
+          let shouldIngest = !!force;
+
+          if (!force) {
+            setNewsStatus('Checking news database…');
+            const newest = await newsDbNewestMs();
+            const ageH = newest ? (Date.now() - newest) / 3600000 : 999;
+            if (ageH >= 3) shouldIngest = true;
+          }
+
+          if (shouldIngest) {
+            setNewsStatus(force
+              ? 'Searching the web — RSS + Google News → Supabase…'
+              : 'News store stale — searching the web and storing…');
             try {
               const ingest = await propagateNewsIngest();
-              if (ingest?.ok) {
-                ingestNote = `Propagated ${ingest.unique || ingest.upserted || 0} stories into Supabase`
-                  + (ingest.byRegion
-                    ? ` · P ${ingest.byRegion.price || 0} / S ${ingest.byRegion.supply || 0} / D ${ingest.byRegion.demand || 0}`
-                    : '');
-              }
+              ingestNote = `Searched web · stored ${ingest.unique || ingest.upserted || 0}`
+                + (ingest.byRegion
+                  ? ` · P ${ingest.byRegion.price || 0} / S ${ingest.byRegion.supply || 0} / D ${ingest.byRegion.demand || 0}`
+                  : '')
+                + (ingest.webHits != null ? ` · ${ingest.webHits} Google hits` : '');
             } catch (ingestErr) {
-              ingestNote = `Ingest skipped (${ingestErr.message || 'error'}) — showing DB`;
+              if (force) throw new Error(ingestErr.message || 'Web search / store failed');
+              ingestNote = `Web search skipped (${ingestErr.message || 'error'}) — reading DB`;
             }
           }
 
+          if (gen !== newsFetchGen.current) return;
+          setNewsStatus('Building Price / Supply / Demand digest…');
           const data = await buildLensDigestFromSupabase();
           if (gen !== newsFetchGen.current) return;
           const note = force
-            ? (ingestNote || `Re-read Supabase · ${today}`)
-            : `Today's digest · ${today} · ingest every ~3h + Refresh`;
+            ? (ingestNote || `Rebuilt from Supabase · ${today}`)
+            : (ingestNote || `Live DB · ${today}`);
           setDigest({
             ...data,
             persistNote: note,
             ingestNote,
           });
           setError(null);
+          setNewsStatus(null);
           saveLocalNewsDigest(data);
           localStorage.setItem(NEWS_LAST_DATE_KEY, data.date || today);
           setPastStories(mergePastStories(data, loadLocalNewsHistory()));
           setLocalDays(loadLocalNewsHistory().length);
         } catch (e) {
           if (gen !== newsFetchGen.current) return;
-          // Always prefer showing stored news over a red quota banner.
-          if (applyNewsFallback(`Saved digest · ${cached?.date || 'prior'} · live read skipped`)) return;
+          setNewsStatus(null);
+          if (applyNewsFallback(`Saved digest · ${cached?.date || 'prior'} · live update failed`)) {
+            if (force) setError(String(e?.message || e || 'Refresh failed'));
+            return;
+          }
           const msg = String(e?.message || e || '');
           if (/NEWS_QUOTA_BLIP|quota has been exceeded/i.test(msg)) {
             setError(null);
@@ -6256,25 +6647,49 @@
               )}
             </div>
             <button
-              onClick={() => fetchDigest(true).catch((e) => {
-                if (applyNewsFallback('Saved digest — refresh skipped')) return;
-                const msg = String(e?.message || e || '');
-                if (/NEWS_QUOTA_BLIP|quota has been exceeded/i.test(msg)) setError(null);
-                else setError(msg);
-              }).finally(() => setLoading(false))}
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                fetchDigest(true).catch((e) => {
+                  if (applyNewsFallback('Saved digest — refresh skipped')) {
+                    setError(String(e?.message || e || 'Search failed'));
+                    return;
+                  }
+                  const msg = String(e?.message || e || '');
+                  if (/NEWS_QUOTA_BLIP|quota has been exceeded/i.test(msg)) setError(null);
+                  else setError(msg);
+                }).finally(() => setLoading(false));
+              }}
               disabled={loading}
               style={{
-                fontSize:10, fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
-                padding:'6px 12px', borderRadius:6, border:`1px solid ${C.border}`,
-                background:C.surface, color:C.textDark, cursor: loading ? 'wait' : 'pointer',
+                fontSize:10, fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase',
+                padding:'7px 14px', borderRadius:6, border:`1px solid ${C.plat}`,
+                background: loading ? 'rgba(107,127,150,0.15)' : C.plat,
+                color: loading ? C.textDark : '#fff',
+                cursor: loading ? 'wait' : 'pointer',
               }}
-            >{loading ? 'Refreshing…' : 'Refresh'}</button>
+            >{loading ? 'Working…' : 'Search web + store'}</button>
           </div>
+
+          {(loading || newsStatus) && (
+            <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
+              <span className="news-search-icon" title="Searching">⛏</span>
+              <div>
+                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>
+                  {newsStatus || 'Loading PGM news…'}
+                </div>
+                <div style={{fontSize:11, color:C.text, marginTop:4}}>
+                  Trade RSS + Google News → Supabase → scored digest. Button always re-searches the web.
+                </div>
+              </div>
+            </div>
+          )}
 
           <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:10}}>
             {['price', 'supply', 'demand'].map((id) => {
               const meta = NEWS_LENS_META[id];
               const count = getLensStories(digest, id).length;
+              const corpus = digest?.lenses?.[id]?.corpusCount;
               const active = activeLens === id;
               return (
                 <button
@@ -6287,7 +6702,7 @@
                     background: active ? 'rgba(184,134,11,0.12)' : C.surface,
                     color: active ? C.plat : C.textDark,
                   }}
-                >{meta.label}{count ? ` (${count})` : ''}</button>
+                >{meta.label}{count ? ` (${count}${corpus && corpus > count ? ` of ${corpus}` : ''})` : ''}</button>
               );
             })}
           </div>
@@ -6297,19 +6712,7 @@
 
           {error && (
             <div style={{...cardStyle, padding:12, marginBottom:10, color:'#B91C1C', fontSize:12}}>
-              News unavailable: {error}
-            </div>
-          )}
-
-          {loading && !lensStories.length && (
-            <div className="news-search-box" style={{...cardStyle, marginBottom:10}}>
-              <span className="news-search-icon" title="Searching">⛏</span>
-              <div>
-                <div style={{fontSize:13, fontWeight:600, color:C.textDark}}>Loading PGM news from database…</div>
-                <div style={{fontSize:11, color:C.text, marginTop:4}}>
-                  Price · Supply · Demand lenses · ingested twice daily
-                </div>
-              </div>
+              News: {error}
             </div>
           )}
 
@@ -6424,7 +6827,7 @@
             ))}
             {!loading && !lensStories.length && digest && (
               <div style={{...cardStyle, padding:12, fontSize:12, color:C.text}}>
-                No {lensMeta?.label || activeLens} headlines yet — scheduled ingest runs twice daily.
+                No {lensMeta?.label || activeLens} headlines yet — tap <strong>Search web + store</strong> to pull RSS + Google News into Supabase.
               </div>
             )}
           </div>
@@ -6445,11 +6848,14 @@
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8, lineHeight:1.5}}>
-            Supabase · Price / Supply / Demand · freshness-weighted · ingest every ~3h
+            Supabase store · Price / Supply / Demand · freshness-weighted
+            {digest?.dbRowCount != null && ` · ${digest.dbRowCount} rows in DB`}
+            {digest?.corpusTotal != null && ` · ${digest.corpusTotal} PGM-relevant`}
+            {digest?.unfoldingCount != null && ` · ${digest.unfoldingCount} in 7d story`}
             {digest?.persistNote && ` · ${digest.persistNote}`}
             {digest?.newestFetchedAt && ` · DB newest ${timeAgo(new Date(digest.newestFetchedAt))}`}
             {localDays > 0 && ` · ${localDays} day${localDays === 1 ? '' : 's'} saved locally`}
-            {' · '}Refresh runs full RSS + Google News into the database, then rebuilds the unfolding story.
+            {' · '}Scheduled every ~3h · button always searches the web and writes to Supabase.
           </div>
         </div>
       );
@@ -6941,6 +7347,323 @@
               Data · WPIC / Metals Focus annual balances (koz) · platinum prices from Metis historical series (LBMA annual avg).
               Cumulative scarcity view also lives under Fundamentals below. Not investment advice.
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── FACE VALUE SCARCITY TAB ─────────────────────────────────── */
+    function FaceValueScarcityPanel({ live, perth, audUsd }) {
+      const [metalFilter, setMetalFilter] = useState('all');
+      const [sortKey, setSortKey] = useState('premium');
+      const [holdings, setHoldings] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(FACE_HOLDINGS_KEY) || '{}'); }
+        catch { return {}; }
+      });
+
+      const ptSpot = live?.platinum?.price;
+      const auSpot = live?.gold?.price;
+      const fx = audUsd > 0 ? audUsd : 0.65;
+      const ptMetal = perth?.result?.find((m) => m.metal === 'Platinum');
+      const auMetal = perth?.result?.find((m) => m.metal === 'Gold');
+      const ptOffer = ptMetal?.oneWeekHistoricData?.slice(-1)[0]?.offer;
+      const auOffer = auMetal?.oneWeekHistoricData?.slice(-1)[0]?.offer;
+
+      const usdToAud = (usd) => (usd == null ? null : usd / fx);
+      const spotUsd = (metal) => (metal === 'gold' ? auSpot : ptSpot);
+
+      const rows = useMemo(() => {
+        return FACE_VALUE_COINS.map((coin) => {
+          const spot = spotUsd(coin.metal);
+          const meltUsd = spot != null ? spot * coin.weightOz : null;
+          const meltAud = meltUsd != null ? usdToAud(meltUsd) : null;
+          let askAud = null;
+          let askLabel = '—';
+          if (coin.askSource === 'perth') {
+            askAud = coin.metal === 'gold' ? auOffer : ptOffer;
+            askLabel = askAud != null ? 'Perth offer' : 'Perth n/a';
+          } else if (coin.askAud != null) {
+            askAud = coin.askAud;
+            askLabel = 'Indicative AUD';
+          } else if (coin.askUsd != null) {
+            askAud = usdToAud(coin.askUsd);
+            askLabel = 'Indicative USD→AUD';
+          }
+          const premiumPct = askAud != null && meltAud > 0
+            ? ((askAud - meltAud) / meltAud) * 100
+            : null;
+          const faceAud = coin.faceCurrency === 'AUD'
+            ? coin.faceValue
+            : coin.faceCurrency === 'USD'
+              ? usdToAud(coin.faceValue)
+              : null; // CAD/GBP/CNY shown as face only
+          const qty = Number(holdings[coin.id]) || 0;
+          return {
+            ...coin,
+            meltUsd,
+            meltAud,
+            askAud,
+            askLabel,
+            premiumPct,
+            faceAud,
+            qty,
+            positionAud: qty > 0 && askAud != null ? qty * askAud : 0,
+          };
+        });
+      }, [live, perth, audUsd, holdings, auOffer, ptOffer, auSpot, ptSpot]);
+
+      const filtered = useMemo(() => {
+        let list = rows.filter((r) => metalFilter === 'all' || r.metal === metalFilter);
+        const dir = sortKey.startsWith('-') ? -1 : 1;
+        const key = sortKey.replace(/^-/, '');
+        list = [...list].sort((a, b) => {
+          const av = a[key]; const bv = b[key];
+          if (av == null && bv == null) return 0;
+          if (av == null) return 1;
+          if (bv == null) return -1;
+          if (typeof av === 'string') return dir * String(av).localeCompare(String(bv));
+          return dir * (av - bv);
+        });
+        return list;
+      }, [rows, metalFilter, sortKey]);
+
+      const cartRows = rows.filter((r) => r.qty > 0 || r.status === 'cart');
+      const cartTotal = cartRows.reduce((s, r) => s + (r.positionAud || 0), 0);
+      const bestScarcity = [...rows]
+        .filter((r) => r.premiumPct != null && r.status !== 'benchmark')
+        .sort((a, b) => b.premiumPct - a.premiumPct)
+        .slice(0, 3);
+
+      const setQty = (id, qty) => {
+        const next = { ...holdings, [id]: Math.max(0, Math.floor(Number(qty) || 0)) };
+        if (!next[id]) delete next[id];
+        setHoldings(next);
+        try { localStorage.setItem(FACE_HOLDINGS_KEY, JSON.stringify(next)); } catch (_) {}
+      };
+
+      const thBtn = (label, key) => (
+        <button
+          type="button"
+          onClick={() => setSortKey((prev) => (prev === key ? `-${key}` : key))}
+          style={{
+            background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            font: 'inherit', fontWeight: 600, color: C.text, textAlign: 'left',
+          }}
+        >
+          {label}{sortKey === key || sortKey === `-${key}` ? (sortKey.startsWith('-') ? ' ↓' : ' ↑') : ''}
+        </button>
+      );
+
+      return (
+        <div>
+          <div style={{
+            padding: '28px 22px 20px',
+            background: 'linear-gradient(165deg, #F7F4EE 0%, #F0EBE3 45%, #E8E2D8 100%)',
+            borderBottom: `1px solid ${C.border}`,
+          }}>
+            <div style={{
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontSize: 'clamp(26px, 3.8vw, 38px)',
+              fontWeight: 400,
+              color: C.textDark,
+              lineHeight: 1.15,
+              marginBottom: 10,
+            }}>
+              Face Value <span style={{color: C.gold}}>Scarcity</span>
+            </div>
+            <p style={{fontSize: 15, color: C.textSecondary, lineHeight: 1.55, maxWidth: 720, margin: 0}}>
+              Sovereign face value + scarcity premium over raw spot melt — the decision layer between
+              generic bullion and limited legal-tender coins. Premiums recompute from live LBMA spots.
+            </p>
+            <div style={{
+              marginTop: 16, fontSize: 13, color: C.textDark, fontVariantNumeric: 'tabular-nums',
+              display: 'flex', flexWrap: 'wrap', gap: '6px 18px',
+            }}>
+              <span>Au <strong>{auSpot != null ? fmtUsd(auSpot, 0) : '—'}</strong></span>
+              <span>Pt <strong>{ptSpot != null ? fmtUsd(ptSpot, 0) : '—'}</strong></span>
+              <span>AUD <strong>{fx ? (1 / fx).toFixed(4) : '—'}</strong> per USD</span>
+              {ptOffer != null && auOffer != null && (
+                <span style={{color: C.text}}>Perth 1oz offer · Au {fmtAud(auOffer)} · Pt {fmtAud(ptOffer)}</span>
+              )}
+            </div>
+          </div>
+
+          <div style={{padding: '14px 18px 8px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+            <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.text}}>Metal</span>
+            {[['all', 'All'], ['platinum', 'Platinum'], ['gold', 'Gold']].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setMetalFilter(id)}
+                style={{
+                  fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                  border: `1px solid ${metalFilter === id ? C.plat : C.border}`,
+                  background: metalFilter === id ? 'rgba(107,127,150,0.12)' : C.surface,
+                  color: metalFilter === id ? C.plat : C.textDark,
+                }}
+              >{label}</button>
+            ))}
+            <span style={{fontSize: 11, color: C.text, marginLeft: 8}}>
+              Add coins in <code style={{fontSize: 10}}>FACE_VALUE_COINS</code> — modular catalogue
+            </span>
+          </div>
+
+          <div style={{padding: '4px 12px 16px', overflowX: 'auto'}}>
+            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 720}}>
+              <thead>
+                <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Coin', 'name')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Metal', 'metal')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Weight', 'weightOz')}</th>
+                  <th style={{padding: '10px 12px'}}>Scarcity</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Ask', 'askAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Melt', 'meltAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Premium %', 'premiumPct')}</th>
+                  <th style={{padding: '10px 12px'}}>Face</th>
+                  <th style={{padding: '10px 12px'}}>Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r) => (
+                  <tr key={r.id} style={{borderTop: `1px solid ${C.borderLight}`}}>
+                    <td style={{padding: '10px 12px', verticalAlign: 'top'}}>
+                      <div style={{fontWeight: 600, color: C.textDark}}>{r.name}</div>
+                      <div style={{fontSize: 10, color: C.text, marginTop: 2}}>{r.notes}</div>
+                    </td>
+                    <td style={{padding: '10px 12px', color: r.metal === 'gold' ? C.gold : C.plat, fontWeight: 600, textTransform: 'capitalize'}}>
+                      {r.metal}
+                    </td>
+                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
+                      {r.weightOz >= 0.99 ? `${r.weightOz.toFixed(0)} oz` : `${r.weightOz.toFixed(3)} oz`}
+                    </td>
+                    <td style={{padding: '10px 12px', color: C.textSecondary, lineHeight: 1.45, maxWidth: 180}}>{r.scarcity}</td>
+                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
+                      <div style={{fontWeight: 600}}>{r.askAud != null ? fmtAud(r.askAud) : '—'}</div>
+                      <div style={{fontSize: 10, color: C.text}}>{r.askLabel}</div>
+                    </td>
+                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.text}}>
+                      {r.meltAud != null ? fmtAud(r.meltAud) : '—'}
+                    </td>
+                    <td style={{
+                      padding: '10px 12px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                      color: r.premiumPct == null ? C.text : r.premiumPct > 25 ? '#B45309' : r.premiumPct > 8 ? '#047857' : C.textDark,
+                    }}>
+                      {r.premiumPct != null ? `${r.premiumPct >= 0 ? '+' : ''}${r.premiumPct.toFixed(1)}%` : '—'}
+                    </td>
+                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
+                      {r.faceCurrency} {r.faceValue.toLocaleString()}
+                    </td>
+                    <td style={{padding: '10px 12px'}}>
+                      <input
+                        type="number"
+                        min={0}
+                        value={r.qty || ''}
+                        placeholder="0"
+                        onChange={(e) => setQty(r.id, e.target.value)}
+                        style={{
+                          width: 52, padding: '4px 6px', borderRadius: 5,
+                          border: `1px solid ${C.border}`, fontSize: 12, fontVariantNumeric: 'tabular-nums',
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{height: 1, background: C.borderLight, margin: '0 18px'}}/>
+
+          <div style={{padding: '16px 18px 8px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18}}>
+            <div>
+              <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textDark, marginBottom: 8}}>
+                Holdings / cart
+              </div>
+              <p style={{fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginBottom: 10}}>
+                Set Qty on any row — saved in this browser. Cart-tagged coins from recent shopping sit ready.
+              </p>
+              {cartRows.filter((r) => r.qty > 0).length === 0 ? (
+                <div style={{fontSize: 12, color: C.text}}>No quantities set yet — enter Qty on scarce pieces you hold or are buying.</div>
+              ) : (
+                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12}}>
+                  <tbody>
+                    {cartRows.filter((r) => r.qty > 0).map((r) => (
+                      <tr key={r.id} style={{borderTop: `1px solid ${C.borderLight}`}}>
+                        <td style={{padding: '8px 0', color: C.textDark}}>{r.qty}× {r.name}</td>
+                        <td style={{padding: '8px 0', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums'}}>
+                          {r.positionAud ? fmtAud(r.positionAud) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{borderTop: `1px solid ${C.border}`}}>
+                      <td style={{padding: '10px 0', fontWeight: 700}}>Position (ask)</td>
+                      <td style={{padding: '10px 0', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums'}}>
+                        {fmtAud(cartTotal)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div>
+              <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#B45309', marginBottom: 8}}>
+                Best scarcity premiums now
+              </div>
+              <p style={{fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginBottom: 10}}>
+                Highest ask-over-melt among non-benchmark coins (live spots). High premium = scarcity / theme —
+                not automatically a bargain.
+              </p>
+              {bestScarcity.length === 0 ? (
+                <div style={{fontSize: 12, color: C.text}}>Waiting on spot / ask inputs…</div>
+              ) : bestScarcity.map((r) => (
+                <div key={r.id} style={{marginBottom: 10, paddingBottom: 8, borderBottom: `1px solid ${C.borderLight}`}}>
+                  <div style={{fontWeight: 600, color: C.textDark, fontSize: 13}}>{r.name}</div>
+                  <div style={{fontSize: 12, color: '#B45309', fontWeight: 700, marginTop: 2}}>
+                    +{r.premiumPct.toFixed(1)}% over melt
+                  </div>
+                  <div style={{fontSize: 11, color: C.text, marginTop: 2}}>{r.scarcity}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{padding: '4px 18px 16px'}}>
+            <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textDark, marginBottom: 6}}>
+              Premium over melt · live snapshot
+            </div>
+            <p style={{fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginBottom: 8, maxWidth: 640}}>
+              Ask vs LBMA melt for the filtered set. Benchmarks (Perth kangaroo) sit near bullion; thematic coins stack scarcity on top.
+            </p>
+            <ResponsiveContainer width="100%" height={Math.max(160, filtered.filter((r) => r.premiumPct != null).length * 28)}>
+              <BarChart
+                layout="vertical"
+                data={filtered.filter((r) => r.premiumPct != null).map((r) => ({
+                  name: r.name.length > 36 ? `${r.name.slice(0, 34)}…` : r.name,
+                  premium: Math.round(r.premiumPct * 10) / 10,
+                  metal: r.metal,
+                }))}
+                margin={{top: 4, right: 24, left: 8, bottom: 4}}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={C.borderLight} horizontal={false} />
+                <XAxis type="number" unit="%" tick={{fontSize: 10, fill: C.text}} axisLine={{stroke: C.border}} />
+                <YAxis type="category" dataKey="name" width={150} tick={{fontSize: 10, fill: C.textDark}} axisLine={false} tickLine={false} />
+                <Tooltip
+                  formatter={(v) => [`${v}%`, 'Premium']}
+                  contentStyle={{background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12}}
+                />
+                <Bar dataKey="premium" name="Premium %" radius={[0, 4, 4, 0]} maxBarSize={18}>
+                  {filtered.filter((r) => r.premiumPct != null).map((r) => (
+                    <Cell key={r.id} fill={r.metal === 'gold' ? C.gold : C.plat} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div style={{padding: '8px 18px 20px', fontSize: 11, color: C.text, lineHeight: 1.55, maxWidth: 760}}>
+            Melt = weight × LBMA spot ÷ AUDUSD. Asks marked indicative are shopping quotes — replace with your
+            dealer numbers in <code>FACE_VALUE_COINS</code>. Face value is legal tender, not a cash-out floor at melt.
+            Not investment advice.
           </div>
         </div>
       );
@@ -7438,6 +8161,9 @@
             <button className={`price-tab ${tab==='wtf'?'active':''}`} onClick={() => setTab('wtf')}>
               Supply vs Price · WTF
             </button>
+            <button className={`price-tab ${tab==='face'?'active':''}`} onClick={() => setTab('face')}>
+              Face Value Scarcity
+            </button>
           </div>
 
           {tab === 'index' ? (
@@ -7487,11 +8213,27 @@
               <PriceCard indexId="IDX-001" label="Gold — reference" sub="Discount context" color={C.gold}
                 price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
             </div>
+          ) : tab === 'face' ? (
+            <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
+              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label} sub="Melt reference" color={C.gold}
+                price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="Melt reference" color={C.plat}
+                price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
+              {ptPrem != null && (
+                <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 180px', minWidth:165}}>
+                  <div style={{fontSize:12, fontWeight:600, color:C.textDark, marginBottom:8}}>Perth Pt 1oz premium</div>
+                  <div style={{fontSize:22, fontWeight:600, color:'#047857', fontVariantNumeric:'tabular-nums'}}>+{ptPrem.toFixed(1)}%</div>
+                  <div style={{fontSize:11, color:C.text, marginTop:4}}>Bullion benchmark vs LBMA</div>
+                </div>
+              )}
+            </div>
           ) : (
             <>
               <p style={{fontSize:13, color:C.textSecondary, lineHeight:1.65, maxWidth:820, marginBottom:14}}>
                 Top four global platinum mine producers by output — all JSE-listed, with primary production in the
                 South Africa Bushveld (Sibanye-Stillwater also operates US PGM assets in Montana).
+                Their charts often look like echoes of each other: same commodity driver, shared SA risks, and
+                sector flows — that lockstep is expected, not faked. See the note on the charts below.
               </p>
               <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
                 {['IDX-201','IDX-202','IDX-203','IDX-204'].map(id => {
@@ -7506,7 +8248,7 @@
 
           {tab === 'index' && <SpreadPanel live={live} />}
 
-          {tab !== 'index' && tab !== 'bridge' && tab !== 'wtf' && (
+          {tab !== 'index' && tab !== 'bridge' && tab !== 'wtf' && tab !== 'face' && (
             <>
               <div style={{fontSize:11, fontWeight:600, color:C.text, marginBottom:8}}>Chart period</div>
               <div className="price-tabs" style={{marginBottom:16}}>
@@ -7519,7 +8261,7 @@
             </>
           )}
 
-          {tab !== 'bridge' && tab !== 'wtf' && (
+          {tab !== 'bridge' && tab !== 'wtf' && tab !== 'face' && (
           <div style={{...cardStyle, display:'flex', gap:6, flexWrap:'wrap', marginBottom:10,
             alignItems:'center', padding:'10px 14px'}}>
             <span style={{fontSize:10, fontWeight:600, color:C.text, letterSpacing:'0.08em', textTransform:'uppercase'}}>Show curves</span>
@@ -7539,6 +8281,8 @@
               <PlatinumConfluxBridge live={live} perth={perth} audUsd={audUsd} updated={updated} />
             ) : tab === 'wtf' ? (
               <PlatinumWtfCurve live={live} />
+            ) : tab === 'face' ? (
+              <FaceValueScarcityPanel live={live} perth={perth} audUsd={audUsd} />
             ) : (
             <>
             <div style={panelHdr}>
@@ -7599,7 +8343,8 @@
                     onMetalTimeframeChange={setMetalTimeframe} onCryptoTimeframeChange={setCryptoTimeframe}
                     onCfxTimeframeChange={setCfxTimeframe}
                     activeCurves={activeCurves} showEvents={showEvents} eventsInRange={eventsInRange}
-                    producerMeta={producerMeta} liveSpot={live} chartView={indexChartView} zarPerAud={zarPerAud}/>
+                    producerMeta={producerMeta} liveSpot={live} chartView={indexChartView} zarPerAud={zarPerAud}
+                    onOpenTab={setTab}/>
                 </ErrorBoundary>
               </>
               );
@@ -7629,7 +8374,7 @@
             )}
           </div>
 
-          {tab !== 'bridge' && tab !== 'wtf' && <CurveIndexLibrary tab={tab} />}
+          {tab !== 'bridge' && tab !== 'wtf' && tab !== 'face' && <CurveIndexLibrary tab={tab} />}
 
           {(error || perthError) && (
             <div style={{fontSize:12, color:'#B91C1C', marginBottom:12, padding:'8px 12px',
