@@ -1,0 +1,92 @@
+{
+  "2026 Outback Platinum": {
+    "rarity": "medium",
+    "historicalPremium": [8, 12],
+    "metal": "platinum",
+    "weightOz": 1,
+    "sovereign": true,
+    "thematic": true,
+    "aliases": ["outback", "wonders of the outback", "2026 outback"]
+  },
+  "Australian Platinum Kangaroo": {
+    "rarity": "low",
+    "historicalPremium": [4, 9],
+    "metal": "platinum",
+    "weightOz": 1,
+    "sovereign": true,
+    "thematic": false,
+    "aliases": ["platypus", "platinum kangaroo", "perth mint platinum 1oz"]
+  },
+  "Australian Gold Kangaroo": {
+    "rarity": "low",
+    "historicalPremium": [3, 7],
+    "metal": "gold",
+    "weightOz": 1,
+    "sovereign": true,
+    "thematic": false,
+    "aliases": ["gold kangaroo", "perth mint gold 1oz"]
+  },
+  "American Platinum Eagle 1/2oz": {
+    "rarity": "medium",
+    "historicalPremium": [15, 45],
+    "metal": "platinum",
+    "weightOz": 0.5,
+    "sovereign": true,
+    "thematic": false,
+    "aliases": ["american eagle", "platinum eagle", "age 1/2", "age half"]
+  },
+  "Canada War of 1812 1/2oz": {
+    "rarity": "high",
+    "historicalPremium": [60, 150],
+    "metal": "platinum",
+    "weightOz": 0.5,
+    "sovereign": true,
+    "thematic": true,
+    "aliases": ["war of 1812", "1812", "canada platinum"]
+  },
+  "Tudor Beast Royal Dragon": {
+    "rarity": "medium",
+    "historicalPremium": [10, 22],
+    "metal": "platinum",
+    "weightOz": 1,
+    "sovereign": true,
+    "thematic": true,
+    "aliases": ["tudor", "royal dragon", "tudor beast"]
+  },
+  "Chinese Panda 30g Gold": {
+    "rarity": "medium",
+    "historicalPremium": [6, 14],
+    "metal": "gold",
+    "weightOz": 0.96453876,
+    "sovereign": true,
+    "thematic": true,
+    "aliases": ["panda", "chinese panda", "30g gold"]
+  },
+  "Perth Lunar Platinum 1oz": {
+    "rarity": "medium",
+    "historicalPremium": [12, 28],
+    "metal": "platinum",
+    "weightOz": 1,
+    "sovereign": true,
+    "thematic": true,
+    "aliases": ["lunar", "lunar series", "year of the"]
+  },
+  "Maple Leaf Platinum": {
+    "rarity": "low",
+    "historicalPremium": [5, 12],
+    "metal": "platinum",
+    "weightOz": 1,
+    "sovereign": true,
+    "thematic": false,
+    "aliases": ["maple", "maple leaf"]
+  },
+  "Britannia Platinum": {
+    "rarity": "low",
+    "historicalPremium": [6, 14],
+    "metal": "platinum",
+    "weightOz": 1,
+    "sovereign": true,
+    "thematic": false,
+    "aliases": ["britannia"]
+  }
+}

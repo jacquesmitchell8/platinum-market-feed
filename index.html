@@ -1302,6 +1302,636 @@
     ];
 
     const FACE_HOLDINGS_KEY = 'pm_face_holdings_v1';
+    const FACE_RARITY_KEY = 'pm_face_rarity_v1';
+    const FACE_OCR_RESULTS_KEY = 'pm_face_ocr_results_v1';
+
+    /** Seed rarity / scarcity DB — editable in-tab; overrides persist in localStorage. */
+    const FACE_RARITY_DEFAULT = {
+      '2026 Outback Platinum': {
+        rarity: 'medium',
+        historicalPremium: [8, 12],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        aliases: ['outback', 'wonders of the outback', '2026 outback'],
+      },
+      'Australian Platinum Kangaroo': {
+        rarity: 'low',
+        historicalPremium: [4, 9],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        aliases: ['platypus', 'platinum kangaroo', 'perth mint platinum 1oz'],
+      },
+      'Australian Gold Kangaroo': {
+        rarity: 'low',
+        historicalPremium: [3, 7],
+        metal: 'gold',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        aliases: ['gold kangaroo', 'perth mint gold 1oz'],
+      },
+      'American Platinum Eagle 1/2oz': {
+        rarity: 'medium',
+        historicalPremium: [15, 45],
+        metal: 'platinum',
+        weightOz: 0.5,
+        sovereign: true,
+        thematic: false,
+        aliases: ['american eagle', 'platinum eagle', 'age 1/2', 'age half'],
+      },
+      'Canada War of 1812 1/2oz': {
+        rarity: 'high',
+        historicalPremium: [60, 150],
+        metal: 'platinum',
+        weightOz: 0.5,
+        sovereign: true,
+        thematic: true,
+        aliases: ['war of 1812', '1812', 'canada platinum'],
+      },
+      'Tudor Beast Royal Dragon': {
+        rarity: 'medium',
+        historicalPremium: [10, 22],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        aliases: ['tudor', 'royal dragon', 'tudor beast'],
+      },
+      'Chinese Panda 30g Gold': {
+        rarity: 'medium',
+        historicalPremium: [6, 14],
+        metal: 'gold',
+        weightOz: 30 / 31.1034768,
+        sovereign: true,
+        thematic: true,
+        aliases: ['panda', 'chinese panda', '30g gold'],
+      },
+      'Perth Lunar Platinum 1oz': {
+        rarity: 'medium',
+        historicalPremium: [12, 28],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        aliases: ['lunar', 'lunar series', 'year of the'],
+      },
+      'Maple Leaf Platinum': {
+        rarity: 'low',
+        historicalPremium: [5, 12],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        aliases: ['maple', 'maple leaf'],
+      },
+      'Britannia Platinum': {
+        rarity: 'low',
+        historicalPremium: [6, 14],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        aliases: ['britannia'],
+      },
+    };
+
+    const RARITY_SCORE = { low: 28, medium: 58, high: 82, ultra: 95 };
+
+    function loadFaceRarityDb() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(FACE_RARITY_KEY) || '{}');
+        return { ...FACE_RARITY_DEFAULT, ...raw };
+      } catch {
+        return { ...FACE_RARITY_DEFAULT };
+      }
+    }
+
+    function saveFaceRarityOverride(key, entry) {
+      try {
+        const raw = JSON.parse(localStorage.getItem(FACE_RARITY_KEY) || '{}');
+        raw[key] = entry;
+        localStorage.setItem(FACE_RARITY_KEY, JSON.stringify(raw));
+      } catch (_) {}
+    }
+
+    function loadFaceOcrResults() {
+      try { return JSON.parse(localStorage.getItem(FACE_OCR_RESULTS_KEY) || '[]'); }
+      catch { return []; }
+    }
+
+    function saveFaceOcrResults(rows) {
+      try { localStorage.setItem(FACE_OCR_RESULTS_KEY, JSON.stringify(rows.slice(0, 80))); }
+      catch (_) {}
+    }
+
+    let tesseractLoadPromise = null;
+    function ensureTesseract() {
+      if (window.Tesseract) return Promise.resolve(window.Tesseract);
+      if (tesseractLoadPromise) return tesseractLoadPromise;
+      tesseractLoadPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+        s.async = true;
+        s.onload = () => (window.Tesseract ? resolve(window.Tesseract) : reject(new Error('Tesseract missing')));
+        s.onerror = () => reject(new Error('Failed to load Tesseract.js'));
+        document.head.appendChild(s);
+      });
+      return tesseractLoadPromise;
+    }
+
+    function matchFaceRarity(name, rarityDb) {
+      const n = String(name || '').toLowerCase();
+      let best = null;
+      let bestScore = 0;
+      for (const [key, meta] of Object.entries(rarityDb || {})) {
+        const aliases = [key, ...(meta.aliases || [])].map((a) => String(a).toLowerCase());
+        for (const a of aliases) {
+          if (!a || a.length < 3) continue;
+          if (n.includes(a) || a.includes(n.slice(0, Math.min(n.length, a.length)))) {
+            const score = a.length + (meta.thematic ? 2 : 0) + (meta.sovereign ? 1 : 0);
+            if (score > bestScore) {
+              bestScore = score;
+              best = { key, ...meta };
+            }
+          }
+        }
+      }
+      return best;
+    }
+
+    function inferMetalWeight(text, rarityHit) {
+      const t = String(text || '').toLowerCase();
+      let metal = rarityHit?.metal || null;
+      if (!metal) {
+        if (/\bplatinum\b|\bplat\b|\bxpt\b/.test(t)) metal = 'platinum';
+        else if (/\bgold\b|\bxau\b/.test(t)) metal = 'gold';
+        else metal = 'platinum';
+      }
+      let weightOz = rarityHit?.weightOz ?? null;
+      if (weightOz == null) {
+        if (/\b30\s*g\b|\b30g\b/.test(t)) weightOz = 30 / 31.1034768;
+        else if (/\b1\/2\b|\b½\b|\b0\.5\s*oz\b|\bhalf\s*oz\b/.test(t)) weightOz = 0.5;
+        else if (/\b1\s*oz\b|\bone\s*ounce\b|\b1oz\b/.test(t)) weightOz = 1;
+        else weightOz = 1;
+      }
+      const yearM = t.match(/\b(20\d{2})\b/);
+      return { metal, weightOz, year: yearM ? yearM[1] : null };
+    }
+
+    function parseAudPricesFromText(text) {
+      const re = /(?:A\$|AU\$|AUD\s*\$?|\$)\s*([\d,]{2,6}(?:\.\d{1,2})?)/gi;
+      const out = [];
+      let m;
+      while ((m = re.exec(text)) != null) {
+        const n = Number(String(m[1]).replace(/,/g, ''));
+        if (Number.isFinite(n) && n >= 80 && n <= 50000) {
+          out.push({ priceAud: n, index: m.index, raw: m[0] });
+        }
+      }
+      return out;
+    }
+
+    /** Heuristic OCR → listing candidates (dealer pages are noisy — best-effort). */
+    function parseDealerOcrText(text) {
+      const clean = String(text || '').replace(/\r/g, '');
+      const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+      const prices = parseAudPricesFromText(clean);
+      if (!prices.length) return [];
+
+      const items = [];
+      const seen = new Set();
+      for (const p of prices) {
+        // Find line nearest this price occurrence
+        let pos = 0;
+        let lineIdx = 0;
+        for (let i = 0; i < lines.length; i++) {
+          const next = pos + lines[i].length + 1;
+          if (p.index >= pos && p.index < next) { lineIdx = i; break; }
+          pos = next;
+          lineIdx = i;
+        }
+        const nameParts = [];
+        for (let j = Math.max(0, lineIdx - 3); j <= lineIdx; j++) {
+          const L = lines[j];
+          if (!L) continue;
+          if (/^(add|buy|cart|qty|quantity|in stock|sku|code)\b/i.test(L)) continue;
+          if (/^(A\$|AU\$|AUD|\$)\s*[\d,]/.test(L) && L.length < 18) continue;
+          if (L.length < 4 || L.length > 90) continue;
+          nameParts.push(L.replace(/(?:A\$|AU\$|AUD\s*\$?|\$)\s*[\d,]+(?:\.\d{1,2})?/gi, '').trim());
+        }
+        let name = nameParts.filter(Boolean).slice(-2).join(' · ').replace(/\s+/g, ' ').trim();
+        if (!name || name.length < 4) name = `Listing @ ${p.raw}`;
+        const key = `${name.toLowerCase()}|${Math.round(p.priceAud)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push({
+          id: `ocr-${items.length}-${Math.round(p.priceAud)}`,
+          name,
+          priceAud: p.priceAud,
+          sourceLine: lines[lineIdx] || '',
+        });
+      }
+      // Prefer fewer high-signal rows (dealer pages print many small numbers)
+      return items
+        .filter((it) => it.priceAud >= 400)
+        .slice(0, 16);
+    }
+
+    function analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, rarityDb) {
+      const fx = audUsd > 0 ? audUsd : 0.65;
+      const rarityHit = matchFaceRarity(item.name, rarityDb);
+      const inferred = inferMetalWeight(`${item.name} ${item.sourceLine || ''}`, rarityHit);
+      const spotUsd = inferred.metal === 'gold' ? auSpot : ptSpot;
+      const meltUsd = spotUsd != null ? spotUsd * inferred.weightOz : null;
+      const meltAud = meltUsd != null ? meltUsd / fx : null;
+      const askAud = item.priceAud;
+      const premiumPct = askAud != null && meltAud > 0 ? ((askAud - meltAud) / meltAud) * 100 : null;
+      const hist = rarityHit?.historicalPremium || [8, 18];
+      const histLo = hist[0];
+      const histHi = hist[1];
+      const histMid = (histLo + histHi) / 2;
+
+      let scarcityScore = RARITY_SCORE[rarityHit?.rarity] ?? 35;
+      if (rarityHit?.sovereign) scarcityScore += 8;
+      if (rarityHit?.thematic) scarcityScore += 10;
+      if (premiumPct != null && premiumPct > histHi + 25) scarcityScore -= 12;
+      scarcityScore = Math.max(5, Math.min(100, Math.round(scarcityScore)));
+
+      let recommendation = 'Hold';
+      let reasoning = '';
+      if (premiumPct == null || meltAud == null) {
+        recommendation = 'Hold';
+        reasoning = 'Could not compute melt — check metal/weight or wait for live spot.';
+      } else if (scarcityScore >= 70 && premiumPct <= histMid) {
+        recommendation = 'Strong Buy';
+        reasoning = `Strong scarcity (${rarityHit?.rarity || 'inferred'}) and premium ${premiumPct.toFixed(1)}% is at/under typical ${histLo}–${histHi}% band — buy under ~${histMid.toFixed(0)}% over spot.`;
+      } else if (scarcityScore >= 55 && premiumPct <= histHi + 3) {
+        recommendation = 'Buy';
+        reasoning = `Decent scarcity with premium ${premiumPct.toFixed(1)}% inside/near historical ${histLo}–${histHi}% — fair for ${rarityHit?.key || 'this piece'}.`;
+      } else if (premiumPct > histHi + 18 || (scarcityScore < 40 && premiumPct > 22)) {
+        recommendation = 'Avoid';
+        reasoning = `Premium ${premiumPct.toFixed(1)}% stretches past typical ${histHi}% ceiling for this scarcity — wait for a better ask.`;
+      } else {
+        recommendation = 'Hold';
+        reasoning = `Premium ${premiumPct.toFixed(1)}% vs guide ${histLo}–${histHi}% — watch; not urgent at this ask.`;
+      }
+
+      return {
+        ...item,
+        metal: inferred.metal,
+        weightOz: inferred.weightOz,
+        year: inferred.year,
+        meltAud,
+        premiumPct,
+        scarcityScore,
+        rarity: rarityHit?.rarity || 'unknown',
+        rarityKey: rarityHit?.key || null,
+        sovereign: !!rarityHit?.sovereign,
+        thematic: !!rarityHit?.thematic,
+        histBand: `${histLo}–${histHi}%`,
+        recommendation,
+        reasoning,
+      };
+    }
+
+    function buildFacePortfolioSuggestion(analyzed) {
+      if (!analyzed?.length) return 'Upload a dealer screenshot to get a portfolio read.';
+      const buys = analyzed.filter((a) => a.recommendation === 'Strong Buy' || a.recommendation === 'Buy');
+      const avoids = analyzed.filter((a) => a.recommendation === 'Avoid');
+      const avgPrem = analyzed.filter((a) => a.premiumPct != null);
+      const avg = avgPrem.length
+        ? avgPrem.reduce((s, a) => s + a.premiumPct, 0) / avgPrem.length
+        : null;
+      const parts = [];
+      parts.push(`${analyzed.length} listing${analyzed.length === 1 ? '' : 's'} read from the screenshot.`);
+      if (avg != null) parts.push(`Average premium ~${avg.toFixed(1)}% over melt.`);
+      if (buys.length) {
+        parts.push(`Lean into: ${buys.map((b) => b.name.slice(0, 42)).join('; ')}.`);
+      } else {
+        parts.push('No clear buys at these asks — scarcity is fine, prices are stretched.');
+      }
+      if (avoids.length) {
+        parts.push(`Skip / wait: ${avoids.map((b) => b.name.slice(0, 36)).join('; ')}.`);
+      }
+      parts.push('Not advice — OCR can misread; verify names and prices on the dealer page.');
+      return parts.join(' ');
+    }
+
+    function FaceScreenshotAnalyzer({ live, audUsd }) {
+      const fileRef = useRef(null);
+      const [dragOver, setDragOver] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [status, setStatus] = useState(null);
+      const [previewUrl, setPreviewUrl] = useState(null);
+      const [rawOcr, setRawOcr] = useState('');
+      const [rarityDb, setRarityDb] = useState(() => loadFaceRarityDb());
+      const [analyzed, setAnalyzed] = useState(() => loadFaceOcrResults());
+      const [showRarityEdit, setShowRarityEdit] = useState(false);
+      const [editKey, setEditKey] = useState('');
+      const [editRarity, setEditRarity] = useState('medium');
+      const [editLo, setEditLo] = useState('8');
+      const [editHi, setEditHi] = useState('12');
+
+      const auSpot = live?.gold?.price;
+      const ptSpot = live?.platinum?.price;
+      const portfolioNote = useMemo(() => buildFacePortfolioSuggestion(analyzed), [analyzed]);
+
+      const runAnalysisOnText = useCallback((text, label) => {
+        const parsed = parseDealerOcrText(text);
+        const db = loadFaceRarityDb();
+        setRarityDb(db);
+        const scored = parsed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, db));
+        setAnalyzed(scored);
+        saveFaceOcrResults(scored);
+        setStatus(scored.length
+          ? `${label}: ${scored.length} price line${scored.length === 1 ? '' : 's'} scored vs live spot`
+          : `${label}: no AUD prices found — try a clearer crop or paste text`);
+        return scored;
+      }, [auSpot, ptSpot, audUsd]);
+
+      const processFile = async (file) => {
+        if (!file) return;
+        if (!file.type?.startsWith('image/')) {
+          setStatus('Please upload an image (PNG/JPG/WebP) of the dealer page.');
+          return;
+        }
+        setBusy(true);
+        setStatus('Loading OCR engine…');
+        try {
+          const url = URL.createObjectURL(file);
+          setPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+          const Tesseract = await ensureTesseract();
+          setStatus('Reading screenshot (Tesseract)…');
+          const result = await Tesseract.recognize(file, 'eng', {
+            logger: (m) => {
+              if (m.status === 'recognizing text' && m.progress != null) {
+                setStatus(`Reading screenshot… ${Math.round(m.progress * 100)}%`);
+              }
+            },
+          });
+          const text = result?.data?.text || '';
+          setRawOcr(text);
+          runAnalysisOnText(text, file.name || 'Upload');
+        } catch (e) {
+          setStatus(e.message || 'OCR failed');
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const onDrop = (e) => {
+        e.preventDefault();
+        setDragOver(false);
+        const f = e.dataTransfer?.files?.[0];
+        if (f) processFile(f);
+      };
+
+      const saveRarityEdit = () => {
+        const key = editKey.trim();
+        if (!key) return;
+        const entry = {
+          rarity: editRarity,
+          historicalPremium: [Number(editLo) || 0, Number(editHi) || 20],
+          metal: /gold/i.test(key) ? 'gold' : 'platinum',
+          weightOz: 1,
+          sovereign: true,
+          thematic: true,
+          aliases: [key.toLowerCase()],
+        };
+        saveFaceRarityOverride(key, entry);
+        const db = loadFaceRarityDb();
+        setRarityDb(db);
+        if (rawOcr) runAnalysisOnText(rawOcr, 'Re-scored');
+        else if (analyzed.length) {
+          const scored = analyzed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, db));
+          setAnalyzed(scored);
+          saveFaceOcrResults(scored);
+        }
+        setShowRarityEdit(false);
+        setStatus(`Saved rarity profile: ${key}`);
+      };
+
+      const recColor = (r) => {
+        if (r === 'Strong Buy') return '#047857';
+        if (r === 'Buy') return '#0F766E';
+        if (r === 'Avoid') return '#B91C1C';
+        return '#B45309';
+      };
+
+      return (
+        <div style={{padding: '16px 18px 8px'}}>
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            style={{
+              border: `2px dashed ${dragOver ? C.gold : C.border}`,
+              borderRadius: 10,
+              background: dragOver ? 'rgba(184,134,11,0.08)' : 'rgba(255,255,255,0.65)',
+              padding: '22px 18px',
+              textAlign: 'center',
+              transition: 'border-color 0.15s, background 0.15s',
+            }}
+          >
+            <div style={{
+              fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+              color: C.gold, marginBottom: 8,
+            }}>
+              Dealer screenshot → scarcity score
+            </div>
+            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.5, maxWidth: 520, margin: '0 auto 14px'}}>
+              Drop a screenshot from Ainslie, Perth Mint, BullionStar, etc. We OCR coin names + AUD prices,
+              compare to live LBMA melt, and score scarcity vs a local rarity database.
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => fileRef.current?.click()}
+              style={{
+                fontSize: 13, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                padding: '12px 22px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer',
+                border: `1px solid ${C.gold}`,
+                background: busy ? 'rgba(184,134,11,0.2)' : C.gold,
+                color: busy ? C.textDark : '#fff',
+                boxShadow: '0 6px 18px rgba(184,134,11,0.25)',
+              }}
+            >
+              {busy ? 'Analysing…' : 'Upload dealer screenshot'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              style={{display: 'none'}}
+              onChange={(e) => processFile(e.target.files?.[0])}
+            />
+            {status && (
+              <div style={{fontSize: 12, color: C.textDark, marginTop: 12}}>{status}</div>
+            )}
+          </div>
+
+          {(previewUrl || rawOcr) && (
+            <div style={{
+              marginTop: 12, display: 'grid',
+              gridTemplateColumns: previewUrl ? 'minmax(140px, 220px) 1fr' : '1fr',
+              gap: 12, alignItems: 'start',
+            }}>
+              {previewUrl && (
+                <img
+                  src={previewUrl}
+                  alt="Upload preview"
+                  style={{width: '100%', borderRadius: 8, border: `1px solid ${C.border}`, maxHeight: 180, objectFit: 'cover'}}
+                />
+              )}
+              <details style={{fontSize: 11, color: C.text}}>
+                <summary style={{cursor: 'pointer', fontWeight: 600, color: C.textDark}}>Raw OCR text (edit & re-score)</summary>
+                <textarea
+                  value={rawOcr}
+                  onChange={(e) => setRawOcr(e.target.value)}
+                  rows={6}
+                  style={{
+                    width: '100%', marginTop: 8, padding: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace',
+                    border: `1px solid ${C.border}`, borderRadius: 6, resize: 'vertical',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => runAnalysisOnText(rawOcr, 'Pasted text')}
+                  style={{
+                    marginTop: 8, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
+                    border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', color: C.textDark,
+                  }}
+                >Re-score from text</button>
+              </details>
+            </div>
+          )}
+
+          {analyzed.length > 0 && (
+            <div style={{marginTop: 16}}>
+              <div style={{
+                padding: '12px 14px', marginBottom: 12, borderRadius: 8,
+                background: 'rgba(107,127,150,0.08)', border: `1px solid ${C.borderLight}`,
+                fontSize: 13, color: C.textDark, lineHeight: 1.55,
+              }}>
+                <strong style={{color: C.plat}}>Portfolio read:</strong> {portfolioNote}
+              </div>
+
+              <div style={{overflowX: 'auto'}}>
+                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 720}}>
+                  <thead>
+                    <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
+                      <th style={{padding: '9px 10px'}}>Coin</th>
+                      <th style={{padding: '9px 10px'}}>Price</th>
+                      <th style={{padding: '9px 10px'}}>Premium %</th>
+                      <th style={{padding: '9px 10px'}}>Scarcity</th>
+                      <th style={{padding: '9px 10px'}}>Rec</th>
+                      <th style={{padding: '9px 10px'}}>Reasoning</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analyzed.map((a) => (
+                      <tr key={a.id} style={{borderTop: `1px solid ${C.borderLight}`, verticalAlign: 'top'}}>
+                        <td style={{padding: '9px 10px'}}>
+                          <div style={{fontWeight: 600, color: C.textDark}}>{a.name}</div>
+                          <div style={{fontSize: 10, color: C.text, marginTop: 2}}>
+                            {a.metal} · {a.weightOz >= 0.99 ? `${a.weightOz.toFixed(0)} oz` : `${a.weightOz.toFixed(3)} oz`}
+                            {a.rarityKey ? ` · ${a.rarityKey}` : ''}
+                          </div>
+                        </td>
+                        <td style={{padding: '9px 10px', fontVariantNumeric: 'tabular-nums', fontWeight: 600}}>
+                          {fmtAud(a.priceAud)}
+                          <div style={{fontSize: 10, color: C.text, fontWeight: 400}}>
+                            melt {a.meltAud != null ? fmtAud(a.meltAud) : '—'}
+                          </div>
+                        </td>
+                        <td style={{
+                          padding: '9px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                          color: a.premiumPct == null ? C.text : a.premiumPct > 25 ? '#B45309' : '#047857',
+                        }}>
+                          {a.premiumPct != null ? `${a.premiumPct >= 0 ? '+' : ''}${a.premiumPct.toFixed(1)}%` : '—'}
+                          <div style={{fontSize: 10, color: C.text, fontWeight: 400}}>guide {a.histBand}</div>
+                        </td>
+                        <td style={{padding: '9px 10px', fontVariantNumeric: 'tabular-nums'}}>
+                          <strong>{a.scarcityScore}</strong>
+                          <div style={{fontSize: 10, color: C.text}}>{a.rarity}</div>
+                        </td>
+                        <td style={{padding: '9px 10px', fontWeight: 700, color: recColor(a.recommendation)}}>
+                          {a.recommendation}
+                        </td>
+                        <td style={{padding: '9px 10px', color: C.textSecondary, lineHeight: 1.45, maxWidth: 280}}>
+                          {a.reasoning}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div style={{marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+            <button
+              type="button"
+              onClick={() => setShowRarityEdit((v) => !v)}
+              style={{
+                fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: C.surface, color: C.textDark,
+              }}
+            >
+              {showRarityEdit ? 'Close rarity editor' : 'Edit / add rarity profile'}
+            </button>
+            <span style={{fontSize: 11, color: C.text}}>
+              {Object.keys(rarityDb).length} profiles · saved in this browser
+            </span>
+          </div>
+
+          {showRarityEdit && (
+            <div style={{
+              marginTop: 10, padding: 12, borderRadius: 8,
+              border: `1px solid ${C.border}`, background: C.surface2,
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8,
+            }}>
+              <label style={{fontSize: 11, color: C.textDark}}>
+                Coin key
+                <input value={editKey} onChange={(e) => setEditKey(e.target.value)} placeholder="2026 Outback Platinum"
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
+              </label>
+              <label style={{fontSize: 11, color: C.textDark}}>
+                Rarity
+                <select value={editRarity} onChange={(e) => setEditRarity(e.target.value)}
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}}>
+                  {['low', 'medium', 'high', 'ultra'].map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </label>
+              <label style={{fontSize: 11, color: C.textDark}}>
+                Hist premium lo %
+                <input value={editLo} onChange={(e) => setEditLo(e.target.value)}
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
+              </label>
+              <label style={{fontSize: 11, color: C.textDark}}>
+                Hist premium hi %
+                <input value={editHi} onChange={(e) => setEditHi(e.target.value)}
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
+              </label>
+              <div style={{display: 'flex', alignItems: 'end'}}>
+                <button type="button" onClick={saveRarityEdit}
+                  style={{
+                    fontSize: 11, fontWeight: 700, padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
+                    border: `1px solid ${C.plat}`, background: C.plat, color: '#fff',
+                  }}>Save profile</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
 
     /** Annotated disconnect years — price refused to follow the textbook S&D script. */
     const WTF_MOMENTS = [
@@ -7842,8 +8472,8 @@
               Face Value <span style={{color: C.gold}}>Scarcity</span>
             </div>
             <p style={{fontSize: 15, color: C.textSecondary, lineHeight: 1.55, maxWidth: 720, margin: 0}}>
-              Sovereign face value + scarcity premium over raw spot melt — the decision layer between
-              generic bullion and limited legal-tender coins. Premiums recompute from live LBMA spots.
+              Sovereign face value + scarcity premium over raw spot melt. Upload a dealer screenshot to OCR
+              prices, score scarcity, and get Strong Buy / Buy / Hold / Avoid reads against live LBMA.
             </p>
             <div style={{
               marginTop: 16, fontSize: 13, color: C.textDark, fontVariantNumeric: 'tabular-nums',
@@ -7857,6 +8487,8 @@
               )}
             </div>
           </div>
+
+          <FaceScreenshotAnalyzer live={live} audUsd={audUsd} />
 
           <div style={{padding: '14px 18px 8px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
             <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.text}}>Metal</span>
