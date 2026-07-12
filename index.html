@@ -4790,7 +4790,12 @@
       if (tab === 'producers') {
         const producerIds = activeCurves.filter(id => CURVE_INDEX[id]?.axis === 'producers');
         if (!producerIds.length) {
-          return <ProducerSectorCorrelationNote onOpenWtf={onOpenTab} />;
+          return (
+            <>
+              <ProducerSectorCorrelationNote onOpenWtf={onOpenTab} />
+              <PlatinumSupplyDemandOutlook onOpenWtf={onOpenTab} />
+            </>
+          );
         }
         const producerTf = effectiveProducerTimeframe(metalTimeframe);
         const quotesById = Object.fromEntries((producerMeta?.quotes || []).map(q => [q.id, q]));
@@ -4798,6 +4803,7 @@
         return (
           <>
             <ProducerSectorCorrelationNote onOpenWtf={onOpenTab} />
+            <PlatinumSupplyDemandOutlook onOpenWtf={onOpenTab} />
             <TimeframeBar
               label={`Producer chart period · ${({
                 hourly: 'hourly',
@@ -4856,7 +4862,6 @@
                 </div>
               );
             })}
-            <PlatinumSupplyDemandOutlook onOpenWtf={onOpenTab} />
           </>
         );
       }
