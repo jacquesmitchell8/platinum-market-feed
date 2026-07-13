@@ -1480,6 +1480,7 @@
     }
 
     const FACE_HOLDINGS_KEY = 'pm_face_holdings_v1';
+    const FACE_ASKS_KEY = 'pm_face_asks_v1';
 
     const FACE_THEME_COLORS = {
       Dragon: '#B45309',
@@ -8046,8 +8047,15 @@
       const [metalFilter, setMetalFilter] = useState('all');
       const [themeFilter, setThemeFilter] = useState('All');
       const [sortKey, setSortKey] = useState('-valueScore');
+      const [showPricePad, setShowPricePad] = useState(false);
+      const [askSaveMsg, setAskSaveMsg] = useState(null);
+      const [askSaving, setAskSaving] = useState(false);
       const [holdings, setHoldings] = useState(() => {
         try { return JSON.parse(localStorage.getItem(FACE_HOLDINGS_KEY) || '{}'); }
+        catch { return {}; }
+      });
+      const [userAsks, setUserAsks] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(FACE_ASKS_KEY) || '{}'); }
         catch { return {}; }
       });
 
@@ -8075,6 +8083,99 @@
       const spotReady = spotAudPt != null || spotAudAu != null;
       const perthEstimated = !!perth?.estimated;
       const perthUpdated = perth?.updatedAt || null;
+      const userAskCount = Object.keys(userAsks).filter((id) => {
+        const a = userAsks[id];
+        return a && (a.askAud != null || a.askUsd != null);
+      }).length;
+
+      const persistAsks = (next) => {
+        setUserAsks(next);
+        try { localStorage.setItem(FACE_ASKS_KEY, JSON.stringify(next)); } catch (_) {}
+      };
+
+      const setUserAsk = (id, patch) => {
+        const prev = userAsks[id] || {};
+        const nextEntry = { ...prev, ...patch, updatedAt: Date.now() };
+        if (patch.askAud !== undefined) {
+          const n = Number(patch.askAud);
+          nextEntry.askAud = Number.isFinite(n) && n > 0 ? n : null;
+        }
+        if (patch.askUsd !== undefined) {
+          const n = Number(patch.askUsd);
+          nextEntry.askUsd = Number.isFinite(n) && n > 0 ? n : null;
+        }
+        if (nextEntry.askAud == null && nextEntry.askUsd == null) {
+          const next = { ...userAsks };
+          delete next[id];
+          persistAsks(next);
+          return;
+        }
+        persistAsks({ ...userAsks, [id]: nextEntry });
+      };
+
+      const clearUserAsk = (id) => {
+        const next = { ...userAsks };
+        delete next[id];
+        persistAsks(next);
+      };
+
+      const clearAllUserAsks = () => {
+        persistAsks({});
+        setAskSaveMsg('Cleared your uploaded asks (catalogue defaults restored)');
+      };
+
+      const archiveAsks = async () => {
+        setAskSaving(true);
+        setAskSaveMsg(null);
+        try {
+          const batchId = `manual-${Date.now()}`;
+          const quotes = FACE_VALUE_COINS.map((coin) => {
+            const u = userAsks[coin.id];
+            if (!u || (u.askAud == null && u.askUsd == null)) return null;
+            const w = Number(coin.weightOz) > 0 ? Number(coin.weightOz) : 1;
+            const spotAud = spotAudFor(coin.metal);
+            const meltAud = spotAud != null ? spotAud * w : null;
+            const fx = audUsd > 0 ? audUsd : null;
+            let valueAud = u.askAud != null ? Number(u.askAud) : null;
+            if (valueAud == null && u.askUsd != null && fx) valueAud = Number(u.askUsd) / fx;
+            const prem = valueAud != null && meltAud > 0 ? ((valueAud - meltAud) / meltAud) * 100 : null;
+            return {
+              id: `${coin.id}:${batchId}`,
+              recordedAt: new Date().toISOString(),
+              seller: u.dealer || coin.dealer || null,
+              coin: coin.name,
+              valueAud,
+              meltAud,
+              premiumPct: prem,
+              recommendation: 'manual',
+              scarcityScore: coin.scarcityScore,
+              metal: coin.metal,
+              weightOz: w,
+              sourceFile: 'manual-price-pad',
+              batchId,
+              reasoning: u.askUsd != null && u.askAud == null
+                ? `USD ask ${u.askUsd} ÷ FX ${fx}`
+                : 'Manual AUD ask',
+            };
+          }).filter(Boolean);
+          if (!quotes.length) {
+            setAskSaveMsg('Enter at least one Ask AUD or Ask USD first');
+            return;
+          }
+          const res = await fetch('/.netlify/functions/face-quotes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quotes }),
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok || j.ok === false) throw new Error(j.error || `Save failed (${res.status})`);
+          setAskSaveMsg(`Archived ${j.upserted || quotes.length} dealer ask${quotes.length === 1 ? '' : 's'} to history`);
+        } catch (e) {
+          setAskSaveMsg(e.message || 'Archive failed — local asks still saved on this device');
+        } finally {
+          setAskSaving(false);
+        }
+      };
 
       const rows = useMemo(() => {
         const fx = audUsd > 0 ? audUsd : null; // AUDUSD: USD → AUD = usd / fx
@@ -8082,18 +8183,26 @@
           const w = Number(coin.weightOz) > 0 ? Number(coin.weightOz) : 1;
           const spotAud = spotAudFor(coin.metal); // AUD / oz — THE number
           const meltAud = spotAud != null ? spotAud * w : null; // melt = weight × Perth spot
+          const override = userAsks[coin.id];
 
           let askAud = null;
           let askLabel = '—';
           let askBasis = null;
 
-          if (coin.askAud != null && Number.isFinite(Number(coin.askAud))) {
-            // Already AUD — compare straight to Perth melt
+          // Your uploaded / typed ask wins over catalogue defaults
+          if (override?.askAud != null && Number.isFinite(Number(override.askAud))) {
+            askAud = Number(override.askAud);
+            askLabel = 'Your AUD';
+            askBasis = 'user_aud';
+          } else if (override?.askUsd != null && Number.isFinite(Number(override.askUsd)) && fx) {
+            askAud = Number(override.askUsd) / fx;
+            askLabel = 'Your USD÷FX';
+            askBasis = 'user_usd';
+          } else if (coin.askAud != null && Number.isFinite(Number(coin.askAud))) {
             askAud = Number(coin.askAud);
             askLabel = 'Firm AUD';
             askBasis = 'firm';
           } else if (coin.askUsd != null && Number.isFinite(Number(coin.askUsd)) && fx) {
-            // US dollar ask → today's rate → AUD, then vs Perth melt
             askAud = Number(coin.askUsd) / fx;
             askLabel = `USD÷FX`;
             askBasis = 'usd_fx';
@@ -8126,7 +8235,7 @@
             ...coin,
             weightOz: w,
             theme: coin.theme || 'Other',
-            dealer: coin.dealer || 'Dealer',
+            dealer: override?.dealer || coin.dealer || 'Dealer',
             buyUrl: coin.buyUrl || null,
             spotAud,
             meltAud,
@@ -8137,11 +8246,14 @@
             meltOk,
             qty,
             positionAud: qty > 0 && askAud != null ? qty * askAud : 0,
+            userAskAud: override?.askAud ?? null,
+            userAskUsd: override?.askUsd ?? null,
+            hasUserAsk: !!(override && (override.askAud != null || override.askUsd != null)),
           };
           row.valueScore = faceCatalogueValueScore(row);
           return row;
         });
-      }, [holdings, spotAudPt, spotAudAu, audUsd]);
+      }, [holdings, userAsks, spotAudPt, spotAudAu, audUsd]);
 
       const meltBrokenCount = rows.filter((r) => r.spotAud != null && !r.meltOk).length;
 
@@ -8296,8 +8408,113 @@
                 </span>
               )}
               <span style={{color: C.text}}>{FACE_VALUE_COINS.length} coins</span>
+              {userAskCount > 0 && (
+                <span style={{color: '#047857', fontWeight: 700}}>{userAskCount} live ask{userAskCount === 1 ? '' : 's'} uploaded</span>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowPricePad((v) => !v)}
+                style={{
+                  marginLeft: 'auto', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
+                  textTransform: 'uppercase', padding: '7px 12px', borderRadius: 6, cursor: 'pointer',
+                  border: `1px solid ${showPricePad ? C.gold : C.border}`,
+                  background: showPricePad ? 'rgba(184,134,11,0.12)' : C.surface,
+                  color: showPricePad ? C.gold : C.textDark,
+                }}
+              >
+                {showPricePad ? 'Hide price pad' : 'Upload / enter prices'}
+              </button>
             </div>
           </div>
+
+          {showPricePad && (
+            <div style={{
+              margin: '0 12px 12px', padding: '14px 16px', borderRadius: 8,
+              border: `1px solid ${C.border}`, background: C.surface,
+            }}>
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10}}>
+                <div>
+                  <div style={{fontSize: 13, fontWeight: 700, color: C.textDark}}>Put dealer asks on the coins</div>
+                  <div style={{fontSize: 12, color: C.textSecondary, marginTop: 4, maxWidth: 640, lineHeight: 1.45}}>
+                    Type Ask AUD (preferred) or Ask USD — USD converts at today’s FX, then vs Perth melt.
+                    Saved on this device instantly. Optional archive stores a history snapshot.
+                  </div>
+                </div>
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+                  <button type="button" onClick={archiveAsks} disabled={askSaving}
+                    style={{
+                      fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: askSaving ? 'wait' : 'pointer',
+                      border: `1px solid ${C.plat}`, background: 'rgba(107,127,150,0.12)', color: C.plat,
+                    }}>
+                    {askSaving ? 'Archiving…' : 'Archive to history'}
+                  </button>
+                  <button type="button" onClick={clearAllUserAsks}
+                    style={{
+                      fontSize: 11, fontWeight: 600, padding: '7px 12px', borderRadius: 6, cursor: 'pointer',
+                      border: `1px solid ${C.border}`, background: C.surface2, color: C.textDark,
+                    }}>
+                    Clear all
+                  </button>
+                </div>
+              </div>
+              {askSaveMsg && (
+                <div style={{fontSize: 12, color: C.textSecondary, marginBottom: 10}}>{askSaveMsg}</div>
+              )}
+              <div style={{display: 'grid', gap: 8, maxHeight: 320, overflow: 'auto'}}>
+                {rows.map((r) => (
+                  <div key={r.id} style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(140px, 1.4fr) 110px 110px auto',
+                    gap: 8, alignItems: 'center', padding: '8px 0',
+                    borderTop: `1px solid ${C.borderLight}`,
+                  }}>
+                    <div>
+                      <div style={{fontSize: 12, fontWeight: 600, color: C.textDark}}>{r.name}</div>
+                      <div style={{fontSize: 10, color: C.text}}>
+                        melt {r.meltAud != null ? fmtAud(r.meltAud) : '—'} · {r.dealer}
+                      </div>
+                    </div>
+                    <label style={{display: 'grid', gap: 2}}>
+                      <span style={{fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>Ask AUD</span>
+                      <input
+                        type="number" min={0} step={1}
+                        value={r.userAskAud ?? ''}
+                        placeholder={r.askBasis === 'user_aud' ? '' : 'e.g. 2650'}
+                        onChange={(e) => setUserAsk(r.id, { askAud: e.target.value })}
+                        style={{
+                          width: '100%', padding: '5px 7px', borderRadius: 5, fontSize: 12,
+                          border: `1px solid ${r.userAskAud != null ? '#047857' : C.border}`,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      />
+                    </label>
+                    <label style={{display: 'grid', gap: 2}}>
+                      <span style={{fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>Ask USD</span>
+                      <input
+                        type="number" min={0} step={1}
+                        value={r.userAskUsd ?? ''}
+                        placeholder="optional"
+                        onChange={(e) => setUserAsk(r.id, { askUsd: e.target.value })}
+                        style={{
+                          width: '100%', padding: '5px 7px', borderRadius: 5, fontSize: 12,
+                          border: `1px solid ${r.userAskUsd != null ? '#047857' : C.border}`,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      />
+                    </label>
+                    <button type="button" onClick={() => clearUserAsk(r.id)} disabled={!r.hasUserAsk}
+                      style={{
+                        fontSize: 10, fontWeight: 600, padding: '6px 8px', borderRadius: 5,
+                        border: `1px solid ${C.border}`, background: C.surface, color: C.text,
+                        cursor: r.hasUserAsk ? 'pointer' : 'default', opacity: r.hasUserAsk ? 1 : 0.4,
+                      }}>
+                      Reset
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div style={{padding: '14px 18px 6px'}}>
             <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.plat, marginBottom: 8}}>
@@ -8386,7 +8603,7 @@
             margin: '0 12px 16px', maxHeight: 'min(70vh, 640px)', overflow: 'auto',
             border: `1px solid ${C.borderLight}`, borderRadius: 8,
           }}>
-            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 980}}>
+            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 1080}}>
               <thead style={{position: 'sticky', top: 0, zIndex: 2, background: C.surface2}}>
                 <tr style={{color: C.text, textAlign: 'left'}}>
                   <th style={{padding: '10px 12px'}}>#</th>
@@ -8452,12 +8669,27 @@
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
                       <div style={{fontWeight: 600}}>{r.askAud != null ? fmtAud(r.askAud) : '—'}</div>
                       <div style={{fontSize: 10, color: C.text}}>
-                        {r.askBasis === 'usd_fx' ? `USD ask÷FX · ${r.dealer}`
+                        {r.askBasis === 'user_aud' ? `Your AUD · ${r.dealer}`
+                          : r.askBasis === 'user_usd' ? `Your USD÷FX · ${r.dealer}`
+                          : r.askBasis === 'usd_fx' ? `USD ask÷FX · ${r.dealer}`
                           : r.askBasis === 'firm' ? `Firm AUD · ${r.dealer}`
                           : r.askBasis === 'perth' ? 'Perth Mint × wt'
                           : r.askBasis === 'indicative' ? `${r.askLabel} · ${r.dealer}`
                           : r.askLabel}
                       </div>
+                      {showPricePad && (
+                        <input
+                          type="number" min={0} step={1}
+                          value={r.userAskAud ?? ''}
+                          placeholder="Ask AUD"
+                          onChange={(e) => setUserAsk(r.id, { askAud: e.target.value })}
+                          style={{
+                            marginTop: 4, width: 88, padding: '3px 5px', borderRadius: 4, fontSize: 11,
+                            border: `1px solid ${r.hasUserAsk ? '#047857' : C.border}`,
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        />
+                      )}
                     </td>
                     <td style={{
                       padding: '10px 12px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
@@ -8536,8 +8768,9 @@
           )}
 
           <div style={{padding: '4px 18px 20px', fontSize: 11, color: C.text, lineHeight: 1.55, maxWidth: 760}}>
-            Spot = Perth Mint live AUD/oz (bullion-slots). Melt = weight × Spot — if those ever diverge, the row turns red.
-            Firm cart asks keep locked AUD; watchlist uses melt + set %. Click Dealer to verify. Not advice.
+            Spot = Perth Mint live AUD/oz. Melt = weight × Spot. Use <strong>Upload / enter prices</strong> to put live dealer asks on coins
+            (OCR screenshot upload was removed — type AUD or USD asks instead). Your asks override catalogue defaults on this device.
+            Not advice.
           </div>
         </div>
       );

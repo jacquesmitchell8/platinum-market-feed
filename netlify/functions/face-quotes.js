@@ -1,5 +1,5 @@
 // netlify/functions/face-quotes.js
-// Persist / recall Face Value Scarcity OCR dealer quotes (historical asks).
+// Persist / recall Face Value Scarcity dealer asks (manual price pad + history).
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
