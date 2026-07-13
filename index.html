@@ -1479,8 +1479,9 @@
       return { main: coin.mintageNote || '—', sub: 'print vol' };
     }
 
-    const FACE_HOLDINGS_KEY = 'pm_face_holdings_v2';
+    const FACE_HOLDINGS_KEY = 'pm_face_holdings_v3';
     const FACE_INVOICE_LOG_KEY = 'pm_face_invoice_log_v1';
+    const FACE_HOLDINGS_LEGACY_KEYS = ['pm_face_holdings_v2', 'pm_face_holdings_v1'];
 
     const FACE_THEME_COLORS = {
       Dragon: '#B45309',
@@ -2306,32 +2307,92 @@
     }
 
 
+    function faceCoinThumbSvg(coin) {
+      const metal = coin?.metal === 'gold' ? 'gold' : 'platinum';
+      const fill = metal === 'gold' ? '#C5A46A' : '#8FA0B3';
+      const ring = metal === 'gold' ? '#8B6914' : '#5A6B7D';
+      const label = String(coin?.theme || coin?.name || 'Coin').slice(0, 10).toUpperCase();
+      const wt = coin?.weightOz == null ? '' : (Math.abs(coin.weightOz - 0.5) < 0.01 ? '½oz' : `${Number(coin.weightOz)}oz`);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+        <defs><radialGradient id="g" cx="35%" cy="30%"><stop offset="0%" stop-color="#fff" stop-opacity=".35"/><stop offset="100%" stop-color="#000" stop-opacity=".18"/></radialGradient></defs>
+        <circle cx="80" cy="80" r="72" fill="${fill}" stroke="${ring}" stroke-width="6"/>
+        <circle cx="80" cy="80" r="72" fill="url(#g)"/>
+        <circle cx="80" cy="80" r="58" fill="none" stroke="${ring}" stroke-width="1.5" opacity=".5"/>
+        <text x="80" y="76" text-anchor="middle" font-family="Georgia, serif" font-size="13" font-weight="700" fill="#1a1a1a">${label}</text>
+        <text x="80" y="96" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" fill="#1a1a1a" opacity=".75">${wt} · ${metal === 'gold' ? 'Au' : 'Pt'}</text>
+      </svg>`;
+      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    }
+
+    function faceCoinImageSrc(coin, holding) {
+      if (holding?.photoData) return holding.photoData;
+      if (coin?.image) return coin.image;
+      return faceCoinThumbSvg(coin || {});
+    }
+
+    function plausibleInvoiceUnitAud(coin, unitAud) {
+      if (!Number.isFinite(unitAud) || unitAud <= 0) return false;
+      const w = Number(coin?.weightOz) > 0 ? Number(coin.weightOz) : 1;
+      // Soft AUD unit bands — reject cart/order totals OCR glues onto a product name
+      const min = (coin?.metal === 'gold' ? 1800 : 700) * w;
+      const max = (coin?.metal === 'gold' ? 12000 : 5200) * w; // Pt 1oz >$5.2k usually an invoice total
+      return unitAud >= min && unitAud <= max;
+    }
+
     function loadFaceHoldings() {
       try {
         let raw = JSON.parse(localStorage.getItem(FACE_HOLDINGS_KEY) || 'null');
-        // migrate bare qty map from v1 key if v2 empty
         if (!raw || typeof raw !== 'object' || !Object.keys(raw).length) {
-          try {
-            const v1 = JSON.parse(localStorage.getItem('pm_face_holdings_v1') || '{}');
-            if (v1 && typeof v1 === 'object' && Object.keys(v1).length) raw = v1;
-          } catch (_) { /* ignore */ }
+          for (const k of FACE_HOLDINGS_LEGACY_KEYS) {
+            try {
+              const legacy = JSON.parse(localStorage.getItem(k) || '{}');
+              if (legacy && typeof legacy === 'object' && Object.keys(legacy).length) { raw = legacy; break; }
+            } catch (_) { /* ignore */ }
+          }
         }
         const out = {};
         for (const [id, v] of Object.entries(raw || {})) {
           if (v == null) continue;
+          const coin = FACE_VALUE_COINS.find((c) => c.id === id);
+          let qty = 0;
+          let paidAudTotal = null;
+          let paidAudEach = null;
+          let seller = null;
+          let source = null;
+          let invoiceFile = null;
+          let updatedAt = null;
+          let photoData = null;
           if (typeof v === 'number') {
-            if (v > 0) out[id] = { qty: Math.floor(v) };
-          } else if (typeof v === 'object' && Number(v.qty) > 0) {
-            out[id] = {
-              qty: Math.floor(Number(v.qty)),
-              paidAudTotal: v.paidAudTotal != null ? Number(v.paidAudTotal) : null,
-              paidAudEach: v.paidAudEach != null ? Number(v.paidAudEach) : null,
-              seller: v.seller || null,
-              source: v.source || null,
-              invoiceFile: v.invoiceFile || null,
-              updatedAt: v.updatedAt || null,
-            };
+            qty = Math.floor(v);
+          } else if (typeof v === 'object') {
+            qty = Math.floor(Number(v.qty) || 0);
+            paidAudTotal = v.paidAudTotal != null ? Number(v.paidAudTotal) : null;
+            paidAudEach = v.paidAudEach != null ? Number(v.paidAudEach) : null;
+            seller = v.seller || null;
+            source = v.source || null;
+            invoiceFile = v.invoiceFile || null;
+            updatedAt = v.updatedAt || null;
+            photoData = typeof v.photoData === 'string' && v.photoData.startsWith('data:image') ? v.photoData : null;
           }
+          if (!(qty > 0)) continue;
+          // Drop absurd OCR cost bases from earlier buggy invoice ingest
+          if (paidAudEach != null && coin && !plausibleInvoiceUnitAud(coin, paidAudEach)) {
+            paidAudEach = null;
+            paidAudTotal = null;
+          } else if (paidAudTotal != null && qty > 0 && coin && !plausibleInvoiceUnitAud(coin, paidAudTotal / qty)) {
+            paidAudEach = null;
+            paidAudTotal = null;
+          }
+          out[id] = {
+            qty,
+            paidAudTotal,
+            paidAudEach,
+            seller,
+            source,
+            invoiceFile,
+            updatedAt,
+            photoData,
+          };
         }
         return out;
       } catch { return {}; }
@@ -2351,8 +2412,8 @@
     }
 
     /**
-     * Invoice / order OCR → portfolio line items.
-     * Unlike dealer-listing OCR, checkout pages are EXPECTED here.
+     * Invoice / order OCR → portfolio line items (preview only until confirmed).
+     * Checkout pages expected. Prefer unit prices in a plausible band; never keep cart totals.
      */
     function parseInvoicePortfolioItems(text) {
       const clean = String(text || '').replace(/\r/g, '');
@@ -2361,78 +2422,119 @@
       const prices = parseAudPricesFromText(clean);
       if (!prices.length) return [];
 
-      const items = [];
-      const seen = new Set();
+      const TOTAL_RE = /\b(subtotal|sub\s*total|order\s*total|grand\s*total|amount\s*due|total\s*due|balance\s*due|amount\s*paid|payment\s*total|cart\s*total|invoice\s*total|you\s*paid|total\s*aud|total\s*payable)\b/i;
+      const SKIP_RE = /\b(shipping|postage|courier|delivery|gst|tax|bsb|bank\s*transfer|payment\s*method|account\s*number|phone|mobile|email|address)\b/i;
+
+      const candidates = [];
       for (const p of prices) {
-        if (p.priceAud < 250 || p.priceAud > 80000) continue;
+        if (p.priceAud < 200 || p.priceAud > 25000) continue;
         const lineIdx = lineIndexAtChar(lineMap, p.index);
+        const priceLine = lines[lineIdx] || '';
         const windowLines = [];
-        for (let j = Math.max(0, lineIdx - 4); j <= Math.min(lines.length - 1, lineIdx + 1); j++) {
+        for (let j = Math.max(0, lineIdx - 3); j <= Math.min(lines.length - 1, lineIdx + 1); j++) {
           if (lines[j]) windowLines.push(lines[j]);
         }
         const blob = windowLines.join(' · ');
         const blobLow = blob.toLowerCase();
+        const priceLineLow = priceLine.toLowerCase();
 
-        // Skip pure shipping / tax / bank lines (keep product rows even on invoices)
-        if (/\b(shipping|postage|courier|gst|bsb|bank transfer|payment method)\b/.test(blobLow)
-            && !looksLikeCoinProduct(blob) && !matchOcrRowToCatalogueId({ name: blob, coin: blob })) {
-          continue;
+        if (TOTAL_RE.test(blobLow) || TOTAL_RE.test(priceLineLow)) continue;
+        if (SKIP_RE.test(blobLow) && !looksLikeCoinProduct(blob)) continue;
+
+        // Prefer a nearby product-looking line (not a 5-line soup that matches half the catalogue)
+        let productLine = '';
+        for (let j = lineIdx; j >= Math.max(0, lineIdx - 3); j--) {
+          const L = lines[j];
+          if (!L) continue;
+          const cleaned = cleanOcrCoinName(L);
+          if (cleaned.length >= 8 && looksLikeCoinProduct(cleaned)) { productLine = cleaned; break; }
         }
-        // Skip page totals unless they sit on a product line
-        if (/\b(subtotal|order total|grand total|amount due)\b/.test(blobLow)
-            && !looksLikeCoinProduct(blob)) {
-          continue;
-        }
+        if (!productLine) continue;
+
+        const metal = /\bgold\b/i.test(productLine + ' ' + blob) ? 'gold'
+          : (/\bplatinum|plat\b/i.test(productLine + ' ' + blob) ? 'platinum' : null);
+        const weightOz = /\b1\/2\b|½|half/.test((productLine + blob).toLowerCase()) ? 0.5
+          : (/\b30\s*g|30g/.test((productLine + blob).toLowerCase()) ? 30 / 31.1034768
+          : (/\b1\s*oz|1oz|one\s*ounce/.test((productLine + blob).toLowerCase()) ? 1 : null));
 
         const coinId = matchOcrRowToCatalogueId({
-          name: blob,
-          coin: blob,
-          metal: /\bgold\b/i.test(blob) ? 'gold' : (/\bplatinum|plat\b/i.test(blob) ? 'platinum' : null),
-          weightOz: /\b1\/2\b|½|half/.test(blobLow) ? 0.5 : (/\b30\s*g|30g/.test(blobLow) ? 30 / 31.1034768 : (/\b1\s*oz|1oz/.test(blobLow) ? 1 : null)),
+          name: productLine,
+          coin: productLine,
+          metal,
+          weightOz,
         });
         if (!coinId) continue;
+
+        const coin = FACE_VALUE_COINS.find((c) => c.id === coinId);
+        if (!coin) continue;
 
         let qty = 1;
         const qm = blob.match(/(?:qty[:\s]*|quantity[:\s]*|[x×]\s*)(\d{1,3})\b/i)
           || blob.match(/\b(\d{1,3})\s*[x×]\b/i);
         if (qm) qty = Math.max(1, Math.min(99, Number(qm[1]) || 1));
 
-        // Heuristic: if price is huge vs typical 1oz (~2–7k), might be line total for multi-qty
-        const coin = FACE_VALUE_COINS.find((c) => c.id === coinId);
-        const key = `${coinId}|${Math.round(p.priceAud)}|${qty}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        let paidAudTotal = p.priceAud;
+        let paidAudEach = paidAudTotal / qty;
 
-        items.push({
+        // If OCR grabbed a multi-qty line total that fails unit band, try treating as unit price
+        if (!plausibleInvoiceUnitAud(coin, paidAudEach) && plausibleInvoiceUnitAud(coin, paidAudTotal)) {
+          qty = 1;
+          paidAudEach = paidAudTotal;
+        }
+        // If still too big, try dividing by qty tokens again / skip
+        if (!plausibleInvoiceUnitAud(coin, paidAudEach)) {
+          // Last resort: if price / N for N=2..10 lands in band, use that
+          let fixed = false;
+          for (let n = 2; n <= 10; n++) {
+            if (plausibleInvoiceUnitAud(coin, paidAudTotal / n)) {
+              qty = n;
+              paidAudEach = paidAudTotal / n;
+              fixed = true;
+              break;
+            }
+          }
+          if (!fixed) continue;
+        }
+
+        candidates.push({
           coinId,
-          name: coin?.name || coinId,
-          metal: coin?.metal || null,
+          name: coin.name,
+          metal: coin.metal,
+          weightOz: coin.weightOz,
+          theme: coin.theme,
           qty,
-          paidAudTotal: p.priceAud,
-          paidAudEach: qty > 0 ? p.priceAud / qty : p.priceAud,
+          paidAudTotal: paidAudEach * qty,
+          paidAudEach,
           seller: inferDealerSeller(clean, ''),
-          raw: blob.slice(0, 120),
+          raw: productLine.slice(0, 120),
+          score: productLine.length + (metal && coin.metal === metal ? 20 : 0) + (weightOz && Math.abs(coin.weightOz - weightOz) < 0.05 ? 20 : 0),
         });
       }
 
-      // Collapse duplicates of same coin — keep the line with largest total (usually the product row)
+      // Collapse by coin: keep the candidate with best score, then nearest-to-melt unit price
       const byCoin = new Map();
-      for (const it of items) {
+      for (const it of candidates) {
         const prev = byCoin.get(it.coinId);
-        if (!prev || it.paidAudTotal > prev.paidAudTotal) byCoin.set(it.coinId, it);
+        if (!prev) { byCoin.set(it.coinId, it); continue; }
+        if (it.score > prev.score + 5) { byCoin.set(it.coinId, it); continue; }
+        if (it.score >= prev.score - 5 && it.paidAudEach < prev.paidAudEach) byCoin.set(it.coinId, it);
       }
-      return [...byCoin.values()].slice(0, 40);
+      return [...byCoin.values()].slice(0, 20);
     }
 
     function mergeInvoiceIntoHoldings(holdings, items, meta = {}) {
       const next = { ...holdings };
       for (const it of items || []) {
         if (!it?.coinId || !(it.qty > 0)) continue;
-        const prev = next[it.coinId] || { qty: 0, paidAudTotal: 0 };
+        const coin = FACE_VALUE_COINS.find((c) => c.id === it.coinId);
         const addQty = Math.floor(Number(it.qty) || 0);
         const addPaid = Number(it.paidAudTotal);
+        const unit = addQty > 0 ? addPaid / addQty : addPaid;
+        if (coin && !plausibleInvoiceUnitAud(coin, unit)) continue; // refuse garbage costs
+        const prev = next[it.coinId] || { qty: 0, paidAudTotal: 0 };
         const newQty = (Number(prev.qty) || 0) + addQty;
-        const newPaid = (Number(prev.paidAudTotal) || 0) + (Number.isFinite(addPaid) ? addPaid : 0);
+        const prevPaid = Number(prev.paidAudTotal) || 0;
+        const newPaid = prevPaid + (Number.isFinite(addPaid) ? addPaid : 0);
         next[it.coinId] = {
           qty: newQty,
           paidAudTotal: newPaid > 0 ? newPaid : (prev.paidAudTotal ?? null),
@@ -2441,11 +2543,37 @@
           source: 'invoice',
           invoiceFile: meta.fileName || prev.invoiceFile || null,
           updatedAt: Date.now(),
+          photoData: prev.photoData || null,
         };
       }
       return next;
     }
 
+    function compressHoldingPhoto(file) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const max = 280;
+            const scale = Math.min(1, max / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            URL.revokeObjectURL(url);
+            resolve(canvas.toDataURL('image/jpeg', 0.72));
+          } catch (e) {
+            URL.revokeObjectURL(url);
+            reject(e);
+          }
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read photo')); };
+        img.src = url;
+      });
+    }
 
     function FaceScreenshotAnalyzer({ live, audUsd, perth, onQuotes }) {
       const fileRef = useRef(null);
@@ -9791,11 +9919,56 @@
             qty: q,
             paidAudEach: prev.paidAudEach ?? null,
             paidAudTotal: prev.paidAudEach != null ? prev.paidAudEach * q : (prev.paidAudTotal ?? null),
+            photoData: prev.photoData || null,
             updatedAt: Date.now(),
           };
         }
         setHoldings(next);
         saveFaceHoldings(next);
+      };
+
+      const clearPortfolio = () => {
+        if (!window.confirm('Clear your Face Value portfolio?')) return;
+        setHoldings({});
+        saveFaceHoldings({});
+        setInvoicePreview([]);
+        setInvoiceStatus('Portfolio cleared');
+      };
+
+      const confirmInvoicePreview = () => {
+        if (!invoicePreview.length) return;
+        const next = mergeInvoiceIntoHoldings(holdings, invoicePreview, { fileName: 'confirmed' });
+        setHoldings(next);
+        saveFaceHoldings(next);
+        saveFaceInvoiceLog([
+          {
+            at: new Date().toISOString(),
+            file: 'confirmed',
+            items: invoicePreview.map((i) => ({ id: i.coinId, qty: i.qty, paid: i.paidAudTotal })),
+          },
+          ...loadFaceInvoiceLog(),
+        ]);
+        setInvoiceStatus(`Added ${invoicePreview.length} coin line${invoicePreview.length === 1 ? '' : 's'} to portfolio — review cards below`);
+        setInvoicePreview([]);
+      };
+
+      const discardInvoicePreview = () => {
+        setInvoicePreview([]);
+        setInvoiceStatus('Discarded OCR preview — nothing added');
+      };
+
+      const setHoldingPhoto = async (id, file) => {
+        if (!file || !file.type?.startsWith('image/')) return;
+        try {
+          const photoData = await compressHoldingPhoto(file);
+          const next = { ...holdings };
+          const prev = next[id] || { qty: 1 };
+          next[id] = { ...prev, qty: Math.max(1, Number(prev.qty) || 1), photoData, updatedAt: Date.now() };
+          setHoldings(next);
+          saveFaceHoldings(next);
+        } catch (e) {
+          setInvoiceStatus(e.message || 'Photo upload failed');
+        }
       };
 
       const processInvoiceFiles = async (fileList) => {
@@ -9810,8 +9983,6 @@
         try {
           const Tesseract = await ensureTesseract();
           const allItems = [];
-          let nextHoldings = { ...holdings };
-          const logEntries = [];
           for (let i = 0; i < files.length; i++) {
             const file = files[i];
             setInvoiceStatus(`Reading invoice ${i + 1}/${files.length}: ${file.name}…`);
@@ -9827,18 +9998,7 @@
             const items = parseInvoicePortfolioItems(text);
             if (items.length) {
               allItems.push(...items.map((it) => ({ ...it, invoiceFile: file.name })));
-              nextHoldings = mergeInvoiceIntoHoldings(nextHoldings, items, { fileName: file.name });
-              logEntries.push({
-                at: new Date().toISOString(),
-                file: file.name,
-                items: items.map((it) => ({ id: it.coinId, qty: it.qty, paid: it.paidAudTotal })),
-              });
             }
-          }
-          if (logEntries.length) {
-            setHoldings(nextHoldings);
-            saveFaceHoldings(nextHoldings);
-            saveFaceInvoiceLog([...logEntries.reverse(), ...loadFaceInvoiceLog()]);
           }
           const by = new Map();
           for (const it of allItems) {
@@ -9852,8 +10012,8 @@
           setInvoicePreview(preview);
           setInvoiceStatus(
             preview.length
-              ? `Added ${preview.length} coin line${preview.length === 1 ? '' : 's'} to portfolio from ${files.length} invoice${files.length === 1 ? '' : 's'}`
-              : 'No catalogue coins matched on that invoice — try a clearer crop of the line items'
+              ? `Review ${preview.length} matched line${preview.length === 1 ? '' : 's'} — confirm to add (not auto-saved)`
+              : 'No plausible coin line items found — crop the product rows only (avoid order totals)'
           );
         } catch (e) {
           setInvoiceStatus(e.message || 'Invoice OCR failed');
@@ -10026,23 +10186,38 @@
                   Portfolio · upload invoices
                 </div>
                 <div style={{fontSize: 12, color: C.textSecondary, marginTop: 4, lineHeight: 1.45, maxWidth: 560}}>
-                  Drop BullionStar / Perth Mint / dealer order screenshots here. We match line items to the coin catalogue and add qty + what you paid (AUD).
+                  Upload order screenshots, review the matched lines, then confirm. Crop product rows if OCR grabs cart totals.
+                  Add your own coin photos on each holding card.
                 </div>
               </div>
-              <button
-                type="button"
-                disabled={invoiceBusy}
-                onClick={() => invoiceFileRef.current?.click()}
-                style={{
-                  fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
-                  padding: '10px 16px', borderRadius: 7, cursor: invoiceBusy ? 'wait' : 'pointer',
-                  border: `1px solid ${C.plat}`,
-                  background: invoiceBusy ? 'rgba(107,127,150,0.2)' : C.plat,
-                  color: '#fff',
-                }}
-              >
-                {invoiceBusy ? 'Reading invoice…' : 'Upload invoices'}
-              </button>
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+                <button
+                  type="button"
+                  disabled={invoiceBusy}
+                  onClick={() => invoiceFileRef.current?.click()}
+                  style={{
+                    fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                    padding: '10px 16px', borderRadius: 7, cursor: invoiceBusy ? 'wait' : 'pointer',
+                    border: `1px solid ${C.plat}`,
+                    background: invoiceBusy ? 'rgba(107,127,150,0.2)' : C.plat,
+                    color: '#fff',
+                  }}
+                >
+                  {invoiceBusy ? 'Reading invoice…' : 'Upload invoices'}
+                </button>
+                {cartRows.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearPortfolio}
+                    style={{
+                      fontSize: 12, fontWeight: 600, padding: '10px 12px', borderRadius: 7, cursor: 'pointer',
+                      border: `1px solid ${C.border}`, background: C.surface2, color: C.textDark,
+                    }}
+                  >
+                    Clear portfolio
+                  </button>
+                )}
+              </div>
               <input
                 ref={invoiceFileRef}
                 type="file"
@@ -10056,15 +10231,167 @@
               <div style={{fontSize: 12, color: C.textDark, marginTop: 10}}>{invoiceStatus}</div>
             )}
             {invoicePreview.length > 0 && (
-              <div style={{marginTop: 10, display: 'grid', gap: 4}}>
-                {invoicePreview.map((it) => (
-                  <div key={it.coinId} style={{fontSize: 12, color: C.textDark, display: 'flex', flexWrap: 'wrap', gap: '4px 12px'}}>
-                    <strong style={{color: C.plat}}>+{it.qty}×</strong>
-                    <span>{it.name}</span>
-                    <span style={{fontVariantNumeric: 'tabular-nums', color: C.text}}>
-                      paid {fmtAud(it.paidAudTotal)}
-                      {it.seller ? ` · ${it.seller}` : ''}
-                    </span>
+              <div style={{
+                marginTop: 12, padding: 12, borderRadius: 8,
+                border: `1px dashed ${C.plat}`, background: 'rgba(107,127,150,0.06)',
+              }}>
+                <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.plat, marginBottom: 8}}>
+                  OCR preview · confirm before adding
+                </div>
+                <div style={{display: 'grid', gap: 8}}>
+                  {invoicePreview.map((it) => {
+                    const coin = FACE_VALUE_COINS.find((c) => c.id === it.coinId);
+                    return (
+                      <div key={it.coinId} style={{display: 'flex', gap: 10, alignItems: 'center'}}>
+                        <img
+                          src={faceCoinImageSrc(coin, null)}
+                          alt=""
+                          style={{width: 44, height: 44, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${C.border}`}}
+                        />
+                        <div style={{flex: 1, minWidth: 0}}>
+                          <div style={{fontSize: 13, fontWeight: 600, color: C.textDark}}>{it.qty}× {it.name}</div>
+                          <div style={{fontSize: 11, color: C.text, fontVariantNumeric: 'tabular-nums'}}>
+                            paid {fmtAud(it.paidAudTotal)}
+                            {it.paidAudEach != null ? ` · ${fmtAud(it.paidAudEach)} each` : ''}
+                            {it.seller ? ` · ${it.seller}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12}}>
+                  <button
+                    type="button"
+                    onClick={confirmInvoicePreview}
+                    style={{
+                      fontSize: 12, fontWeight: 700, padding: '8px 14px', borderRadius: 7, cursor: 'pointer',
+                      border: `1px solid ${C.plat}`, background: C.plat, color: '#fff',
+                    }}
+                  >
+                    Add to portfolio
+                  </button>
+                  <button
+                    type="button"
+                    onClick={discardInvoicePreview}
+                    style={{
+                      fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 7, cursor: 'pointer',
+                      border: `1px solid ${C.border}`, background: C.surface, color: C.textDark,
+                    }}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{margin: '0 12px 16px'}}>
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'baseline', justifyContent: 'space-between',
+              marginBottom: 10,
+            }}>
+              <div style={{fontSize: 12, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.textDark}}>
+                My portfolio
+                {cartRows.length > 0 && (
+                  <span style={{fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: C.text, marginLeft: 8}}>
+                    mark {fmtAud(cartTotal)}
+                    {cartCost > 0 ? ` · cost ${fmtAud(cartCost)}` : ''}
+                    {cartCost > 0 ? (
+                      <span style={{color: cartPnl >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
+                        {'P&L '}{cartPnl >= 0 ? '+' : ''}{fmtAud(cartPnl)}
+                      </span>
+                    ) : null}
+                  </span>
+                )}
+              </div>
+              {cartRows.length === 0 && (
+                <div style={{fontSize: 12, color: C.text}}>Empty — confirm an invoice above, or type Qty in the table</div>
+              )}
+            </div>
+            {cartRows.length > 0 && (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                gap: 12,
+              }}>
+                {cartRows.map((r) => (
+                  <div
+                    key={r.id}
+                    style={{
+                      border: `1px solid ${C.borderLight}`,
+                      borderRadius: 10,
+                      background: C.surface,
+                      overflow: 'hidden',
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
+                    <div style={{
+                      position: 'relative',
+                      background: 'linear-gradient(160deg, #F4F1EA 0%, #E6E2D8 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '16px 12px 12px',
+                    }}>
+                      <img
+                        src={faceCoinImageSrc(r, r.holding)}
+                        alt={r.name}
+                        style={{
+                          width: 96, height: 96, borderRadius: '50%', objectFit: 'cover',
+                          border: `2px solid ${r.metal === 'gold' ? 'rgba(184,134,11,0.45)' : 'rgba(107,127,150,0.45)'}`,
+                          boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
+                        }}
+                      />
+                    </div>
+                    <div style={{padding: '10px 12px 12px', flex: 1, display: 'flex', flexDirection: 'column', gap: 6}}>
+                      <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: FACE_THEME_COLORS[r.theme] || C.text}}>
+                        {r.theme} · {r.qty}×
+                      </div>
+                      <div style={{fontSize: 13, fontWeight: 600, color: C.textDark, lineHeight: 1.3}}>{r.name}</div>
+                      <div style={{fontSize: 12, fontVariantNumeric: 'tabular-nums', color: C.textDark}}>
+                        mark {r.positionAud != null ? fmtAud(r.positionAud) : '—'}
+                        {r.costAud != null && (
+                          <span style={{display: 'block', fontSize: 11, color: C.text, marginTop: 2}}>
+                            cost {fmtAud(r.costAud)}
+                            {r.pnlAud != null && (
+                              <span style={{color: r.pnlAud >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
+                                {r.pnlAud >= 0 ? '+' : ''}{fmtAud(r.pnlAud)}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto', paddingTop: 6}}>
+                        <label style={{
+                          fontSize: 11, fontWeight: 600, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+                          border: `1px solid ${C.border}`, background: C.surface2, color: C.textDark,
+                        }}>
+                          {r.holding?.photoData ? 'Change photo' : 'Add photo'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            style={{display: 'none'}}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) setHoldingPhoto(r.id, f);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setQty(r.id, 0)}
+                          style={{
+                            fontSize: 11, fontWeight: 600, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+                            border: `1px solid ${C.border}`, background: 'transparent', color: C.text,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -10211,48 +10538,11 @@
             </div>
           )}
 
-          <div style={{padding: '0 18px 16px'}}>
-            <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textDark, marginBottom: 8}}>
-              Portfolio
-              {cartRows.length > 0 ? (
-                <span style={{fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: C.text, marginLeft: 8}}>
-                  mark {fmtAud(cartTotal)}
-                  {cartCost > 0 ? ` · cost ${fmtAud(cartCost)}` : ''}
-                  {cartCost > 0 ? (
-                    <span style={{color: cartPnl >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
-                      {'P&L '}{cartPnl >= 0 ? '+' : ''}{fmtAud(cartPnl)}
-                    </span>
-                  ) : null}
-                </span>
-              ) : (
-                <span style={{fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: C.text, marginLeft: 8}}>
-                  upload invoices above or type Qty in the table
-                </span>
-              )}
+          {cartRows.length > 0 && (
+            <div style={{padding: '0 18px 12px', fontSize: 11, color: C.text}}>
+              Portfolio cards live above the table · {cartRows.length} holding{cartRows.length === 1 ? '' : 's'} · mark {fmtAud(cartTotal)}
             </div>
-            {cartRows.length > 0 && cartRows.map((r) => (
-              <div key={r.id} style={{fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 12, padding: '6px 0', borderTop: `1px solid ${C.borderLight}`}}>
-                <span>
-                  {r.qty}× {r.name}
-                  {r.holding?.seller ? ` · ${r.holding.seller}` : ''}
-                  {r.holding?.source === 'invoice' ? ' · invoice' : ''}
-                </span>
-                <span style={{fontVariantNumeric: 'tabular-nums', textAlign: 'right'}}>
-                  <strong>{r.positionAud != null ? fmtAud(r.positionAud) : '—'}</strong>
-                  {r.costAud != null && (
-                    <span style={{display: 'block', fontSize: 10, color: C.text}}>
-                      cost {fmtAud(r.costAud)}
-                      {r.pnlAud != null && (
-                        <span style={{color: r.pnlAud >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
-                          {r.pnlAud >= 0 ? '+' : ''}{fmtAud(r.pnlAud)}
-                        </span>
-                      )}
-                    </span>
-                  )}
-                </span>
-              </div>
-            ))}
-          </div>
+          )}
 
           <div style={{padding: '4px 18px 20px', fontSize: 11, color: C.text, lineHeight: 1.55, maxWidth: 760}}>
             Spot = Perth Mint live AUD/oz. Melt = weight × Spot. Upload invoices to build portfolio qty/cost; upload dealer listing screenshots for live asks.
