@@ -1199,9 +1199,11 @@
     /**
      * Modular sovereign / limited-mintage coin catalogue.
      *
-     * Spot + melt use ONE Perth Mint AUD/oz number (see FaceValueScarcityPanel).
-     * Melt = weightOz × perthSpotAud. Ask is dealer quote or melt + indicative %.
-     * Every row must have dealer + buyUrl so Ask is verifiable.
+     * Rule (keep it dumb):
+     *   meltAud = weightOz × Perth Mint AUD/oz
+     *   askAud  = dealer AUD ask, OR askUsd ÷ today's AUDUSD (if quoted in US dollars)
+     *   prem%   = (askAud − meltAud) / meltAud
+     * Never mix LBMA USD into melt. Every row needs dealer + buyUrl.
      */
     const FACE_VALUE_COINS = [
       {
@@ -1262,11 +1264,11 @@
         faceCurrency: 'USD',
         scarcity: 'US legal tender · collector + bullion crossover',
         scarcityScore: 55,
-        askAud: 1930,
+        askUsd: 1340,
         status: 'cart',
         dealer: 'BullionStar',
         buyUrl: 'https://www.bullionstar.com/',
-        notes: 'Firm AUD cart quote · melt = 0.5 × Perth Pt AUD',
+        notes: 'USD ask → AUD at todays FX · melt = 0.5 × Perth Pt AUD',
       },
       {
         id: 'ca-1812-half-pt-2017',
@@ -1410,7 +1412,7 @@
         status: 'watch',
         dealer: 'BullionStar',
         buyUrl: 'https://www.bullionstar.com/',
-        notes: 'Melt + 20%',
+        notes: 'Melt + 20% · AUD melt from Perth; USD ask would convert at todays FX',
       },
       {
         id: 'pm-lunar-half-pt',
@@ -5493,7 +5495,7 @@
     };
 
     /* ─── BUY DEEP DIVE · PLATINUM + CONFLUX ─────────────────────── */
-    const BUY_DIVE_CACHE_KEY = 'pm_metis_buy_dive_v2';
+    const BUY_DIVE_CACHE_KEY = 'pm_metis_buy_dive_v3';
 
     function buyIntelUsable(intel) {
       if (!intel) return false;
@@ -5552,7 +5554,7 @@
       return ((price - level) / level) * 100;
     }
 
-    function scoreBuyDecision({ curveId, label, unit, livePrice, liveChg, goldPrice, rows, intel }) {
+    function scoreBuyDecision({ curveId, label, unit, sourceLabel, livePrice, liveChg, goldPrice, rows, intel }) {
       const factors = [];
       let taScore = 0;
       let macroScore = 0;
@@ -5801,7 +5803,7 @@
       const neutrals = factors.filter((f) => f.impact === 0).slice(0, 3);
 
       return {
-        curveId, label, unit, score, verdict, verdictNote,
+        curveId, label, unit, sourceLabel: sourceLabel || null, score, verdict, verdictNote,
         last, liveChg,
         support: primary.nearestSup,
         resistance: primary.nearestRes,
@@ -5814,10 +5816,23 @@
 
     function fmtPriceLevel(v, unit) {
       if (v == null || isNaN(v)) return '—';
-      if (unit === 'USD/oz' || (v >= 10 && unit !== 'USD')) return fmtUsd(v);
+      if (unit === 'USD/oz') return `${fmtUsd(v)} USD/oz`;
+      if (unit === 'AUD/oz') return `${fmtAud(v)}/oz`;
+      if (unit === 'AUD') return fmtAud(v);
+      if (unit === 'USD') {
+        if (v < 1) return '$' + Number(v).toFixed(4) + ' USD';
+        if (v < 100) return '$' + Number(v).toFixed(2) + ' USD';
+        return `${fmtUsd(v)} USD`;
+      }
       if (v < 1) return '$' + Number(v).toFixed(4);
       if (v < 100) return '$' + Number(v).toFixed(2);
       return fmtUsd(v);
+    }
+
+    function usdToAudPrice(usd, audUsd) {
+      const fx = audUsd > 0 ? audUsd : null;
+      if (usd == null || !fx) return null;
+      return usd / fx;
     }
 
     function rowsFromTimelineCache(curveId) {
@@ -5919,7 +5934,7 @@
       };
     }
 
-    function BuyAssetCard({ decision, intel, color }) {
+    function BuyAssetCard({ decision, intel, color, audUsd, perthSpotAud }) {
       const verdictColor = {
         BUY: '#047857',
         ACCUMULATE: '#0F766E',
@@ -5928,7 +5943,14 @@
         AVOID: '#B91C1C',
       };
       const vc = verdictColor[decision.verdict] || C.text;
-      const unit = decision.unit;
+      const unit = decision.unit || 'USD';
+      const isLbmaOz = unit === 'USD/oz';
+      const audFromLbma = isLbmaOz ? usdToAudPrice(decision.last, audUsd) : null;
+      const perthPremVsLbma = (perthSpotAud != null && audFromLbma > 0)
+        ? ((perthSpotAud - audFromLbma) / audFromLbma) * 100
+        : null;
+      const sourceLine = decision.sourceLabel
+        || (isLbmaOz ? 'LBMA London Fix · USD benchmark (not Perth Mint AUD)' : 'USD spot');
 
       return (
         <div style={{...cardStyle, padding:0, overflow:'hidden'}}>
@@ -5937,7 +5959,11 @@
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10}}>
               <div>
                 <div style={{fontSize:14, fontWeight:700, color:C.textDark}}>{decision.label}</div>
-                <div style={{fontSize:20, fontWeight:700, color: color || C.textDark, marginTop:4, fontVariantNumeric:'tabular-nums'}}>
+                <div style={{fontSize:10, fontWeight:600, letterSpacing:'0.04em', textTransform:'uppercase',
+                  color:C.text, marginTop:3}}>
+                  {sourceLine}
+                </div>
+                <div style={{fontSize:20, fontWeight:700, color: color || C.textDark, marginTop:6, fontVariantNumeric:'tabular-nums'}}>
                   {fmtPriceLevel(decision.last, unit)}
                   {decision.liveChg != null && (
                     <span style={{fontSize:12, fontWeight:600, marginLeft:8}} className={chgClass(decision.liveChg)}>
@@ -5945,6 +5971,21 @@
                     </span>
                   )}
                 </div>
+                {isLbmaOz && audFromLbma != null && (
+                  <div style={{fontSize:12, color:C.textDark, marginTop:6, lineHeight:1.45, fontVariantNumeric:'tabular-nums'}}>
+                    ≈ <strong>{fmtAud(audFromLbma)}</strong>/oz AUD (LBMA×FX)
+                    {perthSpotAud != null && (
+                      <>
+                        {' · '}Perth Mint retail <strong>{fmtAud(perthSpotAud)}</strong>/oz AUD
+                        {perthPremVsLbma != null && (
+                          <span style={{color: perthPremVsLbma >= 0 ? '#B45309' : '#047857', fontWeight:600}}>
+                            {' '}({perthPremVsLbma >= 0 ? '+' : ''}{perthPremVsLbma.toFixed(1)}% vs LBMA AUD)
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
               <div style={{textAlign:'right'}}>
                 <span className="buy-verdict" style={{
@@ -6057,7 +6098,7 @@
     }
 
     function BuyDeepDivePanel() {
-      const { live } = useLivePrices();
+      const { live, perth, audUsd } = useLivePrices();
       const liveRef = useRef(live);
       liveRef.current = live;
       const [loading, setLoading] = useState(true);
@@ -6067,6 +6108,11 @@
       const [intelMap, setIntelMap] = useState(null);
       const [updatedAt, setUpdatedAt] = useState(null);
       const ranRef = useRef(false);
+
+      const perthSpotAudPt = perth?.liveSpotAud?.platinum
+        ?? perth?.result?.find((m) => m.metal === 'Platinum')?.liveAud
+        ?? perth?.result?.find((m) => m.metal === 'Platinum')?.oneWeekHistoricData?.slice(-1)[0]?.mid
+        ?? null;
 
       const buildDecisions = useCallback((ptRows, cfxRows, intel, liveSpot) => {
         const ptRowsLive = tipLivePrice(ptRows || [], 'IDX-002', liveSpot?.platinum?.price);
@@ -6079,8 +6125,9 @@
           decisions: {
             platinum: scoreBuyDecision({
               curveId: 'IDX-002',
-              label: 'Platinum · LBMA spot',
+              label: 'Platinum · LBMA London Fix (USD)',
               unit: 'USD/oz',
+              sourceLabel: 'LBMA / COMEX · USD/oz benchmark for sentiment — not Perth Mint AUD retail',
               livePrice: liveSpot?.platinum?.price,
               liveChg: liveSpot?.platinum?.chg,
               goldPrice: liveSpot?.gold?.price,
@@ -6089,8 +6136,9 @@
             }),
             cfx: scoreBuyDecision({
               curveId: 'IDX-005',
-              label: 'Conflux Network · CFX',
+              label: 'Conflux Network · CFX (USD)',
               unit: 'USD',
+              sourceLabel: 'USD spot · live crypto feed',
               livePrice: liveSpot?.cfx?.price,
               liveChg: liveSpot?.cfx?.chg,
               rows: cfxRowsLive,
@@ -6211,7 +6259,7 @@
                 Buy deep dive
               </div>
               <div style={{fontSize:11, color:C.text, marginTop:3}}>
-                Platinum & Conflux · structure, breakouts, fundamentals
+                Platinum LBMA (USD) & Conflux · structure, breakouts, fundamentals
                 {intelLoading ? ' · scanning web…' : ''}
                 {updatedAt && !intelLoading && (
                   <span> · {new Date(updatedAt).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</span>
@@ -6250,13 +6298,19 @@
 
           {decisions && (
             <div className="buy-dive-grid">
-              <BuyAssetCard decision={decisions.platinum} intel={intelMap?.platinum} color={C.plat} />
-              <BuyAssetCard decision={decisions.cfx} intel={intelMap?.cfx} color={C.cfx} />
+              <BuyAssetCard
+                decision={decisions.platinum}
+                intel={intelMap?.platinum}
+                color={C.plat}
+                audUsd={audUsd}
+                perthSpotAud={perthSpotAudPt}
+              />
+              <BuyAssetCard decision={decisions.cfx} intel={intelMap?.cfx} color={C.cfx} audUsd={audUsd} />
             </div>
           )}
 
           <div style={{fontSize:10, color:C.text, marginTop:8}}>
-            Heuristic score from price structure + open-web coverage — not financial advice.
+            LBMA card is the global USD fix for sentiment — Face Value coins use Perth Mint AUD/oz. Heuristic score only — not financial advice.
           </div>
         </div>
       );
@@ -7932,6 +7986,7 @@
       const perthUpdated = perth?.updatedAt || null;
 
       const rows = useMemo(() => {
+        const fx = audUsd > 0 ? audUsd : null; // AUDUSD: USD → AUD = usd / fx
         return FACE_VALUE_COINS.map((coin) => {
           const w = Number(coin.weightOz) > 0 ? Number(coin.weightOz) : 1;
           const spotAud = spotAudFor(coin.metal); // AUD / oz — THE number
@@ -7942,9 +7997,15 @@
           let askBasis = null;
 
           if (coin.askAud != null && Number.isFinite(Number(coin.askAud))) {
+            // Already AUD — compare straight to Perth melt
             askAud = Number(coin.askAud);
             askLabel = 'Firm AUD';
             askBasis = 'firm';
+          } else if (coin.askUsd != null && Number.isFinite(Number(coin.askUsd)) && fx) {
+            // US dollar ask → today's rate → AUD, then vs Perth melt
+            askAud = Number(coin.askUsd) / fx;
+            askLabel = `USD÷FX`;
+            askBasis = 'usd_fx';
           } else if (coin.askSource === 'perth') {
             if (spotAud != null) {
               askAud = spotAud * w;
@@ -7989,11 +8050,17 @@
           row.valueScore = faceCatalogueValueScore(row);
           return row;
         });
-      }, [holdings, spotAudPt, spotAudAu]);
+      }, [holdings, spotAudPt, spotAudAu, audUsd]);
 
       const meltBrokenCount = rows.filter((r) => r.spotAud != null && !r.meltOk).length;
 
       const themes = useMemo(() => {
+        const bandOf = (avgPrem) => {
+          if (avgPrem == null) return { key: 'unk', rank: 3, label: 'No prem' };
+          if (avgPrem <= 18) return { key: 'best', rank: 0, label: 'Best' };
+          if (avgPrem <= 45) return { key: 'spot', rank: 1, label: 'Near spot' };
+          return { key: 'worst', rank: 2, label: 'Stretched' };
+        };
         const by = new Map();
         for (const r of rows) {
           const t = r.theme || 'Other';
@@ -8004,12 +8071,26 @@
           if (r.premiumPct != null) { b.premSum += r.premiumPct; b.premN += 1; }
           if (!b.best || r.valueScore > b.best.valueScore) b.best = r;
         }
-        return [...by.values()].map((t) => ({
-          ...t,
-          avgPrem: t.premN ? t.premSum / t.premN : null,
-          avgScar: t.count ? t.scarSum / t.count : 0,
-          valueScore: t.best?.valueScore ?? 0,
-        })).sort((a, b) => b.valueScore - a.valueScore);
+        return [...by.values()].map((t) => {
+          const avgPrem = t.premN ? t.premSum / t.premN : null;
+          const band = bandOf(avgPrem);
+          return {
+            ...t,
+            avgPrem,
+            avgScar: t.count ? t.scarSum / t.count : 0,
+            valueScore: t.best?.valueScore ?? 0,
+            bandKey: band.key,
+            bandRank: band.rank,
+            bandLabel: band.label,
+          };
+        }).sort((a, b) => {
+          // Best → near spot → stretched (worst), then lowest avg premium, then value
+          if (a.bandRank !== b.bandRank) return a.bandRank - b.bandRank;
+          const ap = a.avgPrem == null ? 999 : a.avgPrem;
+          const bp = b.avgPrem == null ? 999 : b.avgPrem;
+          if (ap !== bp) return ap - bp;
+          return b.valueScore - a.valueScore;
+        });
       }, [rows]);
 
       const filtered = useMemo(() => {
@@ -8094,8 +8175,8 @@
               Face Value <span style={{color: C.gold}}>Scarcity</span>
             </div>
             <p style={{fontSize: 15, color: C.textSecondary, lineHeight: 1.55, maxWidth: 720, margin: 0}}>
-              One spot: Perth Mint live AUD/oz. Melt = weight × that spot. Ask and prem% derive from it —
-              dealer link on every row so you can verify where to buy.
+              Compare every coin to Perth Mint AUD/oz. Melt = weight × Perth spot.
+              USD asks convert at todays FX, then both sides sit in AUD$.
             </p>
             <div style={{
               marginTop: 14, fontSize: 13, color: C.textDark, fontVariantNumeric: 'tabular-nums',
@@ -8103,6 +8184,9 @@
             }}>
               <span>Perth Pt <strong>{spotAudPt != null ? fmtAud(spotAudPt) : '—'}</strong>/oz</span>
               <span>Perth Au <strong>{spotAudAu != null ? fmtAud(spotAudAu) : '—'}</strong>/oz</span>
+              {audUsd > 0 && (
+                <span>FX <strong>{Number(audUsd).toFixed(4)}</strong> AUDUSD</span>
+              )}
               {perthUpdated && (
                 <span style={{color: C.text}}>Updated {new Date(perthUpdated).toLocaleString()}</span>
               )}
@@ -8126,7 +8210,7 @@
 
           <div style={{padding: '14px 18px 6px'}}>
             <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.plat, marginBottom: 8}}>
-              Theme scoreboard · best value first
+              Theme scoreboard · best → near spot → worst
             </div>
             <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 12}}>
               {themes.map((t, i) => (
@@ -8140,11 +8224,17 @@
                     background: themeFilter === t.theme ? 'rgba(184,134,11,0.07)' : C.surface,
                   }}
                 >
-                  <div style={{display: 'flex', justifyContent: 'space-between', gap: 6}}>
+                  <div style={{display: 'flex', justifyContent:'space-between', gap: 6, alignItems: 'flex-start'}}>
                     <span style={{fontSize: 13, fontWeight: 700, color: FACE_THEME_COLORS[t.theme] || C.textDark}}>
                       {i + 1}. {t.theme}
                     </span>
                     <span style={{fontSize: 10, color: C.text}}>{t.count}</span>
+                  </div>
+                  <div style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 4,
+                    color: t.bandKey === 'best' ? '#047857' : t.bandKey === 'spot' ? '#B45309' : t.bandKey === 'worst' ? '#B91C1C' : C.text,
+                  }}>
+                    {t.bandLabel}
                   </div>
                   <div style={{fontSize: 18, fontWeight: 700, color: C.textDark, marginTop: 4, fontVariantNumeric: 'tabular-nums'}}>
                     {t.avgPrem != null ? `+${t.avgPrem.toFixed(0)}%` : '—'}
