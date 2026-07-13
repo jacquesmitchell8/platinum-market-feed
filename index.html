@@ -1480,7 +1480,6 @@
     }
 
     const FACE_HOLDINGS_KEY = 'pm_face_holdings_v1';
-    const FACE_ASKS_KEY = 'pm_face_asks_v1';
 
     const FACE_THEME_COLORS = {
       Dragon: '#B45309',
@@ -1503,6 +1502,1232 @@
       // Scarce + fair premium ranks high; stretched premiums sink
       return Math.round(scar - Math.min(120, Math.max(0, prem)) * 0.55);
     }
+
+    const FACE_RARITY_KEY = 'pm_face_rarity_v1';
+    const FACE_OCR_RESULTS_KEY = 'pm_face_ocr_results_v1';
+    const FACE_QUOTE_HISTORY_KEY = 'pm_face_quote_history_v1';
+    const FACE_QUOTE_CLEARED_KEY = 'pm_face_quote_cleared_v1';
+    const FACE_ACTIVE_DAYS = 7;
+
+    /** Seed rarity / scarcity DB — editable in-tab; overrides persist in localStorage. */
+    const FACE_RARITY_DEFAULT = {
+      '2026 Outback Platinum': {
+        rarity: 'medium',
+        historicalPremium: [8, 12],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        aliases: ['outback', 'wonders of the outback', '2026 outback'],
+      },
+      'Australian Platinum Kangaroo': {
+        rarity: 'low',
+        historicalPremium: [4, 9],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        aliases: ['platypus', 'platinum kangaroo', 'perth mint platinum 1oz'],
+      },
+      'Australian Gold Kangaroo': {
+        rarity: 'low',
+        historicalPremium: [3, 7],
+        metal: 'gold',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        aliases: ['gold kangaroo', 'perth mint gold 1oz'],
+      },
+      'American Platinum Eagle 1/2oz': {
+        rarity: 'medium',
+        historicalPremium: [15, 45],
+        metal: 'platinum',
+        weightOz: 0.5,
+        sovereign: true,
+        thematic: false,
+        aliases: ['american eagle', 'platinum eagle', 'age 1/2', 'age half'],
+      },
+      'Canada War of 1812 1/2oz': {
+        rarity: 'high',
+        historicalPremium: [60, 150],
+        metal: 'platinum',
+        weightOz: 0.5,
+        sovereign: true,
+        thematic: true,
+        aliases: ['war of 1812', '1812', 'canada platinum'],
+      },
+      'Tudor Beast Royal Dragon': {
+        rarity: 'medium',
+        historicalPremium: [10, 22],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        theme: 'Dragon',
+        aliases: ['tudor', 'royal dragon', 'tudor beast', 'dragon'],
+      },
+      'Chinese Panda 30g Gold': {
+        rarity: 'medium',
+        historicalPremium: [6, 14],
+        metal: 'gold',
+        weightOz: 30 / 31.1034768,
+        sovereign: true,
+        thematic: true,
+        theme: 'Panda',
+        aliases: ['panda', 'chinese panda', '30g gold', '金熊猫'],
+      },
+      'Chinese Panda Platinum': {
+        rarity: 'high',
+        historicalPremium: [18, 45],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        theme: 'Panda',
+        aliases: ['platinum panda', 'panda platinum'],
+      },
+      'Perth Lunar Platinum 1oz': {
+        rarity: 'medium',
+        historicalPremium: [12, 28],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        theme: 'Lunar',
+        aliases: ['lunar', 'lunar series', 'year of the', 'snake', 'dragon year', 'ox', 'rabbit', 'tiger'],
+      },
+      'Maple Leaf Platinum': {
+        rarity: 'low',
+        historicalPremium: [5, 12],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        theme: 'Maple',
+        aliases: ['maple', 'maple leaf'],
+      },
+      'Britannia Platinum': {
+        rarity: 'low',
+        historicalPremium: [6, 14],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        theme: 'Britannia',
+        aliases: ['britannia'],
+      },
+      'Nugget / Kangaroo Platinum': {
+        rarity: 'low',
+        historicalPremium: [4, 10],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        theme: 'Nugget',
+        aliases: ['nugget', 'kangaroo', 'random date'],
+      },
+      'Koala Platinum': {
+        rarity: 'medium',
+        historicalPremium: [10, 24],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        theme: 'Koala',
+        aliases: ['koala'],
+      },
+    };
+
+
+    const RARITY_SCORE = { low: 28, medium: 58, high: 82, ultra: 95 };
+
+    function classifyFaceTheme(text, rarityHit) {
+      if (rarityHit?.theme) return rarityHit.theme;
+      const t = String(text || '').toLowerCase();
+      if (/dragon|tudor/.test(t)) return 'Dragon';
+      if (/panda/.test(t)) return 'Panda';
+      if (/lunar|year of the|snake|rabbit|ox|tiger|horse|goat|monkey|rooster|dog|pig|rat/.test(t)) return 'Lunar';
+      if (/maple/.test(t)) return 'Maple';
+      if (/britannia/.test(t)) return 'Britannia';
+      if (/koala/.test(t)) return 'Koala';
+      if (/eagle|american\s*eagle/.test(t)) return 'Eagle';
+      if (/outback/.test(t)) return 'Outback';
+      if (/nugget|kangaroo|platypus/.test(t)) return 'Nugget';
+      return 'Other';
+    }
+
+    function isOcrNavGarbage(text) {
+      const t = String(text || '').toLowerCase();
+      if (!t || t.length < 3) return true;
+      if (/buy\s+gold|buy\s+silver|buy\s+platinum|refresh|add to (cart|bag)|sort by|filter|in stock/.test(t)) return true;
+      if (/(ozt)\s*[»>]/.test(t)) return true;
+      if (/^[\W\d\s]{0,8}$/.test(t)) return true;
+      const letters = (t.match(/[a-z]/g) || []).length;
+      return letters < 4;
+    }
+
+    function displayFaceCoinName(row) {
+      const raw = String(row?.coin || row?.name || '').trim();
+      if (row?.rarityKey) return row.rarityKey;
+      if (row?.theme && row.theme !== 'Other') {
+        const year = row.year || (raw.match(/\b(20\d{2})\b/) || [])[1];
+        const metal = row.metal === 'gold' ? 'Gold' : 'Platinum';
+        const wt = row.weightOz >= 0.99 ? '1oz' : (row.weightOz != null ? `${Number(row.weightOz).toFixed(2)}oz` : '');
+        return [year, row.theme, metal, wt].filter(Boolean).join(' ');
+      }
+      const cleaned = cleanOcrCoinName(raw);
+      if (!cleaned || isOcrNavGarbage(cleaned) || cleaned.length > 64) {
+        const price = row?.valueAud ?? row?.priceAud;
+        return price != null ? `Listing · $${Math.round(Number(price)).toLocaleString()}` : 'Unparsed listing';
+      }
+      return cleaned.length > 48 ? `${cleaned.slice(0, 46)}…` : cleaned;
+    }
+
+    function faceValueScore(row) {
+      const prem = row.premiumPct;
+      const scar = row.scarcityScore ?? 35;
+      if (prem == null) return scar;
+      // Higher scarcity + lower premium = better value for collectors
+      return Math.round(scar - Math.min(80, Math.max(0, prem)) * 0.55);
+    }
+
+    function loadFaceRarityDb() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(FACE_RARITY_KEY) || '{}');
+        return { ...FACE_RARITY_DEFAULT, ...raw };
+      } catch {
+        return { ...FACE_RARITY_DEFAULT };
+      }
+    }
+
+    function saveFaceRarityOverride(key, entry) {
+      try {
+        const raw = JSON.parse(localStorage.getItem(FACE_RARITY_KEY) || '{}');
+        raw[key] = entry;
+        localStorage.setItem(FACE_RARITY_KEY, JSON.stringify(raw));
+      } catch (_) {}
+    }
+
+    function loadFaceOcrResults() {
+      try { return JSON.parse(localStorage.getItem(FACE_OCR_RESULTS_KEY) || '[]'); }
+      catch { return []; }
+    }
+
+    function saveFaceOcrResults(rows) {
+      try { localStorage.setItem(FACE_OCR_RESULTS_KEY, JSON.stringify(rows.slice(0, 500))); }
+      catch (_) {}
+    }
+
+    function loadFaceQuoteHistory() {
+      try { return JSON.parse(localStorage.getItem(FACE_QUOTE_HISTORY_KEY) || '[]'); }
+      catch { return []; }
+    }
+
+    function saveFaceQuoteHistory(rows) {
+      try { localStorage.setItem(FACE_QUOTE_HISTORY_KEY, JSON.stringify(rows.slice(0, 2500))); }
+      catch (_) {}
+    }
+
+    function loadFaceClearedIds() {
+      try { return new Set(JSON.parse(localStorage.getItem(FACE_QUOTE_CLEARED_KEY) || '[]')); }
+      catch { return new Set(); }
+    }
+
+    function saveFaceClearedIds(set) {
+      try { localStorage.setItem(FACE_QUOTE_CLEARED_KEY, JSON.stringify([...set].slice(-2000))); }
+      catch (_) {}
+    }
+
+    function appendFaceQuoteHistory(newRows) {
+      const prev = loadFaceQuoteHistory();
+      const byId = new Map(prev.map((r) => [r.id, r]));
+      for (const r of newRows) byId.set(r.id, r);
+      const merged = [...byId.values()].sort(
+        (a, b) => new Date(b.recordedAt || 0) - new Date(a.recordedAt || 0)
+      );
+      saveFaceQuoteHistory(merged);
+      return merged;
+    }
+
+    function inferDealerSeller(text, fileName) {
+      const blob = `${fileName || ''} ${text || ''}`.toLowerCase();
+      if (/ainslie/.test(blob)) return 'Ainslie';
+      if (/perth\s*mint|perthmint/.test(blob)) return 'Perth Mint';
+      if (/bullion\s*star|bullionstar/.test(blob)) return 'BullionStar';
+      if (/abc\s*bullion/.test(blob)) return 'ABC Bullion';
+      if (/gold\s*company|thegoldcompany/.test(blob)) return 'The Gold Company';
+      if (/jb\s*bullion/.test(blob)) return 'JB Bullion';
+      if (/apmex/.test(blob)) return 'APMEX';
+      if (/hero\s*bullion/.test(blob)) return 'Hero Bullion';
+      return 'Dealer';
+    }
+
+    async function persistFaceQuotesRemote(quotes) {
+      if (!quotes?.length) return { ok: false, skipped: true };
+      try {
+        const res = await fetch('/.netlify/functions/face-quotes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quotes }),
+        });
+        return await res.json().catch(() => ({}));
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }
+
+    async function recallFaceQuotesRemote(all) {
+      try {
+        const res = await fetch(`/.netlify/functions/face-quotes?all=${all ? '1' : '0'}&limit=1000`, { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (!data?.ok || !Array.isArray(data.rows)) return [];
+        return data.rows.map((r) => ({
+          id: r.id,
+          recordedAt: r.recorded_at,
+          seller: r.seller,
+          name: r.coin,
+          coin: r.coin,
+          priceAud: r.value_aud != null ? Number(r.value_aud) : null,
+          valueAud: r.value_aud != null ? Number(r.value_aud) : null,
+          meltAud: r.melt_aud != null ? Number(r.melt_aud) : null,
+          premiumPct: r.premium_pct != null ? Number(r.premium_pct) : null,
+          recommendation: r.recommendation,
+          scarcityScore: r.scarcity_score,
+          metal: r.metal,
+          weightOz: r.weight_oz != null ? Number(r.weight_oz) : null,
+          sourceFile: r.source_file,
+          batchId: r.batch_id,
+          reasoning: r.reasoning,
+          theme: classifyFaceTheme(r.coin, null),
+          histBand: '—',
+          rarity: '—',
+          valueScore: faceValueScore({
+            scarcityScore: r.scarcity_score,
+            premiumPct: r.premium_pct != null ? Number(r.premium_pct) : null,
+          }),
+        }));
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function faceQuoteWithinActiveWindow(row, now = Date.now()) {
+      const t = new Date(row.recordedAt || 0).getTime();
+      if (!t) return false;
+      return now - t <= FACE_ACTIVE_DAYS * 24 * 3600 * 1000;
+    }
+
+    let tesseractLoadPromise = null;
+    function ensureTesseract() {
+      if (window.Tesseract) return Promise.resolve(window.Tesseract);
+      if (tesseractLoadPromise) return tesseractLoadPromise;
+      tesseractLoadPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+        s.async = true;
+        s.onload = () => (window.Tesseract ? resolve(window.Tesseract) : reject(new Error('Tesseract missing')));
+        s.onerror = () => reject(new Error('Failed to load Tesseract.js'));
+        document.head.appendChild(s);
+      });
+      return tesseractLoadPromise;
+    }
+
+    function matchFaceRarity(name, rarityDb) {
+      const n = String(name || '').toLowerCase();
+      let best = null;
+      let bestScore = 0;
+      for (const [key, meta] of Object.entries(rarityDb || {})) {
+        const aliases = [key, ...(meta.aliases || [])].map((a) => String(a).toLowerCase());
+        for (const a of aliases) {
+          if (!a || a.length < 3) continue;
+          if (n.includes(a) || a.includes(n.slice(0, Math.min(n.length, a.length)))) {
+            const score = a.length + (meta.thematic ? 2 : 0) + (meta.sovereign ? 1 : 0);
+            if (score > bestScore) {
+              bestScore = score;
+              best = { key, ...meta };
+            }
+          }
+        }
+      }
+      return best;
+    }
+
+    function inferMetalWeight(text, rarityHit) {
+      const t = String(text || '').toLowerCase();
+      let metal = rarityHit?.metal || null;
+      if (!metal) {
+        if (/\bplatinum\b|\bplat\b|\bxpt\b/.test(t)) metal = 'platinum';
+        else if (/\bgold\b|\bxau\b/.test(t)) metal = 'gold';
+        else metal = 'platinum';
+      }
+      let weightOz = rarityHit?.weightOz ?? null;
+      if (weightOz == null) {
+        if (/\b30\s*g\b|\b30g\b/.test(t)) weightOz = 30 / 31.1034768;
+        else if (/\b1\/2\b|\b½\b|\b0\.5\s*oz\b|\bhalf\s*oz\b/.test(t)) weightOz = 0.5;
+        else if (/\b1\s*oz\b|\bone\s*ounce\b|\b1oz\b/.test(t)) weightOz = 1;
+        else weightOz = 1;
+      }
+      const yearM = t.match(/\b(20\d{2})\b/);
+      return { metal, weightOz, year: yearM ? yearM[1] : null };
+    }
+
+    function parseAudPricesFromText(text) {
+      const out = [];
+      const seen = new Set();
+      const push = (rawNum, index, raw) => {
+        const n = Number(String(rawNum).replace(/,/g, ''));
+        if (!Number.isFinite(n) || n < 80 || n > 50000) return;
+        for (const existing of out) {
+          if (Math.abs(existing.priceAud - n) < 0.01 && Math.abs(existing.index - index) < 48) return;
+        }
+        const key = `${index}|${Math.round(n * 100)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ priceAud: n, index, raw: raw || String(rawNum) });
+      };
+
+      const patterns = [
+        /(?:A\$|AU\$|AUD\s*\$?|\$)\s*([\d,]{2,6}(?:\.\d{1,2})?)/gi,
+        /\bAUD\s*([\d,]{2,6}\.\d{2})\b/gi,
+        /\b([\d,]{2,6}\.\d{2})\s*AUD\b/gi,
+        /(?:^|[\s:])([\d]{1,2},[\d]{3}\.\d{2})(?:\s|$|[,.])/gm,
+      ];
+      for (const re of patterns) {
+        let m;
+        while ((m = re.exec(text)) != null) {
+          push(m[1], m.index, m[0]);
+        }
+      }
+      out.sort((a, b) => a.index - b.index);
+      return out;
+    }
+
+    function buildOcrLineMap(text) {
+      const map = [];
+      let pos = 0;
+      for (const raw of String(text || '').split('\n')) {
+        const trimmed = raw.trim();
+        if (trimmed) {
+          const lead = raw.search(/\S/);
+          map.push({
+            text: trimmed,
+            start: pos + (lead >= 0 ? lead : 0),
+            end: pos + raw.length,
+          });
+        }
+        pos += raw.length + 1;
+      }
+      return map;
+    }
+
+    function lineIndexAtChar(lineMap, charIndex) {
+      for (let i = 0; i < lineMap.length; i++) {
+        if (charIndex >= lineMap[i].start && charIndex <= lineMap[i].end) return i;
+      }
+      let best = 0;
+      for (let i = 0; i < lineMap.length; i++) {
+        if (lineMap[i].start <= charIndex) best = i;
+      }
+      return best;
+    }
+
+    function cleanOcrCoinName(name) {
+      let s = String(name || '').replace(/\s+/g, ' ').trim();
+      s = s.replace(/\b(\w+)(?:\s+\1){1,}\b/gi, '$1');
+      s = s.replace(/^[^a-z0-9]*(?:u\.\.?|coins?\s*)+/i, '');
+      s = s.replace(/\b(?:buy|sell|cart|refresh|filter|sort|qty|quantity|ozt|oz\s*t)\b/gi, ' ');
+      s = s.replace(/(?:A\$|AU\$|AUD\s*\$?|\$)\s*[\d,]+(?:\.\d{1,2})?/gi, '').trim();
+      s = s.replace(/[»›<>^~|]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (s.length > 64) s = `${s.slice(0, 62)}…`;
+      return s;
+    }
+
+    function splitOcrUploadText(text) {
+      const chunks = [];
+      const re = /---\s*(.+?)\s*---\n([\s\S]*?)(?=\n\n---\s|$)/g;
+      let m;
+      while ((m = re.exec(String(text || ''))) != null) {
+        chunks.push({ fileName: m[1].trim(), text: m[2] });
+      }
+      if (!chunks.length) chunks.push({ fileName: 'pasted-text', text: String(text || '') });
+      return chunks;
+    }
+
+    /** Heuristic OCR → listing candidates (dealer pages are noisy — best-effort). */
+    function parseDealerOcrText(text) {
+      const clean = String(text || '').replace(/\r/g, '');
+      const lineMap = buildOcrLineMap(clean);
+      const lines = lineMap.map((l) => l.text);
+      const prices = parseAudPricesFromText(clean);
+      if (!prices.length) return [];
+
+      const items = [];
+      const seen = new Set();
+      for (const p of prices) {
+        const lineIdx = lineIndexAtChar(lineMap, p.index);
+        const nameParts = [];
+        for (let j = Math.max(0, lineIdx - 4); j <= lineIdx; j++) {
+          const L = lines[j];
+          if (!L) continue;
+          if (/^(add|buy|cart|qty|quantity|in stock|sku|code|sort|filter|page)\b/i.test(L)) continue;
+          if (/^(A\$|AU\$|AUD|\$)\s*[\d,]/.test(L) && L.length < 18) continue;
+          if (L.length < 3 || L.length > 120) continue;
+          const stripped = cleanOcrCoinName(L);
+          if (stripped.length >= 3) nameParts.push(stripped);
+        }
+        let name = cleanOcrCoinName(nameParts.filter(Boolean).slice(-2).join(' · '));
+        if (!name || name.length < 3 || isOcrNavGarbage(name)) {
+          name = `Listing @ ${p.raw.trim()}`;
+        }
+        const key = `${p.index}|${Math.round(p.priceAud * 100)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push({
+          id: `ocr-${p.index}-${Math.round(p.priceAud * 100)}`,
+          name,
+          priceAud: p.priceAud,
+          sourceLine: lines[lineIdx] || '',
+        });
+      }
+      return items
+        .filter((it) => it.priceAud >= 200)
+        .filter((it) => !isOcrNavGarbage(it.name) || /^Listing @/.test(it.name))
+        .slice(0, 200);
+    }
+
+    function analyzeFaceListing(item, { auSpot, ptSpot, audUsd, perthSpotAudAu, perthSpotAudPt }, rarityDb) {
+      const fx = audUsd > 0 ? audUsd : 0.65;
+      const rarityHit = matchFaceRarity(item.name, rarityDb);
+      const inferred = inferMetalWeight(`${item.name} ${item.sourceLine || ''}`, rarityHit);
+      const perthSpot = inferred.metal === 'gold' ? perthSpotAudAu : perthSpotAudPt;
+      const spotUsd = inferred.metal === 'gold' ? auSpot : ptSpot;
+      const meltUsd = spotUsd != null ? spotUsd * inferred.weightOz : null;
+      // Prefer Perth Mint AUD melt; fall back to LBMA USD ÷ FX only if Perth missing
+      const meltAud = perthSpot != null
+        ? perthSpot * inferred.weightOz
+        : (meltUsd != null ? meltUsd / fx : null);
+      const askAud = item.priceAud;
+      const premiumPct = askAud != null && meltAud > 0 ? ((askAud - meltAud) / meltAud) * 100 : null;
+      const hist = rarityHit?.historicalPremium || [8, 18];
+      const histLo = hist[0];
+      const histHi = hist[1];
+      const histMid = (histLo + histHi) / 2;
+
+      let scarcityScore = RARITY_SCORE[rarityHit?.rarity] ?? 35;
+      if (rarityHit?.sovereign) scarcityScore += 8;
+      if (rarityHit?.thematic) scarcityScore += 10;
+      if (premiumPct != null && premiumPct > histHi + 25) scarcityScore -= 12;
+      scarcityScore = Math.max(5, Math.min(100, Math.round(scarcityScore)));
+
+      let recommendation = 'Hold';
+      let reasoning = '';
+      if (premiumPct == null || meltAud == null) {
+        recommendation = 'Hold';
+        reasoning = 'Could not compute melt — check metal/weight or wait for live spot.';
+      } else if (scarcityScore >= 70 && premiumPct <= histMid) {
+        recommendation = 'Strong Buy';
+        reasoning = `Strong scarcity (${rarityHit?.rarity || 'inferred'}) and premium ${premiumPct.toFixed(1)}% is at/under typical ${histLo}–${histHi}% band — buy under ~${histMid.toFixed(0)}% over spot.`;
+      } else if (scarcityScore >= 55 && premiumPct <= histHi + 3) {
+        recommendation = 'Buy';
+        reasoning = `Decent scarcity with premium ${premiumPct.toFixed(1)}% inside/near historical ${histLo}–${histHi}% — fair for ${rarityHit?.key || 'this piece'}.`;
+      } else if (premiumPct > histHi + 18 || (scarcityScore < 40 && premiumPct > 22)) {
+        recommendation = 'Avoid';
+        reasoning = `Premium ${premiumPct.toFixed(1)}% stretches past typical ${histHi}% ceiling for this scarcity — wait for a better ask.`;
+      } else {
+        recommendation = 'Hold';
+        reasoning = `Premium ${premiumPct.toFixed(1)}% vs guide ${histLo}–${histHi}% — watch; not urgent at this ask.`;
+      }
+
+      return {
+        ...item,
+        metal: inferred.metal,
+        weightOz: inferred.weightOz,
+        year: inferred.year,
+        meltAud,
+        premiumPct,
+        scarcityScore,
+        rarity: rarityHit?.rarity || 'unknown',
+        rarityKey: rarityHit?.key || null,
+        theme: classifyFaceTheme(`${item.name} ${item.sourceLine || ''}`, rarityHit),
+        sovereign: !!rarityHit?.sovereign,
+        thematic: !!rarityHit?.thematic,
+        histBand: `${histLo}–${histHi}%`,
+        recommendation,
+        reasoning,
+        valueScore: null,
+      };
+    }
+
+    function finalizeFaceListingScores(rows) {
+      return (rows || []).map((r) => ({ ...r, valueScore: faceValueScore(r) }));
+    }
+
+    function buildFaceGlanceStats(rows) {
+      const list = rows || [];
+      const buys = list.filter((a) => a.recommendation === 'Strong Buy' || a.recommendation === 'Buy');
+      const avoids = list.filter((a) => a.recommendation === 'Avoid');
+      const prem = list.filter((a) => a.premiumPct != null);
+      const avg = prem.length ? prem.reduce((s, a) => s + a.premiumPct, 0) / prem.length : null;
+      const ranked = [...list].sort((a, b) => (b.valueScore ?? -999) - (a.valueScore ?? -999));
+      return {
+        count: list.length,
+        buys: buys.length,
+        avoids: avoids.length,
+        avgPrem: avg,
+        best: ranked.slice(0, 5),
+        worst: [...ranked].reverse().slice(0, 3),
+      };
+    }
+
+    function buildFaceThemeLeaderboard(rows) {
+      const byTheme = new Map();
+      for (const r of rows || []) {
+        const theme = r.theme || 'Other';
+        if (!byTheme.has(theme)) {
+          byTheme.set(theme, { theme, count: 0, premSum: 0, premN: 0, scarSum: 0, best: null });
+        }
+        const t = byTheme.get(theme);
+        t.count += 1;
+        if (r.premiumPct != null) { t.premSum += r.premiumPct; t.premN += 1; }
+        t.scarSum += r.scarcityScore || 0;
+        if (!t.best || (r.valueScore ?? -999) > (t.best.valueScore ?? -999)) t.best = r;
+      }
+      return [...byTheme.values()]
+        .map((t) => ({
+          ...t,
+          avgPrem: t.premN ? t.premSum / t.premN : null,
+          avgScar: t.count ? t.scarSum / t.count : 0,
+          valueScore: t.best?.valueScore ?? faceValueScore({
+            scarcityScore: t.count ? t.scarSum / t.count : 35,
+            premiumPct: t.premN ? t.premSum / t.premN : 40,
+          }),
+        }))
+        .sort((a, b) => b.valueScore - a.valueScore);
+    }
+
+    /** Premium % history by theme for chart (day buckets). */
+    function buildFaceThemePremiumHistory(rows) {
+      const byDayTheme = new Map();
+      for (const r of rows || []) {
+        if (r.premiumPct == null) continue;
+        const theme = r.theme || 'Other';
+        const d = new Date(r.recordedAt || 0);
+        if (Number.isNaN(d.getTime())) continue;
+        const day = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        const key = `${day}|${theme}`;
+        if (!byDayTheme.has(key)) byDayTheme.set(key, { day, theme, sum: 0, n: 0 });
+        const b = byDayTheme.get(key);
+        b.sum += r.premiumPct;
+        b.n += 1;
+      }
+      const themes = [...new Set([...byDayTheme.values()].map((x) => x.theme))];
+      const days = [...new Set([...byDayTheme.values()].map((x) => x.day))].sort((a, b) => a - b);
+      return {
+        themes: themes.slice(0, 6),
+        rows: days.map((day) => {
+          const out = {
+            ts: day,
+            label: new Date(day).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+          };
+          for (const theme of themes) {
+            const hit = byDayTheme.get(`${day}|${theme}`);
+            if (hit) out[theme] = Math.round((hit.sum / hit.n) * 10) / 10;
+          }
+          return out;
+        }),
+      };
+    }
+
+
+    function mapOcrHistoryToCatalogueAsks(historyRows) {
+      const out = {};
+      const now = Date.now();
+      const rows = (historyRows || [])
+        .filter((r) => faceQuoteWithinActiveWindow(r, now))
+        .slice()
+        .sort((a, b) => new Date(b.recordedAt || 0) - new Date(a.recordedAt || 0));
+      for (const r of rows) {
+        const coinId = matchOcrRowToCatalogueId(r);
+        if (!coinId || out[coinId]) continue;
+        const ask = r.valueAud ?? r.priceAud ?? r.askAud;
+        if (ask == null || !Number.isFinite(Number(ask))) continue;
+        out[coinId] = {
+          askAud: Number(ask),
+          seller: r.seller || null,
+          recordedAt: r.recordedAt || null,
+          sourceFile: r.sourceFile || null,
+        };
+      }
+      return out;
+    }
+
+    function matchOcrRowToCatalogueId(row) {
+      const hay = `${row.coin || ''} ${row.name || ''} ${row.rarityKey || ''} ${row.sourceLine || ''}`.toLowerCase();
+      if (!hay.trim()) return null;
+      let best = null;
+      let bestScore = 0;
+      for (const coin of FACE_VALUE_COINS) {
+        const aliases = [
+          coin.name,
+          coin.id,
+          coin.theme,
+          ...(coin.notes ? [coin.notes] : []),
+        ].map((s) => String(s || '').toLowerCase()).filter(Boolean);
+        // common short tokens
+        if (coin.id.includes('eagle')) aliases.push('american eagle', 'platinum eagle', 'age');
+        if (coin.id.includes('panda')) aliases.push('panda');
+        if (coin.id.includes('lunar')) aliases.push('lunar');
+        if (coin.id.includes('maple')) aliases.push('maple');
+        if (coin.id.includes('britannia')) aliases.push('britannia');
+        if (coin.id.includes('koala')) aliases.push('koala');
+        if (coin.id.includes('outback')) aliases.push('outback');
+        if (coin.id.includes('platypus') || coin.id.includes('kangaroo')) aliases.push('kangaroo', 'platypus');
+        if (coin.id.includes('1812')) aliases.push('1812', 'war of 1812');
+        if (coin.id.includes('tudor') || coin.id.includes('dragon')) aliases.push('tudor', 'dragon', 'tudor beast');
+        for (const a of aliases) {
+          if (a.length < 3) continue;
+          if (hay.includes(a) || a.includes(hay.slice(0, Math.min(hay.length, a.length)))) {
+            let score = a.length;
+            if (coin.metal && row.metal && coin.metal === row.metal) score += 8;
+            if (coin.weightOz && row.weightOz && Math.abs(Number(coin.weightOz) - Number(row.weightOz)) < 0.05) score += 10;
+            if (score > bestScore) { bestScore = score; best = coin.id; }
+          }
+        }
+      }
+      return bestScore >= 6 ? best : null;
+    }
+
+    function FaceScreenshotAnalyzer({ live, audUsd, perth, onQuotes }) {
+      const fileRef = useRef(null);
+      const [dragOver, setDragOver] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [status, setStatus] = useState(null);
+      const [previews, setPreviews] = useState([]);
+      const [rawOcr, setRawOcr] = useState('');
+      const [rarityDb, setRarityDb] = useState(() => loadFaceRarityDb());
+      const [history, setHistory] = useState(() => loadFaceQuoteHistory());
+      const [clearedIds, setClearedIds] = useState(() => loadFaceClearedIds());
+      const [viewMode, setViewMode] = useState('active');
+      const [showRarityEdit, setShowRarityEdit] = useState(false);
+      const [editKey, setEditKey] = useState('');
+      const [editRarity, setEditRarity] = useState('medium');
+      const [editLo, setEditLo] = useState('8');
+      const [editHi, setEditHi] = useState('12');
+
+      const [sortKey, setSortKey] = useState('value');
+      const [themeFilter, setThemeFilter] = useState('All');
+
+      const auSpot = live?.gold?.price;
+      const ptSpot = live?.platinum?.price;
+      const ptMetal = perth?.result?.find((m) => m.metal === 'Platinum');
+      const auMetal = perth?.result?.find((m) => m.metal === 'Gold');
+      const perthSpotAudPt = perth?.liveSpotAud?.platinum
+        ?? ptMetal?.liveAud
+        ?? ptMetal?.oneWeekHistoricData?.slice(-1)[0]?.mid
+        ?? null;
+      const perthSpotAudAu = perth?.liveSpotAud?.gold
+        ?? auMetal?.liveAud
+        ?? auMetal?.oneWeekHistoricData?.slice(-1)[0]?.mid
+        ?? null;
+
+      const normalizedHistory = useMemo(() => finalizeFaceListingScores(
+        (history || []).map((r) => ({
+          ...r,
+          theme: r.theme || classifyFaceTheme(`${r.coin || r.name || ''} ${r.sourceFile || ''}`, null),
+        }))
+      ), [history]);
+
+      const visibleRows = useMemo(() => {
+        const now = Date.now();
+        return normalizedHistory.filter((r) => {
+          if (clearedIds.has(r.id)) return false;
+          if (viewMode === 'all') return true;
+          return faceQuoteWithinActiveWindow(r, now);
+        });
+      }, [normalizedHistory, clearedIds, viewMode]);
+
+      const filteredRows = useMemo(() => {
+        let rows = visibleRows;
+        if (themeFilter !== 'All') rows = rows.filter((r) => r.theme === themeFilter);
+        const sorted = [...rows];
+        if (sortKey === 'value') sorted.sort((a, b) => (b.valueScore ?? -999) - (a.valueScore ?? -999));
+        else if (sortKey === 'premium') sorted.sort((a, b) => (a.premiumPct ?? 999) - (b.premiumPct ?? 999));
+        else if (sortKey === 'scarcity') sorted.sort((a, b) => (b.scarcityScore ?? 0) - (a.scarcityScore ?? 0));
+        else sorted.sort((a, b) => new Date(b.recordedAt || 0) - new Date(a.recordedAt || 0));
+        return sorted;
+      }, [visibleRows, themeFilter, sortKey]);
+
+      const glance = useMemo(() => buildFaceGlanceStats(visibleRows), [visibleRows]);
+      const themes = useMemo(() => buildFaceThemeLeaderboard(visibleRows), [visibleRows]);
+      const premHistory = useMemo(() => buildFaceThemePremiumHistory(normalizedHistory), [normalizedHistory]);
+      const themeOptions = useMemo(
+        () => ['All', ...[...new Set(visibleRows.map((r) => r.theme || 'Other'))].sort()],
+        [visibleRows]
+      );
+
+      const ingestScored = useCallback(async (scored, meta) => {
+        const recordedAt = new Date().toISOString();
+        const batchId = `batch-${Date.now()}`;
+        const seller = meta.seller || 'Dealer';
+        const enriched = scored.map((row, i) => ({
+          ...row,
+          id: `${batchId}-${i}`,
+          recordedAt,
+          seller,
+          coin: row.name,
+          valueAud: row.priceAud,
+          sourceFile: meta.sourceFile || null,
+          batchId,
+        }));
+        const merged = appendFaceQuoteHistory(enriched);
+        setHistory(merged);
+        saveFaceOcrResults(enriched);
+        if (typeof onQuotes === 'function') onQuotes(enriched);
+        const remote = await persistFaceQuotesRemote(enriched);
+        return { enriched, merged, remote };
+      }, [onQuotes]);
+
+      const runAnalysisOnText = useCallback(async (text, label, fileName) => {
+        const chunks = splitOcrUploadText(text);
+        const db = loadFaceRarityDb();
+        setRarityDb(db);
+        const parsed = [];
+        for (const chunk of chunks) {
+          parsed.push(...parseDealerOcrText(chunk.text));
+        }
+        const scored = finalizeFaceListingScores(
+          parsed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd, perthSpotAudAu, perthSpotAudPt }, db))
+        );
+        const seller = inferDealerSeller(text, fileName || chunks[0]?.fileName);
+        const { enriched, remote } = await ingestScored(scored, { seller, sourceFile: fileName || label });
+        setStatus(
+          enriched.length
+            ? `${label}: +${enriched.length} coin${enriched.length === 1 ? '' : 's'} · ${seller}`
+              + (remote?.ok ? ' · saved to quote DB' : ' · saved locally')
+            : `${label}: no AUD prices found — try a clearer crop or scroll-capture the full page`
+        );
+        return enriched;
+      }, [auSpot, ptSpot, audUsd, perthSpotAudAu, perthSpotAudPt, ingestScored]);
+
+      const processFiles = async (fileList) => {
+        const files = [...(fileList || [])].filter((f) => f.type?.startsWith('image/'));
+        if (!files.length) {
+          setStatus('Please upload image files (PNG/JPG/WebP).');
+          return;
+        }
+        setBusy(true);
+        try {
+          const Tesseract = await ensureTesseract();
+          const urls = files.map((f) => URL.createObjectURL(f));
+          setPreviews((prev) => {
+            prev.forEach((u) => URL.revokeObjectURL(u));
+            return urls.slice(0, 12);
+          });
+          let total = 0;
+          const ocrChunks = [];
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            setStatus(`Reading screenshot ${i + 1}/${files.length}: ${file.name}…`);
+            const result = await Tesseract.recognize(file, 'eng', {
+              tessedit_pageseg_mode: '6',
+              preserve_interword_spaces: '1',
+              logger: (m) => {
+                if (m.status === 'recognizing text' && m.progress != null) {
+                  setStatus(`Screenshot ${i + 1}/${files.length}… ${Math.round(m.progress * 100)}%`);
+                }
+              },
+            });
+            const text = result?.data?.text || '';
+            ocrChunks.push(`--- ${file.name} ---\n${text}`);
+            const rows = await runAnalysisOnText(text, file.name, file.name);
+            total += rows.length;
+          }
+          setRawOcr(ocrChunks.join('\n\n'));
+          setStatus(`Done: ${files.length} screenshot${files.length === 1 ? '' : 's'} · ${total} coins scored · scroll table · history kept`);
+          setViewMode('active');
+        } catch (e) {
+          setStatus(e.message || 'OCR failed');
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const onDrop = (e) => {
+        e.preventDefault();
+        setDragOver(false);
+        processFiles(e.dataTransfer?.files);
+      };
+
+      const clearActiveView = () => {
+        const now = Date.now();
+        const next = new Set(clearedIds);
+        for (const r of history) {
+          if (faceQuoteWithinActiveWindow(r, now)) next.add(r.id);
+        }
+        setClearedIds(next);
+        saveFaceClearedIds(next);
+        setStatus('Cleared active (7-day) view — full history still recallable.');
+      };
+
+      const recallAll = async () => {
+        setStatus('Recalling quote history…');
+        let merged = loadFaceQuoteHistory();
+        const remote = await recallFaceQuotesRemote(true);
+        if (remote.length) {
+          merged = appendFaceQuoteHistory(remote);
+          setHistory(merged);
+        } else {
+          setHistory(merged);
+        }
+        if (typeof onQuotes === 'function') onQuotes(merged);
+        setClearedIds(new Set());
+        saveFaceClearedIds(new Set());
+        setViewMode('all');
+        setStatus('Showing full historical database (time · seller · value · buy/avoid).');
+      };
+
+      const saveRarityEdit = () => {
+        const key = editKey.trim();
+        if (!key) return;
+        const entry = {
+          rarity: editRarity,
+          historicalPremium: [Number(editLo) || 0, Number(editHi) || 20],
+          metal: /gold/i.test(key) ? 'gold' : 'platinum',
+          weightOz: 1,
+          sovereign: true,
+          thematic: true,
+          aliases: [key.toLowerCase()],
+        };
+        saveFaceRarityOverride(key, entry);
+        setRarityDb(loadFaceRarityDb());
+        setShowRarityEdit(false);
+        setStatus(`Saved rarity profile: ${key}`);
+      };
+
+      const recColor = (r) => {
+        if (r === 'Strong Buy') return '#047857';
+        if (r === 'Buy') return '#0F766E';
+        if (r === 'Avoid') return '#B91C1C';
+        return '#B45309';
+      };
+
+      const fmtWhen = (iso) => {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '—';
+        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      };
+
+      return (
+        <div style={{padding: '12px 18px 8px'}}>
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            style={{
+              border: `1px dashed ${dragOver ? C.gold : C.border}`,
+              borderRadius: 8,
+              background: dragOver ? 'rgba(184,134,11,0.06)' : 'transparent',
+              padding: '12px 14px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 10,
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div style={{flex: '1 1 240px'}}>
+              <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.gold}}>
+                Dealer asks → theme ranking → history
+              </div>
+              <div style={{fontSize: 12, color: C.textSecondary, marginTop: 2, lineHeight: 1.4}}>
+                Dragons vs pandas vs lunar — see which face coins hold premium and which are stretched.
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => fileRef.current?.click()}
+              style={{
+                fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                padding: '10px 16px', borderRadius: 7, cursor: busy ? 'wait' : 'pointer',
+                border: `1px solid ${C.gold}`,
+                background: busy ? 'rgba(184,134,11,0.2)' : C.gold,
+                color: busy ? C.textDark : '#fff',
+              }}
+            >
+              {busy ? 'Analysing…' : 'Upload screenshots'}
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" multiple style={{display: 'none'}}
+              onChange={(e) => processFiles(e.target.files)} />
+          </div>
+          {status && <div style={{fontSize: 12, color: C.textDark, marginTop: 8}}>{status}</div>}
+
+          {previews.length > 0 && (
+            <div style={{marginTop: 8, display: 'flex', gap: 6, overflowX: 'auto'}}>
+              {previews.map((url) => (
+                <img key={url} src={url} alt="" style={{height: 56, borderRadius: 5, border: `1px solid ${C.border}`, objectFit: 'cover'}} />
+              ))}
+            </div>
+          )}
+
+          <div style={{marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+            <button type="button" onClick={() => setViewMode('active')}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${viewMode === 'active' ? C.plat : C.border}`,
+                background: viewMode === 'active' ? 'rgba(107,127,150,0.12)' : C.surface,
+                color: viewMode === 'active' ? C.plat : C.textDark}}>
+              Active · {FACE_ACTIVE_DAYS}d ({visibleRows.length})
+            </button>
+            <button type="button" onClick={recallAll}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${viewMode === 'all' ? C.gold : C.border}`,
+                background: viewMode === 'all' ? 'rgba(184,134,11,0.12)' : C.surface,
+                color: viewMode === 'all' ? C.gold : C.textDark}}>
+              Full history ({normalizedHistory.length})
+            </button>
+            <button type="button" onClick={clearActiveView}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: C.surface, color: C.textDark}}>
+              Clear active
+            </button>
+            {['value', 'premium', 'scarcity', 'time'].map((k) => (
+              <button key={k} type="button" onClick={() => setSortKey(k)}
+                style={{fontSize: 10, fontWeight: 600, padding: '5px 9px', borderRadius: 5, cursor: 'pointer',
+                  border: `1px solid ${sortKey === k ? C.plat : C.border}`,
+                  background: sortKey === k ? 'rgba(107,127,150,0.1)' : 'transparent',
+                  color: C.textDark, textTransform: 'capitalize'}}>
+                Sort · {k}
+              </button>
+            ))}
+          </div>
+
+          {visibleRows.length > 0 && (
+            <div style={{marginTop: 12}}>
+              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8, marginBottom: 12}}>
+                {[
+                  { label: 'Listings', value: glance.count, sub: viewMode === 'active' ? 'active window' : 'all history' },
+                  { label: 'Avg premium', value: glance.avgPrem != null ? `${glance.avgPrem.toFixed(0)}%` : '—', sub: 'over melt' },
+                  { label: 'Lean in', value: glance.buys, sub: 'buy signals', color: '#047857' },
+                  { label: 'Skip', value: glance.avoids, sub: 'stretched asks', color: '#B91C1C' },
+                ].map((c) => (
+                  <div key={c.label} style={{padding: '10px 12px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.borderLight}`}}>
+                    <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>{c.label}</div>
+                    <div style={{fontSize: 22, fontWeight: 700, color: c.color || C.textDark, fontVariantNumeric: 'tabular-nums', marginTop: 2}}>{c.value}</div>
+                    <div style={{fontSize: 10, color: C.text}}>{c.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{marginBottom: 14}}>
+                <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.plat, marginBottom: 8}}>
+                  Theme scoreboard · who is doing best
+                </div>
+                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8}}>
+                  {themes.slice(0, 8).map((t, i) => (
+                    <button
+                      key={t.theme}
+                      type="button"
+                      onClick={() => setThemeFilter(t.theme === themeFilter ? 'All' : t.theme)}
+                      style={{
+                        textAlign: 'left', padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                        border: `1px solid ${themeFilter === t.theme ? (FACE_THEME_COLORS[t.theme] || C.plat) : C.borderLight}`,
+                        background: themeFilter === t.theme ? 'rgba(184,134,11,0.06)' : C.surface,
+                      }}
+                    >
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6}}>
+                        <span style={{fontSize: 13, fontWeight: 700, color: FACE_THEME_COLORS[t.theme] || C.textDark}}>
+                          {i + 1}. {t.theme}
+                        </span>
+                        <span style={{fontSize: 11, color: C.text}}>{t.count} asks</span>
+                      </div>
+                      <div style={{fontSize: 18, fontWeight: 700, color: C.textDark, marginTop: 4, fontVariantNumeric: 'tabular-nums'}}>
+                        {t.avgPrem != null ? `+${t.avgPrem.toFixed(0)}%` : '—'}
+                      </div>
+                      <div style={{fontSize: 10, color: C.text, marginTop: 2}}>
+                        avg premium · scarcity {Math.round(t.avgScar)} · value {t.valueScore}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div style={{fontSize: 11, color: C.text, marginTop: 8, lineHeight: 1.45}}>
+                  Collectors split: dragons / lunars chase theme scarcity; pandas chase Chinese mint demand. Lower premium + higher scarcity = better value score.
+                </div>
+              </div>
+
+              {premHistory.rows.length > 1 && premHistory.themes.length > 0 && (
+                <div style={{marginBottom: 14, padding: '8px 4px 4px', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
+                  <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.plat, padding: '4px 10px 8px'}}>
+                    Premium history by theme
+                  </div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <LineChart data={premHistory.rows} margin={{top: 8, right: 16, left: 4, bottom: 4}}>
+                      <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false} />
+                      <XAxis dataKey="label" tick={{fontSize: 10, fill: C.axis}} minTickGap={28} axisLine={{stroke: C.border}} tickLine={false} />
+                      <YAxis tick={{fontSize: 10, fill: C.axis}} width={40} axisLine={{stroke: C.border}} tickLine={false}
+                        tickFormatter={(v) => `${v}%`} />
+                      <Tooltip
+                        contentStyle={{background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12}}
+                        formatter={(v, name) => [`${Number(v).toFixed(1)}%`, name]}
+                      />
+                      <Legend wrapperStyle={{fontSize: 11}} />
+                      {premHistory.themes.map((theme) => (
+                        <Line key={theme} type="monotone" dataKey={theme} name={theme}
+                          stroke={FACE_THEME_COLORS[theme] || C.plat} strokeWidth={2} dot={false} connectNulls />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {glance.best.length > 0 && (
+                <div style={{marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: 'rgba(4,120,87,0.06)', border: '1px solid rgba(4,120,87,0.15)'}}>
+                  <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#047857', marginBottom: 6}}>
+                    Best value right now
+                  </div>
+                  <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+                    {glance.best.map((b) => (
+                      <div key={b.id} style={{fontSize: 12, color: C.textDark}}>
+                        <strong style={{color: FACE_THEME_COLORS[b.theme] || C.plat}}>{b.theme}</strong>
+                        {' · '}{displayFaceCoinName(b)}
+                        {' · '}
+                        <span style={{fontVariantNumeric: 'tabular-nums'}}>
+                          {b.premiumPct != null ? `+${Number(b.premiumPct).toFixed(0)}%` : '—'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, alignItems: 'center'}}>
+                <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>Theme</span>
+                {themeOptions.map((t) => (
+                  <button key={t} type="button" onClick={() => setThemeFilter(t)}
+                    style={{fontSize: 11, fontWeight: 600, padding: '4px 9px', borderRadius: 5, cursor: 'pointer',
+                      border: `1px solid ${themeFilter === t ? C.gold : C.border}`,
+                      background: themeFilter === t ? 'rgba(184,134,11,0.1)' : C.surface,
+                      color: themeFilter === t ? C.gold : C.textDark}}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{maxHeight: 480, overflow: 'auto', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
+                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 760}}>
+                  <thead style={{position: 'sticky', top: 0, zIndex: 1, background: C.surface2}}>
+                    <tr style={{color: C.text, textAlign: 'left'}}>
+                      <th style={{padding: '8px 10px'}}>Theme</th>
+                      <th style={{padding: '8px 10px'}}>Coin</th>
+                      <th style={{padding: '8px 10px'}}>Ask</th>
+                      <th style={{padding: '8px 10px'}}>Prem %</th>
+                      <th style={{padding: '8px 10px'}}>Value</th>
+                      <th style={{padding: '8px 10px'}}>Call</th>
+                      <th style={{padding: '8px 10px'}}>When</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRows.map((a) => (
+                      <tr key={a.id} style={{borderTop: `1px solid ${C.borderLight}`}}>
+                        <td style={{padding: '8px 10px'}}>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                            color: FACE_THEME_COLORS[a.theme] || C.text,
+                          }}>{a.theme || 'Other'}</span>
+                        </td>
+                        <td style={{padding: '8px 10px', maxWidth: 220}}>
+                          <div style={{fontWeight: 600, color: C.textDark, lineHeight: 1.3}} title={a.coin || a.name}>
+                            {displayFaceCoinName(a)}
+                          </div>
+                          <div style={{fontSize: 10, color: C.text, marginTop: 1}}>
+                            {a.seller || 'Dealer'} · {a.metal || '—'}
+                            {a.weightOz != null ? ` · ${a.weightOz >= 0.99 ? '1oz' : `${Number(a.weightOz).toFixed(2)}oz`}` : ''}
+                          </div>
+                        </td>
+                        <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums', fontWeight: 600}}>
+                          {(a.valueAud != null || a.priceAud != null) ? fmtAud(a.valueAud ?? a.priceAud) : '—'}
+                        </td>
+                        <td style={{padding: '8px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                          color: a.premiumPct == null ? C.text : a.premiumPct > 25 ? '#B45309' : '#047857'}}>
+                          {a.premiumPct != null ? `${a.premiumPct >= 0 ? '+' : ''}${Number(a.premiumPct).toFixed(0)}%` : '—'}
+                        </td>
+                        <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: C.textDark}}>
+                          {a.valueScore ?? '—'}
+                        </td>
+                        <td style={{padding: '8px 10px', fontWeight: 700, color: recColor(a.recommendation)}}>
+                          {a.recommendation || '—'}
+                        </td>
+                        <td style={{padding: '8px 10px', whiteSpace: 'nowrap', color: C.text, fontVariantNumeric: 'tabular-nums'}}>
+                          {fmtWhen(a.recordedAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{fontSize: 11, color: C.text, marginTop: 6}}>
+                Showing {filteredRows.length} of {visibleRows.length} · scroll the table · history chart uses every stored ask
+              </div>
+            </div>
+          )}
+
+          {rawOcr && (
+            <details style={{fontSize: 11, color: C.text, marginTop: 10}}>
+              <summary style={{cursor: 'pointer', fontWeight: 600, color: C.textDark}}>Raw OCR (debug / re-score)</summary>
+              <textarea value={rawOcr} onChange={(e) => setRawOcr(e.target.value)} rows={5}
+                style={{width: '100%', marginTop: 8, padding: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace',
+                  border: `1px solid ${C.border}`, borderRadius: 6, resize: 'vertical'}} />
+              <button type="button" onClick={() => runAnalysisOnText(rawOcr, 'Pasted text', 'pasted-text')}
+                style={{marginTop: 8, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
+                  border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', color: C.textDark}}>
+                Re-score from text
+              </button>
+            </details>
+          )}
+
+          <div style={{marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+            <button type="button" onClick={() => setShowRarityEdit((v) => !v)}
+              style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: C.surface, color: C.textDark}}>
+              {showRarityEdit ? 'Close rarity editor' : 'Edit / add rarity profile'}
+            </button>
+            <span style={{fontSize: 11, color: C.text}}>
+              {Object.keys(rarityDb).length} rarity profiles · {normalizedHistory.length} quotes stored
+            </span>
+          </div>
+
+          {showRarityEdit && (
+            <div style={{marginTop: 10, padding: 12, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2,
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8}}>
+              <label style={{fontSize: 11, color: C.textDark}}>Coin key
+                <input value={editKey} onChange={(e) => setEditKey(e.target.value)} placeholder="2026 Outback Platinum"
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
+              </label>
+              <label style={{fontSize: 11, color: C.textDark}}>Rarity
+                <select value={editRarity} onChange={(e) => setEditRarity(e.target.value)}
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}}>
+                  {['low', 'medium', 'high', 'ultra'].map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </label>
+              <label style={{fontSize: 11, color: C.textDark}}>Hist premium lo %
+                <input value={editLo} onChange={(e) => setEditLo(e.target.value)}
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
+              </label>
+              <label style={{fontSize: 11, color: C.textDark}}>Hist premium hi %
+                <input value={editHi} onChange={(e) => setEditHi(e.target.value)}
+                  style={{display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 5, border: `1px solid ${C.border}`}} />
+              </label>
+              <div style={{display: 'flex', alignItems: 'end'}}>
+                <button type="button" onClick={saveRarityEdit}
+                  style={{fontSize: 11, fontWeight: 700, padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
+                    border: `1px solid ${C.plat}`, background: C.plat, color: '#fff'}}>Save profile</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
 
     /** Annotated disconnect years — price refused to follow the textbook S&D script. */
     const WTF_MOMENTS = [
@@ -8047,22 +9272,19 @@
       const [metalFilter, setMetalFilter] = useState('all');
       const [themeFilter, setThemeFilter] = useState('All');
       const [sortKey, setSortKey] = useState('-valueScore');
-      const [showPricePad, setShowPricePad] = useState(false);
-      const [askSaveMsg, setAskSaveMsg] = useState(null);
-      const [askSaving, setAskSaving] = useState(false);
       const [holdings, setHoldings] = useState(() => {
         try { return JSON.parse(localStorage.getItem(FACE_HOLDINGS_KEY) || '{}'); }
         catch { return {}; }
       });
-      const [userAsks, setUserAsks] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(FACE_ASKS_KEY) || '{}'); }
-        catch { return {}; }
+      // Latest OCR asks keyed by catalogue coin id (from screenshot uploads)
+      const [ocrAskByCoin, setOcrAskByCoin] = useState(() => {
+        try {
+          const hist = loadFaceQuoteHistory();
+          return mapOcrHistoryToCatalogueAsks(hist);
+        } catch { return {}; }
       });
 
       // ── Single source of truth: Perth Mint AUD/oz ─────────────────
-      // Prefer liveSpotAud from /.netlify/functions/perth-mint (bullion-slots).
-      // Fall back to last historic mid/offer on the same Perth payload only.
-      // Never use LBMA USD + FX for Spot or Melt on this tab.
       const ptMetal = perth?.result?.find((m) => m.metal === 'Platinum');
       const auMetal = perth?.result?.find((m) => m.metal === 'Gold');
       const lastPt = ptMetal?.oneWeekHistoricData?.slice(-1)[0];
@@ -8083,128 +9305,40 @@
       const spotReady = spotAudPt != null || spotAudAu != null;
       const perthEstimated = !!perth?.estimated;
       const perthUpdated = perth?.updatedAt || null;
-      const userAskCount = Object.keys(userAsks).filter((id) => {
-        const a = userAsks[id];
-        return a && (a.askAud != null || a.askUsd != null);
-      }).length;
 
-      const persistAsks = (next) => {
-        setUserAsks(next);
-        try { localStorage.setItem(FACE_ASKS_KEY, JSON.stringify(next)); } catch (_) {}
-      };
-
-      const setUserAsk = (id, patch) => {
-        const prev = userAsks[id] || {};
-        const nextEntry = { ...prev, ...patch, updatedAt: Date.now() };
-        if (patch.askAud !== undefined) {
-          const n = Number(patch.askAud);
-          nextEntry.askAud = Number.isFinite(n) && n > 0 ? n : null;
-        }
-        if (patch.askUsd !== undefined) {
-          const n = Number(patch.askUsd);
-          nextEntry.askUsd = Number.isFinite(n) && n > 0 ? n : null;
-        }
-        if (nextEntry.askAud == null && nextEntry.askUsd == null) {
-          const next = { ...userAsks };
-          delete next[id];
-          persistAsks(next);
-          return;
-        }
-        persistAsks({ ...userAsks, [id]: nextEntry });
-      };
-
-      const clearUserAsk = (id) => {
-        const next = { ...userAsks };
-        delete next[id];
-        persistAsks(next);
-      };
-
-      const clearAllUserAsks = () => {
-        persistAsks({});
-        setAskSaveMsg('Cleared your uploaded asks (catalogue defaults restored)');
-      };
-
-      const archiveAsks = async () => {
-        setAskSaving(true);
-        setAskSaveMsg(null);
+      const onOcrQuotes = useCallback((enriched) => {
         try {
-          const batchId = `manual-${Date.now()}`;
-          const quotes = FACE_VALUE_COINS.map((coin) => {
-            const u = userAsks[coin.id];
-            if (!u || (u.askAud == null && u.askUsd == null)) return null;
-            const w = Number(coin.weightOz) > 0 ? Number(coin.weightOz) : 1;
-            const spotAud = spotAudFor(coin.metal);
-            const meltAud = spotAud != null ? spotAud * w : null;
-            const fx = audUsd > 0 ? audUsd : null;
-            let valueAud = u.askAud != null ? Number(u.askAud) : null;
-            if (valueAud == null && u.askUsd != null && fx) valueAud = Number(u.askUsd) / fx;
-            const prem = valueAud != null && meltAud > 0 ? ((valueAud - meltAud) / meltAud) * 100 : null;
-            return {
-              id: `${coin.id}:${batchId}`,
-              recordedAt: new Date().toISOString(),
-              seller: u.dealer || coin.dealer || null,
-              coin: coin.name,
-              valueAud,
-              meltAud,
-              premiumPct: prem,
-              recommendation: 'manual',
-              scarcityScore: coin.scarcityScore,
-              metal: coin.metal,
-              weightOz: w,
-              sourceFile: 'manual-price-pad',
-              batchId,
-              reasoning: u.askUsd != null && u.askAud == null
-                ? `USD ask ${u.askUsd} ÷ FX ${fx}`
-                : 'Manual AUD ask',
-            };
-          }).filter(Boolean);
-          if (!quotes.length) {
-            setAskSaveMsg('Enter at least one Ask AUD or Ask USD first');
-            return;
-          }
-          const res = await fetch('/.netlify/functions/face-quotes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ quotes }),
-          });
-          const j = await res.json().catch(() => ({}));
-          if (!res.ok || j.ok === false) throw new Error(j.error || `Save failed (${res.status})`);
-          setAskSaveMsg(`Archived ${j.upserted || quotes.length} dealer ask${quotes.length === 1 ? '' : 's'} to history`);
-        } catch (e) {
-          setAskSaveMsg(e.message || 'Archive failed — local asks still saved on this device');
-        } finally {
-          setAskSaving(false);
+          const hist = appendFaceQuoteHistory(enriched || []);
+          setOcrAskByCoin(mapOcrHistoryToCatalogueAsks(hist));
+        } catch (_) {
+          setOcrAskByCoin(mapOcrHistoryToCatalogueAsks(enriched || []));
         }
-      };
+      }, []);
 
       const rows = useMemo(() => {
-        const fx = audUsd > 0 ? audUsd : null; // AUDUSD: USD → AUD = usd / fx
+        const fx = audUsd > 0 ? audUsd : null;
         return FACE_VALUE_COINS.map((coin) => {
           const w = Number(coin.weightOz) > 0 ? Number(coin.weightOz) : 1;
-          const spotAud = spotAudFor(coin.metal); // AUD / oz — THE number
-          const meltAud = spotAud != null ? spotAud * w : null; // melt = weight × Perth spot
-          const override = userAsks[coin.id];
+          const spotAud = spotAudFor(coin.metal);
+          const meltAud = spotAud != null ? spotAud * w : null;
+          const ocr = ocrAskByCoin[coin.id];
 
           let askAud = null;
           let askLabel = '—';
           let askBasis = null;
 
-          // Your uploaded / typed ask wins over catalogue defaults
-          if (override?.askAud != null && Number.isFinite(Number(override.askAud))) {
-            askAud = Number(override.askAud);
-            askLabel = 'Your AUD';
-            askBasis = 'user_aud';
-          } else if (override?.askUsd != null && Number.isFinite(Number(override.askUsd)) && fx) {
-            askAud = Number(override.askUsd) / fx;
-            askLabel = 'Your USD÷FX';
-            askBasis = 'user_usd';
+          // OCR screenshot ask wins when matched to this catalogue coin
+          if (ocr?.askAud != null && Number.isFinite(Number(ocr.askAud))) {
+            askAud = Number(ocr.askAud);
+            askLabel = 'OCR AUD';
+            askBasis = 'ocr';
           } else if (coin.askAud != null && Number.isFinite(Number(coin.askAud))) {
             askAud = Number(coin.askAud);
             askLabel = 'Firm AUD';
             askBasis = 'firm';
           } else if (coin.askUsd != null && Number.isFinite(Number(coin.askUsd)) && fx) {
             askAud = Number(coin.askUsd) / fx;
-            askLabel = `USD÷FX`;
+            askLabel = 'USD÷FX';
             askBasis = 'usd_fx';
           } else if (coin.askSource === 'perth') {
             if (spotAud != null) {
@@ -8225,7 +9359,6 @@
             ? ((askAud - meltAud) / meltAud) * 100
             : null;
 
-          // Sanity: melt must equal weight × spot (rounding ≤ 2 cents)
           const expectedMelt = spotAud != null ? spotAud * w : null;
           const meltOk = meltAud != null && expectedMelt != null
             && Math.abs(meltAud - expectedMelt) <= 0.02;
@@ -8235,7 +9368,7 @@
             ...coin,
             weightOz: w,
             theme: coin.theme || 'Other',
-            dealer: override?.dealer || coin.dealer || 'Dealer',
+            dealer: ocr?.seller || coin.dealer || 'Dealer',
             buyUrl: coin.buyUrl || null,
             spotAud,
             meltAud,
@@ -8246,14 +9379,12 @@
             meltOk,
             qty,
             positionAud: qty > 0 && askAud != null ? qty * askAud : 0,
-            userAskAud: override?.askAud ?? null,
-            userAskUsd: override?.askUsd ?? null,
-            hasUserAsk: !!(override && (override.askAud != null || override.askUsd != null)),
+            ocrMatched: !!ocr,
           };
           row.valueScore = faceCatalogueValueScore(row);
           return row;
         });
-      }, [holdings, userAsks, spotAudPt, spotAudAu, audUsd]);
+      }, [holdings, ocrAskByCoin, spotAudPt, spotAudAu, audUsd]);
 
       const meltBrokenCount = rows.filter((r) => r.spotAud != null && !r.meltOk).length;
 
@@ -8378,8 +9509,8 @@
               Face Value <span style={{color: C.gold}}>Scarcity</span>
             </div>
             <p style={{fontSize: 15, color: C.textSecondary, lineHeight: 1.55, maxWidth: 720, margin: 0}}>
-              Compare every coin to Perth Mint AUD/oz. Melt = weight × Perth spot.
-              USD asks convert at todays FX, then both sides sit in AUD$.
+              Upload dealer screenshots to OCR live asks. Melt = weight × Perth Mint AUD/oz.
+              Matched OCR prices land on the coin table below.
             </p>
             <div style={{
               marginTop: 14, fontSize: 13, color: C.textDark, fontVariantNumeric: 'tabular-nums',
@@ -8408,113 +9539,10 @@
                 </span>
               )}
               <span style={{color: C.text}}>{FACE_VALUE_COINS.length} coins</span>
-              {userAskCount > 0 && (
-                <span style={{color: '#047857', fontWeight: 700}}>{userAskCount} live ask{userAskCount === 1 ? '' : 's'} uploaded</span>
-              )}
-              <button
-                type="button"
-                onClick={() => setShowPricePad((v) => !v)}
-                style={{
-                  marginLeft: 'auto', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
-                  textTransform: 'uppercase', padding: '7px 12px', borderRadius: 6, cursor: 'pointer',
-                  border: `1px solid ${showPricePad ? C.gold : C.border}`,
-                  background: showPricePad ? 'rgba(184,134,11,0.12)' : C.surface,
-                  color: showPricePad ? C.gold : C.textDark,
-                }}
-              >
-                {showPricePad ? 'Hide price pad' : 'Upload / enter prices'}
-              </button>
             </div>
           </div>
 
-          {showPricePad && (
-            <div style={{
-              margin: '0 12px 12px', padding: '14px 16px', borderRadius: 8,
-              border: `1px solid ${C.border}`, background: C.surface,
-            }}>
-              <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10}}>
-                <div>
-                  <div style={{fontSize: 13, fontWeight: 700, color: C.textDark}}>Put dealer asks on the coins</div>
-                  <div style={{fontSize: 12, color: C.textSecondary, marginTop: 4, maxWidth: 640, lineHeight: 1.45}}>
-                    Type Ask AUD (preferred) or Ask USD — USD converts at today’s FX, then vs Perth melt.
-                    Saved on this device instantly. Optional archive stores a history snapshot.
-                  </div>
-                </div>
-                <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
-                  <button type="button" onClick={archiveAsks} disabled={askSaving}
-                    style={{
-                      fontSize: 11, fontWeight: 700, padding: '7px 12px', borderRadius: 6, cursor: askSaving ? 'wait' : 'pointer',
-                      border: `1px solid ${C.plat}`, background: 'rgba(107,127,150,0.12)', color: C.plat,
-                    }}>
-                    {askSaving ? 'Archiving…' : 'Archive to history'}
-                  </button>
-                  <button type="button" onClick={clearAllUserAsks}
-                    style={{
-                      fontSize: 11, fontWeight: 600, padding: '7px 12px', borderRadius: 6, cursor: 'pointer',
-                      border: `1px solid ${C.border}`, background: C.surface2, color: C.textDark,
-                    }}>
-                    Clear all
-                  </button>
-                </div>
-              </div>
-              {askSaveMsg && (
-                <div style={{fontSize: 12, color: C.textSecondary, marginBottom: 10}}>{askSaveMsg}</div>
-              )}
-              <div style={{display: 'grid', gap: 8, maxHeight: 320, overflow: 'auto'}}>
-                {rows.map((r) => (
-                  <div key={r.id} style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(140px, 1.4fr) 110px 110px auto',
-                    gap: 8, alignItems: 'center', padding: '8px 0',
-                    borderTop: `1px solid ${C.borderLight}`,
-                  }}>
-                    <div>
-                      <div style={{fontSize: 12, fontWeight: 600, color: C.textDark}}>{r.name}</div>
-                      <div style={{fontSize: 10, color: C.text}}>
-                        melt {r.meltAud != null ? fmtAud(r.meltAud) : '—'} · {r.dealer}
-                      </div>
-                    </div>
-                    <label style={{display: 'grid', gap: 2}}>
-                      <span style={{fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>Ask AUD</span>
-                      <input
-                        type="number" min={0} step={1}
-                        value={r.userAskAud ?? ''}
-                        placeholder={r.askBasis === 'user_aud' ? '' : 'e.g. 2650'}
-                        onChange={(e) => setUserAsk(r.id, { askAud: e.target.value })}
-                        style={{
-                          width: '100%', padding: '5px 7px', borderRadius: 5, fontSize: 12,
-                          border: `1px solid ${r.userAskAud != null ? '#047857' : C.border}`,
-                          fontVariantNumeric: 'tabular-nums',
-                        }}
-                      />
-                    </label>
-                    <label style={{display: 'grid', gap: 2}}>
-                      <span style={{fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>Ask USD</span>
-                      <input
-                        type="number" min={0} step={1}
-                        value={r.userAskUsd ?? ''}
-                        placeholder="optional"
-                        onChange={(e) => setUserAsk(r.id, { askUsd: e.target.value })}
-                        style={{
-                          width: '100%', padding: '5px 7px', borderRadius: 5, fontSize: 12,
-                          border: `1px solid ${r.userAskUsd != null ? '#047857' : C.border}`,
-                          fontVariantNumeric: 'tabular-nums',
-                        }}
-                      />
-                    </label>
-                    <button type="button" onClick={() => clearUserAsk(r.id)} disabled={!r.hasUserAsk}
-                      style={{
-                        fontSize: 10, fontWeight: 600, padding: '6px 8px', borderRadius: 5,
-                        border: `1px solid ${C.border}`, background: C.surface, color: C.text,
-                        cursor: r.hasUserAsk ? 'pointer' : 'default', opacity: r.hasUserAsk ? 1 : 0.4,
-                      }}>
-                      Reset
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <FaceScreenshotAnalyzer live={live} audUsd={audUsd} perth={perth} onQuotes={onOcrQuotes} />
 
           <div style={{padding: '14px 18px 6px'}}>
             <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.plat, marginBottom: 8}}>
@@ -8669,27 +9697,13 @@
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
                       <div style={{fontWeight: 600}}>{r.askAud != null ? fmtAud(r.askAud) : '—'}</div>
                       <div style={{fontSize: 10, color: C.text}}>
-                        {r.askBasis === 'user_aud' ? `Your AUD · ${r.dealer}`
-                          : r.askBasis === 'user_usd' ? `Your USD÷FX · ${r.dealer}`
+                        {r.askBasis === 'ocr' ? `OCR · ${r.dealer}`
                           : r.askBasis === 'usd_fx' ? `USD ask÷FX · ${r.dealer}`
                           : r.askBasis === 'firm' ? `Firm AUD · ${r.dealer}`
                           : r.askBasis === 'perth' ? 'Perth Mint × wt'
                           : r.askBasis === 'indicative' ? `${r.askLabel} · ${r.dealer}`
                           : r.askLabel}
                       </div>
-                      {showPricePad && (
-                        <input
-                          type="number" min={0} step={1}
-                          value={r.userAskAud ?? ''}
-                          placeholder="Ask AUD"
-                          onChange={(e) => setUserAsk(r.id, { askAud: e.target.value })}
-                          style={{
-                            marginTop: 4, width: 88, padding: '3px 5px', borderRadius: 4, fontSize: 11,
-                            border: `1px solid ${r.hasUserAsk ? '#047857' : C.border}`,
-                            fontVariantNumeric: 'tabular-nums',
-                          }}
-                        />
-                      )}
                     </td>
                     <td style={{
                       padding: '10px 12px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
@@ -8768,8 +9782,7 @@
           )}
 
           <div style={{padding: '4px 18px 20px', fontSize: 11, color: C.text, lineHeight: 1.55, maxWidth: 760}}>
-            Spot = Perth Mint live AUD/oz. Melt = weight × Spot. Use <strong>Upload / enter prices</strong> to put live dealer asks on coins
-            (OCR screenshot upload was removed — type AUD or USD asks instead). Your asks override catalogue defaults on this device.
+            Spot = Perth Mint live AUD/oz. Melt = weight × Spot. Upload dealer screenshots above to OCR live asks onto matched coins.
             Not advice.
           </div>
         </div>
