@@ -1363,7 +1363,8 @@
         weightOz: 1,
         sovereign: true,
         thematic: true,
-        aliases: ['tudor', 'royal dragon', 'tudor beast'],
+        theme: 'Dragon',
+        aliases: ['tudor', 'royal dragon', 'tudor beast', 'dragon'],
       },
       'Chinese Panda 30g Gold': {
         rarity: 'medium',
@@ -1372,7 +1373,18 @@
         weightOz: 30 / 31.1034768,
         sovereign: true,
         thematic: true,
-        aliases: ['panda', 'chinese panda', '30g gold'],
+        theme: 'Panda',
+        aliases: ['panda', 'chinese panda', '30g gold', '金熊猫'],
+      },
+      'Chinese Panda Platinum': {
+        rarity: 'high',
+        historicalPremium: [18, 45],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        theme: 'Panda',
+        aliases: ['platinum panda', 'panda platinum'],
       },
       'Perth Lunar Platinum 1oz': {
         rarity: 'medium',
@@ -1381,7 +1393,8 @@
         weightOz: 1,
         sovereign: true,
         thematic: true,
-        aliases: ['lunar', 'lunar series', 'year of the'],
+        theme: 'Lunar',
+        aliases: ['lunar', 'lunar series', 'year of the', 'snake', 'dragon year', 'ox', 'rabbit', 'tiger'],
       },
       'Maple Leaf Platinum': {
         rarity: 'low',
@@ -1390,6 +1403,7 @@
         weightOz: 1,
         sovereign: true,
         thematic: false,
+        theme: 'Maple',
         aliases: ['maple', 'maple leaf'],
       },
       'Britannia Platinum': {
@@ -1399,11 +1413,95 @@
         weightOz: 1,
         sovereign: true,
         thematic: false,
+        theme: 'Britannia',
         aliases: ['britannia'],
+      },
+      'Nugget / Kangaroo Platinum': {
+        rarity: 'low',
+        historicalPremium: [4, 10],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: false,
+        theme: 'Nugget',
+        aliases: ['nugget', 'kangaroo', 'random date'],
+      },
+      'Koala Platinum': {
+        rarity: 'medium',
+        historicalPremium: [10, 24],
+        metal: 'platinum',
+        weightOz: 1,
+        sovereign: true,
+        thematic: true,
+        theme: 'Koala',
+        aliases: ['koala'],
       },
     };
 
+    const FACE_THEME_COLORS = {
+      Dragon: '#B45309',
+      Panda: '#0F766E',
+      Lunar: '#7C3AED',
+      Maple: '#B91C1C',
+      Britannia: '#1D4ED8',
+      Nugget: '#B8860B',
+      Koala: '#6B7F96',
+      Eagle: '#047857',
+      Outback: '#92400E',
+      Other: '#64748B',
+    };
+
     const RARITY_SCORE = { low: 28, medium: 58, high: 82, ultra: 95 };
+
+    function classifyFaceTheme(text, rarityHit) {
+      if (rarityHit?.theme) return rarityHit.theme;
+      const t = String(text || '').toLowerCase();
+      if (/dragon|tudor/.test(t)) return 'Dragon';
+      if (/panda/.test(t)) return 'Panda';
+      if (/lunar|year of the|snake|rabbit|ox|tiger|horse|goat|monkey|rooster|dog|pig|rat/.test(t)) return 'Lunar';
+      if (/maple/.test(t)) return 'Maple';
+      if (/britannia/.test(t)) return 'Britannia';
+      if (/koala/.test(t)) return 'Koala';
+      if (/eagle|american\s*eagle/.test(t)) return 'Eagle';
+      if (/outback/.test(t)) return 'Outback';
+      if (/nugget|kangaroo|platypus/.test(t)) return 'Nugget';
+      return 'Other';
+    }
+
+    function isOcrNavGarbage(text) {
+      const t = String(text || '').toLowerCase();
+      if (!t || t.length < 3) return true;
+      if (/buy\s+gold|buy\s+silver|buy\s+platinum|refresh|add to (cart|bag)|sort by|filter|in stock/.test(t)) return true;
+      if (/(ozt)\s*[»>]/.test(t)) return true;
+      if (/^[\W\d\s]{0,8}$/.test(t)) return true;
+      const letters = (t.match(/[a-z]/g) || []).length;
+      return letters < 4;
+    }
+
+    function displayFaceCoinName(row) {
+      const raw = String(row?.coin || row?.name || '').trim();
+      if (row?.rarityKey) return row.rarityKey;
+      if (row?.theme && row.theme !== 'Other') {
+        const year = row.year || (raw.match(/\b(20\d{2})\b/) || [])[1];
+        const metal = row.metal === 'gold' ? 'Gold' : 'Platinum';
+        const wt = row.weightOz >= 0.99 ? '1oz' : (row.weightOz != null ? `${Number(row.weightOz).toFixed(2)}oz` : '');
+        return [year, row.theme, metal, wt].filter(Boolean).join(' ');
+      }
+      const cleaned = cleanOcrCoinName(raw);
+      if (!cleaned || isOcrNavGarbage(cleaned) || cleaned.length > 64) {
+        const price = row?.valueAud ?? row?.priceAud;
+        return price != null ? `Listing · $${Math.round(Number(price)).toLocaleString()}` : 'Unparsed listing';
+      }
+      return cleaned.length > 48 ? `${cleaned.slice(0, 46)}…` : cleaned;
+    }
+
+    function faceValueScore(row) {
+      const prem = row.premiumPct;
+      const scar = row.scarcityScore ?? 35;
+      if (prem == null) return scar;
+      // Higher scarcity + lower premium = better value for collectors
+      return Math.round(scar - Math.min(80, Math.max(0, prem)) * 0.55);
+    }
 
     function loadFaceRarityDb() {
       try {
@@ -1512,8 +1610,13 @@
           sourceFile: r.source_file,
           batchId: r.batch_id,
           reasoning: r.reasoning,
+          theme: classifyFaceTheme(r.coin, null),
           histBand: '—',
           rarity: '—',
+          valueScore: faceValueScore({
+            scarcityScore: r.scarcity_score,
+            premiumPct: r.premium_pct != null ? Number(r.premium_pct) : null,
+          }),
         }));
       } catch (_) {
         return [];
@@ -1642,10 +1745,12 @@
 
     function cleanOcrCoinName(name) {
       let s = String(name || '').replace(/\s+/g, ' ').trim();
-      s = s.replace(/\b(\w+)(?:\s+\1){2,}\b/gi, '$1');
+      s = s.replace(/\b(\w+)(?:\s+\1){1,}\b/gi, '$1');
       s = s.replace(/^[^a-z0-9]*(?:u\.\.?|coins?\s*)+/i, '');
+      s = s.replace(/\b(?:buy|sell|cart|refresh|filter|sort|qty|quantity|ozt|oz\s*t)\b/gi, ' ');
       s = s.replace(/(?:A\$|AU\$|AUD\s*\$?|\$)\s*[\d,]+(?:\.\d{1,2})?/gi, '').trim();
-      if (s.length > 80) s = `${s.slice(0, 78)}…`;
+      s = s.replace(/[»›<>^~|]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (s.length > 64) s = `${s.slice(0, 62)}…`;
       return s;
     }
 
@@ -1683,7 +1788,9 @@
           if (stripped.length >= 3) nameParts.push(stripped);
         }
         let name = cleanOcrCoinName(nameParts.filter(Boolean).slice(-2).join(' · '));
-        if (!name || name.length < 3) name = `Listing @ ${p.raw.trim()}`;
+        if (!name || name.length < 3 || isOcrNavGarbage(name)) {
+          name = `Listing @ ${p.raw.trim()}`;
+        }
         const key = `${p.index}|${Math.round(p.priceAud * 100)}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -1696,6 +1803,7 @@
       }
       return items
         .filter((it) => it.priceAud >= 200)
+        .filter((it) => !isOcrNavGarbage(it.name) || /^Listing @/.test(it.name))
         .slice(0, 200);
     }
 
@@ -1748,35 +1856,94 @@
         scarcityScore,
         rarity: rarityHit?.rarity || 'unknown',
         rarityKey: rarityHit?.key || null,
+        theme: classifyFaceTheme(`${item.name} ${item.sourceLine || ''}`, rarityHit),
         sovereign: !!rarityHit?.sovereign,
         thematic: !!rarityHit?.thematic,
         histBand: `${histLo}–${histHi}%`,
         recommendation,
         reasoning,
+        valueScore: null,
       };
     }
 
-    function buildFacePortfolioSuggestion(analyzed) {
-      if (!analyzed?.length) return 'Upload a dealer screenshot to get a portfolio read.';
-      const buys = analyzed.filter((a) => a.recommendation === 'Strong Buy' || a.recommendation === 'Buy');
-      const avoids = analyzed.filter((a) => a.recommendation === 'Avoid');
-      const avgPrem = analyzed.filter((a) => a.premiumPct != null);
-      const avg = avgPrem.length
-        ? avgPrem.reduce((s, a) => s + a.premiumPct, 0) / avgPrem.length
-        : null;
-      const parts = [];
-      parts.push(`${analyzed.length} listing${analyzed.length === 1 ? '' : 's'} read from the screenshot.`);
-      if (avg != null) parts.push(`Average premium ~${avg.toFixed(1)}% over melt.`);
-      if (buys.length) {
-        parts.push(`Lean into: ${buys.map((b) => b.name.slice(0, 42)).join('; ')}.`);
-      } else {
-        parts.push('No clear buys at these asks — scarcity is fine, prices are stretched.');
+    function finalizeFaceListingScores(rows) {
+      return (rows || []).map((r) => ({ ...r, valueScore: faceValueScore(r) }));
+    }
+
+    function buildFaceGlanceStats(rows) {
+      const list = rows || [];
+      const buys = list.filter((a) => a.recommendation === 'Strong Buy' || a.recommendation === 'Buy');
+      const avoids = list.filter((a) => a.recommendation === 'Avoid');
+      const prem = list.filter((a) => a.premiumPct != null);
+      const avg = prem.length ? prem.reduce((s, a) => s + a.premiumPct, 0) / prem.length : null;
+      const ranked = [...list].sort((a, b) => (b.valueScore ?? -999) - (a.valueScore ?? -999));
+      return {
+        count: list.length,
+        buys: buys.length,
+        avoids: avoids.length,
+        avgPrem: avg,
+        best: ranked.slice(0, 5),
+        worst: [...ranked].reverse().slice(0, 3),
+      };
+    }
+
+    function buildFaceThemeLeaderboard(rows) {
+      const byTheme = new Map();
+      for (const r of rows || []) {
+        const theme = r.theme || 'Other';
+        if (!byTheme.has(theme)) {
+          byTheme.set(theme, { theme, count: 0, premSum: 0, premN: 0, scarSum: 0, best: null });
+        }
+        const t = byTheme.get(theme);
+        t.count += 1;
+        if (r.premiumPct != null) { t.premSum += r.premiumPct; t.premN += 1; }
+        t.scarSum += r.scarcityScore || 0;
+        if (!t.best || (r.valueScore ?? -999) > (t.best.valueScore ?? -999)) t.best = r;
       }
-      if (avoids.length) {
-        parts.push(`Skip / wait: ${avoids.map((b) => b.name.slice(0, 36)).join('; ')}.`);
+      return [...byTheme.values()]
+        .map((t) => ({
+          ...t,
+          avgPrem: t.premN ? t.premSum / t.premN : null,
+          avgScar: t.count ? t.scarSum / t.count : 0,
+          valueScore: t.best?.valueScore ?? faceValueScore({
+            scarcityScore: t.count ? t.scarSum / t.count : 35,
+            premiumPct: t.premN ? t.premSum / t.premN : 40,
+          }),
+        }))
+        .sort((a, b) => b.valueScore - a.valueScore);
+    }
+
+    /** Premium % history by theme for chart (day buckets). */
+    function buildFaceThemePremiumHistory(rows) {
+      const byDayTheme = new Map();
+      for (const r of rows || []) {
+        if (r.premiumPct == null) continue;
+        const theme = r.theme || 'Other';
+        const d = new Date(r.recordedAt || 0);
+        if (Number.isNaN(d.getTime())) continue;
+        const day = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        const key = `${day}|${theme}`;
+        if (!byDayTheme.has(key)) byDayTheme.set(key, { day, theme, sum: 0, n: 0 });
+        const b = byDayTheme.get(key);
+        b.sum += r.premiumPct;
+        b.n += 1;
       }
-      parts.push('Not advice — OCR can misread; verify names and prices on the dealer page.');
-      return parts.join(' ');
+      const themes = [...new Set([...byDayTheme.values()].map((x) => x.theme))];
+      const days = [...new Set([...byDayTheme.values()].map((x) => x.day))].sort((a, b) => a - b);
+      return {
+        themes: themes.slice(0, 6),
+        rows: days.map((day) => {
+          const out = {
+            ts: day,
+            label: new Date(day).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+          };
+          for (const theme of themes) {
+            const hit = byDayTheme.get(`${day}|${theme}`);
+            if (hit) out[theme] = Math.round((hit.sum / hit.n) * 10) / 10;
+          }
+          return out;
+        }),
+      };
     }
 
     function FaceScreenshotAnalyzer({ live, audUsd }) {
@@ -1796,19 +1963,46 @@
       const [editLo, setEditLo] = useState('8');
       const [editHi, setEditHi] = useState('12');
 
+      const [sortKey, setSortKey] = useState('value');
+      const [themeFilter, setThemeFilter] = useState('All');
+
       const auSpot = live?.gold?.price;
       const ptSpot = live?.platinum?.price;
 
+      const normalizedHistory = useMemo(() => finalizeFaceListingScores(
+        (history || []).map((r) => ({
+          ...r,
+          theme: r.theme || classifyFaceTheme(`${r.coin || r.name || ''} ${r.sourceFile || ''}`, null),
+        }))
+      ), [history]);
+
       const visibleRows = useMemo(() => {
         const now = Date.now();
-        return history.filter((r) => {
+        return normalizedHistory.filter((r) => {
           if (clearedIds.has(r.id)) return false;
           if (viewMode === 'all') return true;
           return faceQuoteWithinActiveWindow(r, now);
         });
-      }, [history, clearedIds, viewMode]);
+      }, [normalizedHistory, clearedIds, viewMode]);
 
-      const portfolioNote = useMemo(() => buildFacePortfolioSuggestion(visibleRows), [visibleRows]);
+      const filteredRows = useMemo(() => {
+        let rows = visibleRows;
+        if (themeFilter !== 'All') rows = rows.filter((r) => r.theme === themeFilter);
+        const sorted = [...rows];
+        if (sortKey === 'value') sorted.sort((a, b) => (b.valueScore ?? -999) - (a.valueScore ?? -999));
+        else if (sortKey === 'premium') sorted.sort((a, b) => (a.premiumPct ?? 999) - (b.premiumPct ?? 999));
+        else if (sortKey === 'scarcity') sorted.sort((a, b) => (b.scarcityScore ?? 0) - (a.scarcityScore ?? 0));
+        else sorted.sort((a, b) => new Date(b.recordedAt || 0) - new Date(a.recordedAt || 0));
+        return sorted;
+      }, [visibleRows, themeFilter, sortKey]);
+
+      const glance = useMemo(() => buildFaceGlanceStats(visibleRows), [visibleRows]);
+      const themes = useMemo(() => buildFaceThemeLeaderboard(visibleRows), [visibleRows]);
+      const premHistory = useMemo(() => buildFaceThemePremiumHistory(normalizedHistory), [normalizedHistory]);
+      const themeOptions = useMemo(
+        () => ['All', ...[...new Set(visibleRows.map((r) => r.theme || 'Other'))].sort()],
+        [visibleRows]
+      );
 
       const ingestScored = useCallback(async (scored, meta) => {
         const recordedAt = new Date().toISOString();
@@ -1839,7 +2033,9 @@
         for (const chunk of chunks) {
           parsed.push(...parseDealerOcrText(chunk.text));
         }
-        const scored = parsed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, db));
+        const scored = finalizeFaceListingScores(
+          parsed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, db))
+        );
         const seller = inferDealerSeller(text, fileName || chunks[0]?.fileName);
         const { enriched, remote } = await ingestScored(scored, { seller, sourceFile: fileName || label });
         setStatus(
@@ -1959,79 +2155,59 @@
       };
 
       return (
-        <div style={{padding: '16px 18px 8px'}}>
+        <div style={{padding: '12px 18px 8px'}}>
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
             style={{
-              border: `2px dashed ${dragOver ? C.gold : C.border}`,
-              borderRadius: 10,
-              background: dragOver ? 'rgba(184,134,11,0.08)' : 'rgba(255,255,255,0.65)',
-              padding: '22px 18px',
-              textAlign: 'center',
+              border: `1px dashed ${dragOver ? C.gold : C.border}`,
+              borderRadius: 8,
+              background: dragOver ? 'rgba(184,134,11,0.06)' : 'transparent',
+              padding: '12px 14px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 10,
+              alignItems: 'center',
+              justifyContent: 'space-between',
             }}
           >
-            <div style={{
-              fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
-              color: C.gold, marginBottom: 8,
-            }}>
-              Dealer screenshots → live asks → historical DB
+            <div style={{flex: '1 1 240px'}}>
+              <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.gold}}>
+                Dealer asks → theme ranking → history
+              </div>
+              <div style={{fontSize: 12, color: C.textSecondary, marginTop: 2, lineHeight: 1.4}}>
+                Dragons vs pandas vs lunar — see which face coins hold premium and which are stretched.
+              </div>
             </div>
-            <p style={{fontSize: 13, color: C.textSecondary, lineHeight: 1.5, maxWidth: 560, margin: '0 auto 14px'}}>
-              Upload one or many screenshots. Every coin ask is scored and stored with time · seller · value · buy/avoid.
-              Active view is last {FACE_ACTIVE_DAYS} days; full history is always recallable.
-            </p>
             <button
               type="button"
               disabled={busy}
               onClick={() => fileRef.current?.click()}
               style={{
-                fontSize: 13, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
-                padding: '12px 22px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer',
+                fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                padding: '10px 16px', borderRadius: 7, cursor: busy ? 'wait' : 'pointer',
                 border: `1px solid ${C.gold}`,
                 background: busy ? 'rgba(184,134,11,0.2)' : C.gold,
                 color: busy ? C.textDark : '#fff',
-                boxShadow: '0 6px 18px rgba(184,134,11,0.25)',
               }}
             >
-              {busy ? 'Analysing…' : 'Upload screenshots (multi)'}
+              {busy ? 'Analysing…' : 'Upload screenshots'}
             </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{display: 'none'}}
-              onChange={(e) => processFiles(e.target.files)}
-            />
-            {status && <div style={{fontSize: 12, color: C.textDark, marginTop: 12}}>{status}</div>}
+            <input ref={fileRef} type="file" accept="image/*" multiple style={{display: 'none'}}
+              onChange={(e) => processFiles(e.target.files)} />
           </div>
+          {status && <div style={{fontSize: 12, color: C.textDark, marginTop: 8}}>{status}</div>}
 
           {previews.length > 0 && (
-            <div style={{marginTop: 12, display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4}}>
+            <div style={{marginTop: 8, display: 'flex', gap: 6, overflowX: 'auto'}}>
               {previews.map((url) => (
-                <img key={url} src={url} alt="Upload preview"
-                  style={{height: 88, borderRadius: 6, border: `1px solid ${C.border}`, objectFit: 'cover'}} />
+                <img key={url} src={url} alt="" style={{height: 56, borderRadius: 5, border: `1px solid ${C.border}`, objectFit: 'cover'}} />
               ))}
             </div>
           )}
 
-          {rawOcr && (
-            <details style={{fontSize: 11, color: C.text, marginTop: 10}}>
-              <summary style={{cursor: 'pointer', fontWeight: 600, color: C.textDark}}>Raw OCR text (edit & re-score)</summary>
-              <textarea value={rawOcr} onChange={(e) => setRawOcr(e.target.value)} rows={6}
-                style={{width: '100%', marginTop: 8, padding: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace',
-                  border: `1px solid ${C.border}`, borderRadius: 6, resize: 'vertical'}} />
-              <button type="button" onClick={() => runAnalysisOnText(rawOcr, 'Pasted text', 'pasted-text')}
-                style={{marginTop: 8, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
-                  border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', color: C.textDark}}>
-                Re-score from text
-              </button>
-            </details>
-          )}
-
-          <div style={{marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
+          <div style={{marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
             <button type="button" onClick={() => setViewMode('active')}
               style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
                 border: `1px solid ${viewMode === 'active' ? C.plat : C.border}`,
@@ -2044,72 +2220,181 @@
                 border: `1px solid ${viewMode === 'all' ? C.gold : C.border}`,
                 background: viewMode === 'all' ? 'rgba(184,134,11,0.12)' : C.surface,
                 color: viewMode === 'all' ? C.gold : C.textDark}}>
-              Recall all history ({history.length})
+              Full history ({normalizedHistory.length})
             </button>
             <button type="button" onClick={clearActiveView}
               style={{fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
                 border: `1px solid ${C.border}`, background: C.surface, color: C.textDark}}>
-              Clear active view
+              Clear active
             </button>
-            <span style={{fontSize: 11, color: C.text}}>
-              Auto-hides from active after {FACE_ACTIVE_DAYS} days · kept in history DB forever
-            </span>
+            {['value', 'premium', 'scarcity', 'time'].map((k) => (
+              <button key={k} type="button" onClick={() => setSortKey(k)}
+                style={{fontSize: 10, fontWeight: 600, padding: '5px 9px', borderRadius: 5, cursor: 'pointer',
+                  border: `1px solid ${sortKey === k ? C.plat : C.border}`,
+                  background: sortKey === k ? 'rgba(107,127,150,0.1)' : 'transparent',
+                  color: C.textDark, textTransform: 'capitalize'}}>
+                Sort · {k}
+              </button>
+            ))}
           </div>
 
           {visibleRows.length > 0 && (
             <div style={{marginTop: 12}}>
-              <div style={{padding: '12px 14px', marginBottom: 12, borderRadius: 8,
-                background: 'rgba(107,127,150,0.08)', border: `1px solid ${C.borderLight}`,
-                fontSize: 13, color: C.textDark, lineHeight: 1.55}}>
-                <strong style={{color: C.plat}}>Portfolio read:</strong> {portfolioNote}
+              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8, marginBottom: 12}}>
+                {[
+                  { label: 'Listings', value: glance.count, sub: viewMode === 'active' ? 'active window' : 'all history' },
+                  { label: 'Avg premium', value: glance.avgPrem != null ? `${glance.avgPrem.toFixed(0)}%` : '—', sub: 'over melt' },
+                  { label: 'Lean in', value: glance.buys, sub: 'buy signals', color: '#047857' },
+                  { label: 'Skip', value: glance.avoids, sub: 'stretched asks', color: '#B91C1C' },
+                ].map((c) => (
+                  <div key={c.label} style={{padding: '10px 12px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.borderLight}`}}>
+                    <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>{c.label}</div>
+                    <div style={{fontSize: 22, fontWeight: 700, color: c.color || C.textDark, fontVariantNumeric: 'tabular-nums', marginTop: 2}}>{c.value}</div>
+                    <div style={{fontSize: 10, color: C.text}}>{c.sub}</div>
+                  </div>
+                ))}
               </div>
-              <div style={{maxHeight: 560, overflow: 'auto', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
-                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 880}}>
+
+              <div style={{marginBottom: 14}}>
+                <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.plat, marginBottom: 8}}>
+                  Theme scoreboard · who is doing best
+                </div>
+                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8}}>
+                  {themes.slice(0, 8).map((t, i) => (
+                    <button
+                      key={t.theme}
+                      type="button"
+                      onClick={() => setThemeFilter(t.theme === themeFilter ? 'All' : t.theme)}
+                      style={{
+                        textAlign: 'left', padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                        border: `1px solid ${themeFilter === t.theme ? (FACE_THEME_COLORS[t.theme] || C.plat) : C.borderLight}`,
+                        background: themeFilter === t.theme ? 'rgba(184,134,11,0.06)' : C.surface,
+                      }}
+                    >
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6}}>
+                        <span style={{fontSize: 13, fontWeight: 700, color: FACE_THEME_COLORS[t.theme] || C.textDark}}>
+                          {i + 1}. {t.theme}
+                        </span>
+                        <span style={{fontSize: 11, color: C.text}}>{t.count} asks</span>
+                      </div>
+                      <div style={{fontSize: 18, fontWeight: 700, color: C.textDark, marginTop: 4, fontVariantNumeric: 'tabular-nums'}}>
+                        {t.avgPrem != null ? `+${t.avgPrem.toFixed(0)}%` : '—'}
+                      </div>
+                      <div style={{fontSize: 10, color: C.text, marginTop: 2}}>
+                        avg premium · scarcity {Math.round(t.avgScar)} · value {t.valueScore}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div style={{fontSize: 11, color: C.text, marginTop: 8, lineHeight: 1.45}}>
+                  Collectors split: dragons / lunars chase theme scarcity; pandas chase Chinese mint demand. Lower premium + higher scarcity = better value score.
+                </div>
+              </div>
+
+              {premHistory.rows.length > 1 && premHistory.themes.length > 0 && (
+                <div style={{marginBottom: 14, padding: '8px 4px 4px', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
+                  <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.plat, padding: '4px 10px 8px'}}>
+                    Premium history by theme
+                  </div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <LineChart data={premHistory.rows} margin={{top: 8, right: 16, left: 4, bottom: 4}}>
+                      <CartesianGrid strokeDasharray="3 6" stroke={C.grid} vertical={false} />
+                      <XAxis dataKey="label" tick={{fontSize: 10, fill: C.axis}} minTickGap={28} axisLine={{stroke: C.border}} tickLine={false} />
+                      <YAxis tick={{fontSize: 10, fill: C.axis}} width={40} axisLine={{stroke: C.border}} tickLine={false}
+                        tickFormatter={(v) => `${v}%`} />
+                      <Tooltip
+                        contentStyle={{background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12}}
+                        formatter={(v, name) => [`${Number(v).toFixed(1)}%`, name]}
+                      />
+                      <Legend wrapperStyle={{fontSize: 11}} />
+                      {premHistory.themes.map((theme) => (
+                        <Line key={theme} type="monotone" dataKey={theme} name={theme}
+                          stroke={FACE_THEME_COLORS[theme] || C.plat} strokeWidth={2} dot={false} connectNulls />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {glance.best.length > 0 && (
+                <div style={{marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: 'rgba(4,120,87,0.06)', border: '1px solid rgba(4,120,87,0.15)'}}>
+                  <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#047857', marginBottom: 6}}>
+                    Best value right now
+                  </div>
+                  <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
+                    {glance.best.map((b) => (
+                      <div key={b.id} style={{fontSize: 12, color: C.textDark}}>
+                        <strong style={{color: FACE_THEME_COLORS[b.theme] || C.plat}}>{b.theme}</strong>
+                        {' · '}{displayFaceCoinName(b)}
+                        {' · '}
+                        <span style={{fontVariantNumeric: 'tabular-nums'}}>
+                          {b.premiumPct != null ? `+${Number(b.premiumPct).toFixed(0)}%` : '—'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, alignItems: 'center'}}>
+                <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text}}>Theme</span>
+                {themeOptions.map((t) => (
+                  <button key={t} type="button" onClick={() => setThemeFilter(t)}
+                    style={{fontSize: 11, fontWeight: 600, padding: '4px 9px', borderRadius: 5, cursor: 'pointer',
+                      border: `1px solid ${themeFilter === t ? C.gold : C.border}`,
+                      background: themeFilter === t ? 'rgba(184,134,11,0.1)' : C.surface,
+                      color: themeFilter === t ? C.gold : C.textDark}}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{maxHeight: 480, overflow: 'auto', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
+                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 760}}>
                   <thead style={{position: 'sticky', top: 0, zIndex: 1, background: C.surface2}}>
-                    <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
-                      <th style={{padding: '9px 10px'}}>Time</th>
-                      <th style={{padding: '9px 10px'}}>Seller</th>
-                      <th style={{padding: '9px 10px'}}>Coin</th>
-                      <th style={{padding: '9px 10px'}}>Value</th>
-                      <th style={{padding: '9px 10px'}}>Premium %</th>
-                      <th style={{padding: '9px 10px'}}>Scarcity</th>
-                      <th style={{padding: '9px 10px'}}>Buy / Avoid</th>
-                      <th style={{padding: '9px 10px'}}>Reasoning</th>
+                    <tr style={{color: C.text, textAlign: 'left'}}>
+                      <th style={{padding: '8px 10px'}}>Theme</th>
+                      <th style={{padding: '8px 10px'}}>Coin</th>
+                      <th style={{padding: '8px 10px'}}>Ask</th>
+                      <th style={{padding: '8px 10px'}}>Prem %</th>
+                      <th style={{padding: '8px 10px'}}>Value</th>
+                      <th style={{padding: '8px 10px'}}>Call</th>
+                      <th style={{padding: '8px 10px'}}>When</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleRows.map((a) => (
-                      <tr key={a.id} style={{borderTop: `1px solid ${C.borderLight}`, verticalAlign: 'top'}}>
-                        <td style={{padding: '9px 10px', whiteSpace: 'nowrap', color: C.text, fontVariantNumeric: 'tabular-nums'}}>
-                          {fmtWhen(a.recordedAt)}
+                    {filteredRows.map((a) => (
+                      <tr key={a.id} style={{borderTop: `1px solid ${C.borderLight}`}}>
+                        <td style={{padding: '8px 10px'}}>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                            color: FACE_THEME_COLORS[a.theme] || C.text,
+                          }}>{a.theme || 'Other'}</span>
                         </td>
-                        <td style={{padding: '9px 10px', fontWeight: 600, color: C.textDark}}>{a.seller || 'Dealer'}</td>
-                        <td style={{padding: '9px 10px', maxWidth: 220}}>
-                          <div style={{fontWeight: 600, color: C.textDark, wordBreak: 'break-word', lineHeight: 1.35}}
-                            title={a.coin || a.name}>
-                            {(a.coin || a.name || '').length > 72 ? `${(a.coin || a.name).slice(0, 70)}…` : (a.coin || a.name)}
+                        <td style={{padding: '8px 10px', maxWidth: 220}}>
+                          <div style={{fontWeight: 600, color: C.textDark, lineHeight: 1.3}} title={a.coin || a.name}>
+                            {displayFaceCoinName(a)}
                           </div>
-                          <div style={{fontSize: 10, color: C.text, marginTop: 2}}>
-                            {a.metal || '—'} · {a.weightOz != null ? (a.weightOz >= 0.99 ? `${Number(a.weightOz).toFixed(0)} oz` : `${Number(a.weightOz).toFixed(3)} oz`) : '—'}
-                            {a.sourceFile ? ` · ${a.sourceFile}` : ''}
+                          <div style={{fontSize: 10, color: C.text, marginTop: 1}}>
+                            {a.seller || 'Dealer'} · {a.metal || '—'}
+                            {a.weightOz != null ? ` · ${a.weightOz >= 0.99 ? '1oz' : `${Number(a.weightOz).toFixed(2)}oz`}` : ''}
                           </div>
                         </td>
-                        <td style={{padding: '9px 10px', fontVariantNumeric: 'tabular-nums', fontWeight: 600}}>
+                        <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums', fontWeight: 600}}>
                           {(a.valueAud != null || a.priceAud != null) ? fmtAud(a.valueAud ?? a.priceAud) : '—'}
-                          <div style={{fontSize: 10, color: C.text, fontWeight: 400}}>melt {a.meltAud != null ? fmtAud(a.meltAud) : '—'}</div>
                         </td>
-                        <td style={{padding: '9px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                        <td style={{padding: '8px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
                           color: a.premiumPct == null ? C.text : a.premiumPct > 25 ? '#B45309' : '#047857'}}>
-                          {a.premiumPct != null ? `${a.premiumPct >= 0 ? '+' : ''}${Number(a.premiumPct).toFixed(1)}%` : '—'}
+                          {a.premiumPct != null ? `${a.premiumPct >= 0 ? '+' : ''}${Number(a.premiumPct).toFixed(0)}%` : '—'}
                         </td>
-                        <td style={{padding: '9px 10px', fontVariantNumeric: 'tabular-nums'}}>
-                          <strong>{a.scarcityScore ?? '—'}</strong>
+                        <td style={{padding: '8px 10px', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: C.textDark}}>
+                          {a.valueScore ?? '—'}
                         </td>
-                        <td style={{padding: '9px 10px', fontWeight: 700, color: recColor(a.recommendation)}}>
+                        <td style={{padding: '8px 10px', fontWeight: 700, color: recColor(a.recommendation)}}>
                           {a.recommendation || '—'}
                         </td>
-                        <td style={{padding: '9px 10px', color: C.textSecondary, lineHeight: 1.45, maxWidth: 260}}>
-                          {a.reasoning || '—'}
+                        <td style={{padding: '8px 10px', whiteSpace: 'nowrap', color: C.text, fontVariantNumeric: 'tabular-nums'}}>
+                          {fmtWhen(a.recordedAt)}
                         </td>
                       </tr>
                     ))}
@@ -2117,10 +2402,23 @@
                 </table>
               </div>
               <div style={{fontSize: 11, color: C.text, marginTop: 6}}>
-                Showing {visibleRows.length} row{visibleRows.length === 1 ? '' : 's'}
-                {viewMode === 'active' ? ` · last ${FACE_ACTIVE_DAYS} days` : ' · full recall'} · scroll for all coins
+                Showing {filteredRows.length} of {visibleRows.length} · scroll the table · history chart uses every stored ask
               </div>
             </div>
+          )}
+
+          {rawOcr && (
+            <details style={{fontSize: 11, color: C.text, marginTop: 10}}>
+              <summary style={{cursor: 'pointer', fontWeight: 600, color: C.textDark}}>Raw OCR (debug / re-score)</summary>
+              <textarea value={rawOcr} onChange={(e) => setRawOcr(e.target.value)} rows={5}
+                style={{width: '100%', marginTop: 8, padding: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace',
+                  border: `1px solid ${C.border}`, borderRadius: 6, resize: 'vertical'}} />
+              <button type="button" onClick={() => runAnalysisOnText(rawOcr, 'Pasted text', 'pasted-text')}
+                style={{marginTop: 8, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
+                  border: `1px solid ${C.border}`, background: C.surface, cursor: 'pointer', color: C.textDark}}>
+                Re-score from text
+              </button>
+            </details>
           )}
 
           <div style={{marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center'}}>
@@ -2130,7 +2428,7 @@
               {showRarityEdit ? 'Close rarity editor' : 'Edit / add rarity profile'}
             </button>
             <span style={{fontSize: 11, color: C.text}}>
-              {Object.keys(rarityDb).length} rarity profiles · {history.length} historical quotes stored
+              {Object.keys(rarityDb).length} rarity profiles · {normalizedHistory.length} quotes stored
             </span>
           </div>
 
