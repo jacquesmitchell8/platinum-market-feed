@@ -9992,12 +9992,13 @@
             paidAudTotal: holding?.paidAudTotal ?? null,
             paidAudEach: holding?.paidAudEach ?? null,
             volumeOz: qty > 0 ? qty * w : 0,
-            // Portfolio mark = Perth melt (spot × weight × qty), not invoice ask
+            // Portfolio mark = Perth melt (spot × weight × qty)
             meltMarkAud: qty > 0 && meltAud != null ? qty * meltAud : null,
             positionAud: qty > 0 && askAud != null ? qty * askAud : 0,
             costAud: qty > 0 && holding?.paidAudTotal != null ? Number(holding.paidAudTotal) : null,
-            pnlAud: (qty > 0 && meltAud != null && holding?.paidAudTotal != null)
-              ? (qty * meltAud) - Number(holding.paidAudTotal)
+            // Simple per-oz: what you paid each vs Perth spot/oz
+            vsSpotEachAud: (holding?.paidAudEach != null && spotAud != null)
+              ? Number(holding.paidAudEach) - Number(spotAud)
               : null,
             ocrMatched: !!ocr,
           };
@@ -10086,7 +10087,6 @@
       const cartRows = rows.filter((r) => r.qty > 0);
       const cartTotal = cartRows.reduce((s, r) => s + (r.meltMarkAud || 0), 0);
       const cartCost = cartRows.reduce((s, r) => s + (r.costAud || 0), 0);
-      const cartPnl = cartRows.reduce((s, r) => s + (r.pnlAud || 0), 0);
       const cartVolumeOz = cartRows.reduce((s, r) => s + (r.volumeOz || 0), 0);
       const themeOptions = useMemo(
         () => ['All', ...[...new Set(rows.map((r) => r.theme))].sort()],
@@ -10481,13 +10481,8 @@
                 {cartRows.length > 0 && (
                   <span style={{fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: C.text, marginLeft: 8}}>
                     {cartVolumeOz > 0 ? `${cartVolumeOz % 1 === 0 ? cartVolumeOz : cartVolumeOz.toFixed(2)} oz · ` : ''}
-                    spot melt {fmtAud(cartTotal)}
-                    {cartCost > 0 ? ` · bought ${fmtAud(cartCost)}` : ''}
-                    {cartCost > 0 ? (
-                      <span style={{color: cartPnl >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
-                        {'P&L '}{cartPnl >= 0 ? '+' : ''}{fmtAud(cartPnl)}
-                      </span>
-                    ) : null}
+                    bought {fmtAud(cartCost)}
+                    {cartTotal > 0 ? ` · Perth melt ${fmtAud(cartTotal)}` : ''}
                   </span>
                 )}
               </div>
@@ -10576,14 +10571,12 @@
                             {r.spotAud != null ? fmtAud(r.spotAud) : '—'}
                             <span style={{fontWeight: 500, color: C.text, fontSize: 11}}> /oz</span>
                           </div>
-                          <div style={{fontSize: 11, color: C.text}}>
-                            melt {r.meltMarkAud != null ? fmtAud(r.meltMarkAud) : '—'}
-                            {r.pnlAud != null && (
-                              <span style={{color: r.pnlAud >= 0 ? '#047857' : '#B91C1C', marginLeft: 6, fontWeight: 600}}>
-                                {r.pnlAud >= 0 ? '+' : ''}{fmtAud(r.pnlAud)}
-                              </span>
-                            )}
-                          </div>
+                          {r.vsSpotEachAud != null && (
+                            <div style={{fontSize: 11, color: C.text, marginTop: 2}}>
+                              {r.vsSpotEachAud >= 0 ? '+' : '−'}{fmtAud(Math.abs(r.vsSpotEachAud))}
+                              <span style={{marginLeft: 4}}>{r.vsSpotEachAud >= 0 ? 'over spot' : 'under spot'}/oz</span>
+                            </div>
+                          )}
                         </td>
                         <td style={{padding: '10px 12px', textAlign: 'right'}}>
                           <button
