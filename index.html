@@ -1198,8 +1198,13 @@
 
     /**
      * Modular sovereign / limited-mintage coin catalogue.
-     * askAud = firm AUD retail ask. askSource:'perth' = live Perth offer.
-     * Weight drives melt vs LBMA. Better value (scarce + fair premium) sorts to top.
+     *
+     * Pricing (always weight × spot for melt):
+     *   askSource: 'perth'     → live Perth 1oz offer × weightOz
+     *   indicativePremiumPct   → ask = meltAud × (1 + pct/100)  ← tracks spot; % is exact
+     *   askAud                 → firm AUD shopping quote (cart / locked retail)
+     *
+     * Prefer indicativePremiumPct for watchlist so premiums don’t drift when spot moves.
      */
     const FACE_VALUE_COINS = [
       {
@@ -1214,7 +1219,7 @@
         scarcityScore: 22,
         askSource: 'perth',
         status: 'benchmark',
-        notes: 'Live Perth sell vs melt',
+        notes: 'Live Perth sell × weight vs LBMA melt',
       },
       {
         id: 'pm-platypus-1oz-pt',
@@ -1228,7 +1233,7 @@
         scarcityScore: 35,
         askSource: 'perth',
         status: 'benchmark',
-        notes: 'Live Perth Pt sell vs LBMA melt',
+        notes: 'Live Perth Pt sell × weight vs LBMA melt',
       },
       {
         id: 'pm-outback-pt-2026',
@@ -1240,9 +1245,9 @@
         faceCurrency: 'AUD',
         scarcity: 'Limited thematic · scarcity > bullion kangaroo',
         scarcityScore: 68,
-        askAud: 2569,
+        indicativePremiumPct: 10,
         status: 'watch',
-        notes: 'Firm AUD retail ask',
+        notes: '1oz melt + 10% thematic',
       },
       {
         id: 'us-eagle-half-pt',
@@ -1256,7 +1261,7 @@
         scarcityScore: 55,
         askAud: 1930,
         status: 'cart',
-        notes: '½oz melt = 0.5 × Pt spot · AUD cart quote',
+        notes: 'Firm AUD cart · melt = 0.5 × Pt spot',
       },
       {
         id: 'ca-1812-half-pt-2017',
@@ -1270,7 +1275,7 @@
         scarcityScore: 88,
         askAud: 2831,
         status: 'cart',
-        notes: '½oz scarce thematic · premium is real',
+        notes: 'Firm AUD cart · melt = 0.5 × Pt spot',
       },
       {
         id: 'uk-tudor-dragon-1oz-2024',
@@ -1282,9 +1287,9 @@
         faceCurrency: 'GBP',
         scarcity: 'Royal Mint Tudor series · limited thematic',
         scarcityScore: 72,
-        askAud: 2650,
-        status: 'cart',
-        notes: 'Dragon theme · collector demand',
+        indicativePremiumPct: 14,
+        status: 'watch',
+        notes: '1oz melt + 14% dragon theme',
       },
       {
         id: 'cn-panda-30g-au',
@@ -1298,7 +1303,7 @@
         scarcityScore: 62,
         indicativePremiumPct: 12,
         status: 'watch',
-        notes: '0.9645 oz · melt + 12% until firm ask',
+        notes: '0.9645 oz melt + 12%',
       },
       {
         id: 'cn-panda-1oz-pt',
@@ -1310,9 +1315,9 @@
         faceCurrency: 'CNY',
         scarcity: 'Low mintage Pt panda · Asia demand',
         scarcityScore: 80,
-        askAud: 3100,
+        indicativePremiumPct: 28,
         status: 'watch',
-        notes: 'Indicative AUD ask · update when you see a quote',
+        notes: '1oz melt + 28% panda premium',
       },
       {
         id: 'au-lunar-1oz-pt',
@@ -1324,9 +1329,9 @@
         faceCurrency: 'AUD',
         scarcity: '12-year cycle · year-animal scarcity after sell-out',
         scarcityScore: 70,
-        askAud: 2800,
+        indicativePremiumPct: 18,
         status: 'watch',
-        notes: 'Update askAud per year/design',
+        notes: '1oz melt + 18% lunar',
       },
       {
         id: 'ca-maple-1oz-pt',
@@ -1338,9 +1343,9 @@
         faceCurrency: 'CAD',
         scarcity: 'Core bullion · liquid · lower theme premium',
         scarcityScore: 30,
-        askAud: 2450,
+        indicativePremiumPct: 5,
         status: 'watch',
-        notes: 'Indicative AUD ask',
+        notes: '1oz melt + 5% bullion',
       },
       {
         id: 'uk-britannia-1oz-pt',
@@ -1352,9 +1357,9 @@
         faceCurrency: 'GBP',
         scarcity: 'Core sovereign bullion · liquid',
         scarcityScore: 32,
-        askAud: 2480,
+        indicativePremiumPct: 6,
         status: 'watch',
-        notes: 'Indicative AUD ask',
+        notes: '1oz melt + 6% bullion',
       },
       {
         id: 'au-koala-1oz-pt',
@@ -1366,9 +1371,9 @@
         faceCurrency: 'AUD',
         scarcity: 'Annual design · collector crossover',
         scarcityScore: 58,
-        askAud: 2700,
+        indicativePremiumPct: 14,
         status: 'watch',
-        notes: 'Indicative AUD ask',
+        notes: '1oz melt + 14%',
       },
       {
         id: 'us-eagle-1oz-pt',
@@ -1380,9 +1385,9 @@
         faceCurrency: 'USD',
         scarcity: 'US legal tender · thinner than gold AGE',
         scarcityScore: 50,
-        askAud: 3200,
+        indicativePremiumPct: 20,
         status: 'watch',
-        notes: '1oz melt · indicative AUD ask',
+        notes: '1oz melt + 20%',
       },
       {
         id: 'pm-lunar-half-pt',
@@ -1394,9 +1399,9 @@
         faceCurrency: 'AUD',
         scarcity: 'Half-oz lunar · scarcer than 1oz bullion',
         scarcityScore: 66,
-        askAud: 1550,
+        indicativePremiumPct: 16,
         status: 'watch',
-        notes: '½oz melt = 0.5 × Pt spot',
+        notes: '0.5oz melt + 16%',
       },
     ];
 
@@ -7888,35 +7893,55 @@
 
       const rows = useMemo(() => {
         return FACE_VALUE_COINS.map((coin) => {
+          const w = Number(coin.weightOz) > 0 ? Number(coin.weightOz) : 1;
           const spot = spotUsd(coin.metal);
-          const meltUsd = spot != null ? spot * coin.weightOz : null;
+          const meltUsd = spot != null ? spot * w : null;
           const meltAud = meltUsd != null ? usdToAud(meltUsd) : null;
+          const perth1oz = coin.metal === 'gold' ? auOffer : ptOffer;
+
           let askAud = null;
           let askLabel = '—';
-          if (coin.askSource === 'perth') {
-            askAud = coin.metal === 'gold' ? auOffer : ptOffer;
-            askLabel = askAud != null ? 'Perth offer' : 'Perth n/a';
-          } else if (coin.askAud != null) {
-            askAud = coin.askAud;
-            askLabel = 'Ask AUD';
-          } else if (coin.askUsd != null) {
-            askAud = usdToAud(coin.askUsd);
-            askLabel = `USD ${fmtUsd(coin.askUsd, 0)} → AUD`;
+          let askBasis = null;
+
+          // Priority: firm cart quote → live Perth×weight → melt+stated %
+          if (coin.askAud != null && Number.isFinite(Number(coin.askAud))) {
+            askAud = Number(coin.askAud);
+            askLabel = 'Firm AUD';
+            askBasis = 'firm';
+          } else if (coin.askSource === 'perth') {
+            if (perth1oz != null) {
+              askAud = perth1oz * w;
+              askLabel = w === 1 ? 'Perth offer' : `Perth×${w}`;
+              askBasis = 'perth';
+            } else {
+              askLabel = 'Perth n/a';
+            }
+          } else if (coin.askUsd != null && Number.isFinite(Number(coin.askUsd))) {
+            askAud = usdToAud(Number(coin.askUsd));
+            askLabel = `USD ${fmtUsd(coin.askUsd, 0)}→AUD`;
+            askBasis = 'firm';
           } else if (coin.indicativePremiumPct != null && meltAud != null) {
-            askAud = meltAud * (1 + coin.indicativePremiumPct / 100);
-            askLabel = `Melt + ${coin.indicativePremiumPct}%`;
+            const p = Number(coin.indicativePremiumPct);
+            askAud = meltAud * (1 + p / 100);
+            askLabel = `Melt+${p}%`;
+            askBasis = 'indicative';
           }
+
+          // Premium always = (ask − melt) / melt using THIS coin's weight
           const premiumPct = askAud != null && meltAud > 0
             ? ((askAud - meltAud) / meltAud) * 100
             : null;
+
           const qty = Number(holdings[coin.id]) || 0;
           const row = {
             ...coin,
+            weightOz: w,
             theme: coin.theme || 'Other',
             meltUsd,
             meltAud,
             askAud,
             askLabel,
+            askBasis,
             premiumPct,
             qty,
             positionAud: qty > 0 && askAud != null ? qty * askAud : 0,
@@ -8165,7 +8190,7 @@
                     </td>
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.text}}>
                       {r.meltAud != null ? fmtAud(r.meltAud) : '—'}
-                      <div style={{fontSize: 10}}>wt × spot</div>
+                      <div style={{fontSize: 10}}>{fmtWt(r.weightOz)} × spot</div>
                     </td>
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
                       <div style={{fontWeight: 600}}>{r.askAud != null ? fmtAud(r.askAud) : '—'}</div>
@@ -8176,6 +8201,9 @@
                       color: r.premiumPct == null ? C.text : r.premiumPct > 40 ? '#B45309' : r.premiumPct > 12 ? '#047857' : C.textDark,
                     }}>
                       {r.premiumPct != null ? `${r.premiumPct >= 0 ? '+' : ''}${r.premiumPct.toFixed(1)}%` : '—'}
+                      <div style={{fontSize: 9, fontWeight: 500, color: C.text}}>
+                        {r.askBasis === 'indicative' ? 'set %' : r.askBasis === 'perth' ? 'vs Perth' : r.askBasis === 'firm' ? 'vs firm ask' : ''}
+                      </div>
                     </td>
                     <td style={{padding: '10px 12px', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: C.textDark}}>
                       {r.valueScore}
@@ -8196,7 +8224,7 @@
             </table>
           </div>
           <div style={{fontSize: 11, color: C.text, padding: '0 18px 10px'}}>
-            Showing {filtered.length} of {rows.length} · melt = weight × LBMA ÷ AUD · ½oz coins use 0.5 × spot
+            Showing {filtered.length} of {rows.length} · melt = weight × LBMA ÷ AUD · every 1oz Pt shares the same melt · ½oz = half
           </div>
 
           {chartData.length > 0 && (
@@ -8238,8 +8266,9 @@
           )}
 
           <div style={{padding: '4px 18px 20px', fontSize: 11, color: C.text, lineHeight: 1.55, maxWidth: 760}}>
-            Catalogue data only — no OCR. Melt uses each coin&apos;s weight (1oz / ½oz / 30g).
-            Value score = scarcity − premium stretch. Edit asks in <code>FACE_VALUE_COINS</code>. Not advice.
+            Melt = weight × LBMA spot ÷ AUDUSD — same metal + same weight ⇒ same melt.
+            Watchlist asks use melt + a set % so premiums don&apos;t drift when spot moves.
+            Firm cart quotes (½oz Eagle / 1812) keep locked AUD asks — their % moves with spot. Not advice.
           </div>
         </div>
       );
