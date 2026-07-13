@@ -1,124 +1,143 @@
 // netlify/functions/perth-mint.js
 //
-// IMPORTANT — READ BEFORE MODIFYING:
-// The Perth Mint does not publish a public API — only a retail website with
-// no documented JSON endpoint. Scraping it was considered and rejected (see
-// conversation history) as circumventing a deliberate choice not to expose
-// this data programmatically.
+// LIVE Perth Mint AUD metal prices — single source of truth for Face Value melt.
 //
-// What this function returns instead: a clearly-labeled ESTIMATE derived
-// from our own accumulated gold/platinum history (metal_price_history in
-// Supabase, built by fetch-market-snapshots.js — NOT Yahoo Finance, which
-// blocks unauthenticated server requests with 401/404 anti-scraping errors).
-// Every data point is tagged `estimated: true` and the response carries a
-// `disclaimer` field. This is NOT real Perth Mint retail pricing.
+// Live spot:  GET https://www.perthmint.com/api/bullion/bullion-slots
+// History:    GET https://www.perthmint.com/api/exchangerate/metal/retail/pricehistory
 //
-// Required Netlify env vars:
-//   SUPABASE_URL      -> <your Supabase project URL>
-//   SUPABASE_ANON_KEY -> publishable/anon key (read-only, safe to use here)
+// No USD→AUD conversion. No synthetic spreads. Numbers are Perth Mint AUD.
 
-import { sbFetchAll } from './lib/supabase-paginate.js';
+const PM_UA = 'Mozilla/5.0 (compatible; PlatinumMetis/1.0; +https://platinum-conflux.netlify.app)';
+const SLOTS_URL = 'https://www.perthmint.com/api/bullion/bullion-slots';
+const HISTORY_URL = 'https://www.perthmint.com/api/exchangerate/metal/retail/pricehistory';
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-async function fetchAudUsdRate() {
-  try {
-    const res = await fetch('https://api.frankfurter.dev/v1/latest?from=AUD&to=USD');
-    if (!res.ok) throw new Error('Frankfurter fetch failed');
-    const j = await res.json();
-    if (j.rates?.USD) return j.rates.USD;
-  } catch (_) {}
-  return 0.65;
+function parseAudValue(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  const n = Number(String(raw).replace(/,/g, '').trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-async function fetchOwnHistory(asset) {
+function audFromPricing(pricing, currency = 'AUD') {
+  const hit = (pricing || []).find((p) => String(p.currency).toUpperCase() === currency);
+  return parseAudValue(hit?.value);
+}
+
+function mapHistoryPoint(p) {
+  const ts = Date.parse(p.dateTime || p.timestamp || 0);
+  return {
+    timestamp: Number.isFinite(ts) ? ts : Date.now(),
+    dateTime: p.dateTime || null,
+    offer: Number(p.offer),
+    mid: Number(p.mid),
+    bid: Number(p.bid),
+    estimated: false,
+  };
+}
+
+function sliceHistory(points, n) {
+  if (!points?.length) return [];
+  return points.slice(-n);
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': PM_UA,
+      Accept: 'application/json',
+      Referer: 'https://www.perthmint.com/invest/information-for-investors/metal-prices/',
+    },
+  });
+  if (!res.ok) throw new Error(`Perth Mint ${res.status} for ${url}`);
+  return res.json();
+}
+
+export default async () => {
   try {
-    const rows = await sbFetchAll(
-      SUPABASE_URL,
-      SUPABASE_ANON_KEY,
-      `metal_price_history?select=price,recorded_at&asset=eq.${asset}&order=recorded_at.asc`
-    );
-    if (rows.length > 0) {
-      return rows.map(r => ({ ts: new Date(r.recorded_at).getTime(), usdPerOz: r.price }));
+    const [slots, history] = await Promise.all([
+      fetchJson(SLOTS_URL),
+      fetchJson(HISTORY_URL).catch(() => null),
+    ]);
+
+    const prices = slots?.result?.data?.prices || [];
+    const goldLive = audFromPricing(prices.find((p) => p.metal === 'Gold')?.pricing);
+    const platLive = audFromPricing(prices.find((p) => p.metal === 'Platinum')?.pricing);
+    const silverLive = audFromPricing(prices.find((p) => p.metal === 'Silver')?.pricing);
+
+    if (goldLive == null && platLive == null) {
+      throw new Error('Perth Mint bullion-slots returned no AUD prices');
     }
-  } catch (_) {}
 
-  // Fall back to just the current snapshot if history table is empty/missing.
-  const snapUrl = `${SUPABASE_URL}/rest/v1/market_snapshots?select=payload,updated_at&snapshot_key=eq.${asset}`;
-  const snapRes = await fetch(snapUrl, {
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-  });
-  if (!snapRes.ok) return [];
-  const rows = await snapRes.json();
-  if (!rows.length) return [];
-  return [{ ts: new Date(rows[0].updated_at).getTime(), usdPerOz: rows[0].payload.price }];
-}
+    const histByMetal = {};
+    for (const m of history?.result || []) {
+      if (!m?.metal || m.currency !== 'AUD') continue;
+      const week = (m.oneWeekHistoricData || []).map(mapHistoryPoint).filter((p) => Number.isFinite(p.mid));
+      const two = (m.twoYearsHistoricData || m.oneWeekHistoricData || []).map(mapHistoryPoint).filter((p) => Number.isFinite(p.mid));
+      histByMetal[m.metal] = { week, two };
+    }
 
-function buildHistoricArray(usdPoints, audUsdRate) {
-  return usdPoints.map((p) => {
-    const audMid = p.usdPerOz / audUsdRate;
-    const spread = audMid * 0.015; // synthetic ~1.5% retail spread, since we have no real bid/offer
-    return {
-      timestamp: p.ts,
-      mid: Math.round(audMid * 100) / 100,
-      offer: Math.round((audMid + spread) * 100) / 100,
-      bid: Math.round((audMid - spread) * 100) / 100,
-      estimated: true,
-    };
-  });
-}
-
-export default async (req) => {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return new Response(JSON.stringify({ ok: false, error: 'Missing Supabase env vars' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-
-  try {
-    const audUsdRate = await fetchAudUsdRate();
-    const goldRaw = await fetchOwnHistory('XAU');
-    const platRaw = await fetchOwnHistory('XPT');
-
-    const goldHist = buildHistoricArray(goldRaw, audUsdRate);
-    const platHist = buildHistoricArray(platRaw, audUsdRate);
-
-    const goldEntry = {
-      metal: 'Gold',
-      currency: 'AUD',
-      estimated: true,
-      oneWeekHistoricData: goldHist.slice(-40),
-      twoYearsHistoricData: goldHist,
-      threeYearsHistoricData: goldHist,
-      fiveYearsHistoricData: goldHist,
+    // Ensure live slot is the tip of each history series (same AUD source).
+    const stampLive = (metal, liveAud, hist) => {
+      const tip = {
+        timestamp: Date.parse(slots?.result?.slot) || Date.now(),
+        dateTime: slots?.result?.slot || new Date().toISOString(),
+        offer: liveAud,
+        mid: liveAud,
+        bid: liveAud,
+        estimated: false,
+        liveSlot: true,
+      };
+      const week = [...(hist?.week || [])];
+      const two = [...(hist?.two || hist?.week || [])];
+      if (liveAud != null) {
+        week.push(tip);
+        two.push(tip);
+      }
+      return {
+        metal,
+        currency: 'AUD',
+        estimated: false,
+        liveAud: liveAud ?? null,
+        oneWeekHistoricData: sliceHistory(week, 200),
+        twoYearsHistoricData: sliceHistory(two, 2000),
+        threeYearsHistoricData: sliceHistory(two, 3000),
+        fiveYearsHistoricData: sliceHistory(two, 5000),
+      };
     };
 
-    const platEntry = {
-      metal: 'Platinum',
-      currency: 'AUD',
-      estimated: true,
-      oneWeekHistoricData: platHist.slice(-40),
-      twoYearsHistoricData: platHist,
-      threeYearsHistoricData: platHist,
-      fiveYearsHistoricData: platHist,
-    };
+    const goldEntry = stampLive('Gold', goldLive, histByMetal.Gold);
+    const platEntry = stampLive('Platinum', platLive, histByMetal.Platinum);
+    const silverEntry = stampLive('Silver', silverLive, histByMetal.Silver);
 
     return new Response(JSON.stringify({
       ok: true,
-      estimated: true,
-      disclaimer: 'ESTIMATE ONLY — Perth Mint has no public API. These figures are derived from our own accumulated spot gold/platinum data converted to AUD with a synthetic retail spread, NOT real Perth Mint bid/offer prices. History accumulates daily and starts thin. For actual retail pricing, see perthmint.com directly.',
-      result: [goldEntry, platEntry],
-      audUsdRate,
+      estimated: false,
+      source: 'perthmint.com/api/bullion/bullion-slots',
+      historySource: history ? 'perthmint.com/api/exchangerate/metal/retail/pricehistory' : null,
+      updatedAt: slots?.result?.slot || new Date().toISOString(),
+      buyingOpen: !!slots?.result?.data?.buyingOpen,
+      // Canonical Face Value spots — AUD per troy oz, no FX
+      liveSpotAud: {
+        gold: goldLive,
+        platinum: platLive,
+        silver: silverLive,
+      },
+      result: [goldEntry, platEntry, silverEntry].filter((e) => e.liveAud != null || e.oneWeekHistoricData?.length),
     }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, max-age=60',
+      },
     });
   } catch (err) {
-    return new Response(JSON.stringify({ ok: false, error: err.message }), {
+    return new Response(JSON.stringify({
+      ok: false,
+      error: err.message || 'Perth Mint fetch failed',
+      estimated: true,
+    }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 };

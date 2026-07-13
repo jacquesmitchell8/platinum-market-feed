@@ -1199,12 +1199,9 @@
     /**
      * Modular sovereign / limited-mintage coin catalogue.
      *
-     * Pricing (always weight × spot for melt):
-     *   askSource: 'perth'     → live Perth 1oz offer × weightOz
-     *   indicativePremiumPct   → ask = meltAud × (1 + pct/100)  ← tracks spot; % is exact
-     *   askAud                 → firm AUD shopping quote (cart / locked retail)
-     *
-     * Prefer indicativePremiumPct for watchlist so premiums don’t drift when spot moves.
+     * Spot + melt use ONE Perth Mint AUD/oz number (see FaceValueScarcityPanel).
+     * Melt = weightOz × perthSpotAud. Ask is dealer quote or melt + indicative %.
+     * Every row must have dealer + buyUrl so Ask is verifiable.
      */
     const FACE_VALUE_COINS = [
       {
@@ -1219,7 +1216,9 @@
         scarcityScore: 22,
         askSource: 'perth',
         status: 'benchmark',
-        notes: 'Live Perth sell × weight vs LBMA melt',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Gold',
+        notes: 'Ask = Perth Mint AUD spot × weight',
       },
       {
         id: 'pm-platypus-1oz-pt',
@@ -1233,7 +1232,9 @@
         scarcityScore: 35,
         askSource: 'perth',
         status: 'benchmark',
-        notes: 'Live Perth Pt sell × weight vs LBMA melt',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
+        notes: 'Ask = Perth Mint AUD spot × weight',
       },
       {
         id: 'pm-outback-pt-2026',
@@ -1247,7 +1248,9 @@
         scarcityScore: 68,
         indicativePremiumPct: 10,
         status: 'watch',
-        notes: '1oz melt + 10% thematic',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
+        notes: 'Melt + 10% thematic · verify live product ask',
       },
       {
         id: 'us-eagle-half-pt',
@@ -1261,7 +1264,9 @@
         scarcityScore: 55,
         askAud: 1930,
         status: 'cart',
-        notes: 'Firm AUD cart · melt = 0.5 × Pt spot',
+        dealer: 'BullionStar',
+        buyUrl: 'https://www.bullionstar.com/',
+        notes: 'Firm AUD cart quote · melt = 0.5 × Perth Pt AUD',
       },
       {
         id: 'ca-1812-half-pt-2017',
@@ -1275,7 +1280,9 @@
         scarcityScore: 88,
         askAud: 2831,
         status: 'cart',
-        notes: 'Firm AUD cart · melt = 0.5 × Pt spot',
+        dealer: 'ABC Bullion',
+        buyUrl: 'https://www.abcbullion.com.au/',
+        notes: 'Firm AUD cart quote · melt = 0.5 × Perth Pt AUD',
       },
       {
         id: 'uk-tudor-dragon-1oz-2024',
@@ -1289,7 +1296,9 @@
         scarcityScore: 72,
         indicativePremiumPct: 14,
         status: 'watch',
-        notes: '1oz melt + 14% dragon theme',
+        dealer: 'Ainslie Bullion',
+        buyUrl: 'https://www.ainsliebullion.com.au/',
+        notes: 'Melt + 14% · confirm live ask at dealer',
       },
       {
         id: 'cn-panda-30g-au',
@@ -1303,6 +1312,8 @@
         scarcityScore: 62,
         indicativePremiumPct: 12,
         status: 'watch',
+        dealer: 'BullionStar',
+        buyUrl: 'https://www.bullionstar.com/',
         notes: '0.9645 oz melt + 12%',
       },
       {
@@ -1317,7 +1328,9 @@
         scarcityScore: 80,
         indicativePremiumPct: 28,
         status: 'watch',
-        notes: '1oz melt + 28% panda premium',
+        dealer: 'BullionStar',
+        buyUrl: 'https://www.bullionstar.com/',
+        notes: 'Melt + 28% · confirm live ask',
       },
       {
         id: 'au-lunar-1oz-pt',
@@ -1331,7 +1344,9 @@
         scarcityScore: 70,
         indicativePremiumPct: 18,
         status: 'watch',
-        notes: '1oz melt + 18% lunar',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
+        notes: 'Melt + 18% lunar',
       },
       {
         id: 'ca-maple-1oz-pt',
@@ -1345,7 +1360,9 @@
         scarcityScore: 30,
         indicativePremiumPct: 5,
         status: 'watch',
-        notes: '1oz melt + 5% bullion',
+        dealer: 'ABC Bullion',
+        buyUrl: 'https://www.abcbullion.com.au/',
+        notes: 'Melt + 5% bullion',
       },
       {
         id: 'uk-britannia-1oz-pt',
@@ -1359,7 +1376,9 @@
         scarcityScore: 32,
         indicativePremiumPct: 6,
         status: 'watch',
-        notes: '1oz melt + 6% bullion',
+        dealer: 'Ainslie Bullion',
+        buyUrl: 'https://www.ainsliebullion.com.au/',
+        notes: 'Melt + 6% bullion',
       },
       {
         id: 'au-koala-1oz-pt',
@@ -1373,7 +1392,9 @@
         scarcityScore: 58,
         indicativePremiumPct: 14,
         status: 'watch',
-        notes: '1oz melt + 14%',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
+        notes: 'Melt + 14%',
       },
       {
         id: 'us-eagle-1oz-pt',
@@ -1387,7 +1408,9 @@
         scarcityScore: 50,
         indicativePremiumPct: 20,
         status: 'watch',
-        notes: '1oz melt + 20%',
+        dealer: 'BullionStar',
+        buyUrl: 'https://www.bullionstar.com/',
+        notes: 'Melt + 20%',
       },
       {
         id: 'pm-lunar-half-pt',
@@ -1401,7 +1424,9 @@
         scarcityScore: 66,
         indicativePremiumPct: 16,
         status: 'watch',
-        notes: '0.5oz melt + 16%',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
+        notes: '0.5 × Perth Pt AUD + 16%',
       },
     ];
 
@@ -1894,10 +1919,11 @@
           if (!r.ok) continue;
           const text = await r.text();
           const j = JSON.parse(text);
+          const hasLive = j?.liveSpotAud?.platinum != null || j?.liveSpotAud?.gold != null;
           const hasHistory = j?.result?.some(
-            (m) => m.oneWeekHistoricData?.length || m.twoYearsHistoricData?.length
+            (m) => m.oneWeekHistoricData?.length || m.twoYearsHistoricData?.length || m.liveAud != null
           );
-          if (hasHistory) {
+          if (hasLive || hasHistory) {
             savePerthApiCache(j);
             return j;
           }
@@ -7880,46 +7906,53 @@
         catch { return {}; }
       });
 
-      const ptSpot = live?.platinum?.price;
-      const auSpot = live?.gold?.price;
-      const fx = audUsd > 0 ? audUsd : 0.65;
+      // ── Single source of truth: Perth Mint AUD/oz ─────────────────
+      // Prefer liveSpotAud from /.netlify/functions/perth-mint (bullion-slots).
+      // Fall back to last historic mid/offer on the same Perth payload only.
+      // Never use LBMA USD + FX for Spot or Melt on this tab.
       const ptMetal = perth?.result?.find((m) => m.metal === 'Platinum');
       const auMetal = perth?.result?.find((m) => m.metal === 'Gold');
-      const ptOffer = ptMetal?.oneWeekHistoricData?.slice(-1)[0]?.offer;
-      const auOffer = auMetal?.oneWeekHistoricData?.slice(-1)[0]?.offer;
+      const lastPt = ptMetal?.oneWeekHistoricData?.slice(-1)[0];
+      const lastAu = auMetal?.oneWeekHistoricData?.slice(-1)[0];
 
-      const usdToAud = (usd) => (usd == null ? null : usd / fx);
-      const spotUsd = (metal) => (metal === 'gold' ? auSpot : ptSpot);
+      const spotAudPt = perth?.liveSpotAud?.platinum
+        ?? ptMetal?.liveAud
+        ?? lastPt?.mid
+        ?? lastPt?.offer
+        ?? null;
+      const spotAudAu = perth?.liveSpotAud?.gold
+        ?? auMetal?.liveAud
+        ?? lastAu?.mid
+        ?? lastAu?.offer
+        ?? null;
+
+      const spotAudFor = (metal) => (metal === 'gold' ? spotAudAu : spotAudPt);
+      const spotReady = spotAudPt != null || spotAudAu != null;
+      const perthEstimated = !!perth?.estimated;
+      const perthUpdated = perth?.updatedAt || null;
 
       const rows = useMemo(() => {
         return FACE_VALUE_COINS.map((coin) => {
           const w = Number(coin.weightOz) > 0 ? Number(coin.weightOz) : 1;
-          const spot = spotUsd(coin.metal);
-          const meltUsd = spot != null ? spot * w : null;
-          const meltAud = meltUsd != null ? usdToAud(meltUsd) : null;
-          const perth1oz = coin.metal === 'gold' ? auOffer : ptOffer;
+          const spotAud = spotAudFor(coin.metal); // AUD / oz — THE number
+          const meltAud = spotAud != null ? spotAud * w : null; // melt = weight × Perth spot
 
           let askAud = null;
           let askLabel = '—';
           let askBasis = null;
 
-          // Priority: firm cart quote → live Perth×weight → melt+stated %
           if (coin.askAud != null && Number.isFinite(Number(coin.askAud))) {
             askAud = Number(coin.askAud);
             askLabel = 'Firm AUD';
             askBasis = 'firm';
           } else if (coin.askSource === 'perth') {
-            if (perth1oz != null) {
-              askAud = perth1oz * w;
-              askLabel = w === 1 ? 'Perth offer' : `Perth×${w}`;
+            if (spotAud != null) {
+              askAud = spotAud * w;
+              askLabel = 'Perth×wt';
               askBasis = 'perth';
             } else {
               askLabel = 'Perth n/a';
             }
-          } else if (coin.askUsd != null && Number.isFinite(Number(coin.askUsd))) {
-            askAud = usdToAud(Number(coin.askUsd));
-            askLabel = `USD ${fmtUsd(coin.askUsd, 0)}→AUD`;
-            askBasis = 'firm';
           } else if (coin.indicativePremiumPct != null && meltAud != null) {
             const p = Number(coin.indicativePremiumPct);
             askAud = meltAud * (1 + p / 100);
@@ -7927,30 +7960,38 @@
             askBasis = 'indicative';
           }
 
-          // Premium always = (ask − melt) / melt using THIS coin's weight
           const premiumPct = askAud != null && meltAud > 0
             ? ((askAud - meltAud) / meltAud) * 100
             : null;
+
+          // Sanity: melt must equal weight × spot (rounding ≤ 2 cents)
+          const expectedMelt = spotAud != null ? spotAud * w : null;
+          const meltOk = meltAud != null && expectedMelt != null
+            && Math.abs(meltAud - expectedMelt) <= 0.02;
 
           const qty = Number(holdings[coin.id]) || 0;
           const row = {
             ...coin,
             weightOz: w,
             theme: coin.theme || 'Other',
-            meltUsd,
+            dealer: coin.dealer || 'Dealer',
+            buyUrl: coin.buyUrl || null,
+            spotAud,
             meltAud,
             askAud,
             askLabel,
             askBasis,
             premiumPct,
+            meltOk,
             qty,
             positionAud: qty > 0 && askAud != null ? qty * askAud : 0,
-            spotUsd: spot,
           };
           row.valueScore = faceCatalogueValueScore(row);
           return row;
         });
-      }, [live, perth, audUsd, holdings, auOffer, ptOffer, auSpot, ptSpot]);
+      }, [holdings, spotAudPt, spotAudAu]);
+
+      const meltBrokenCount = rows.filter((r) => r.spotAud != null && !r.meltOk).length;
 
       const themes = useMemo(() => {
         const by = new Map();
@@ -8000,7 +8041,7 @@
       ), [filtered]);
 
       const bestNow = useMemo(
-        () => [...rows].filter((r) => r.premiumPct != null).sort((a, b) => b.valueScore - a.valueScore).slice(0, 4),
+        () => [...rows].filter((r) => r.premiumPct != null && r.meltOk).sort((a, b) => b.valueScore - a.valueScore).slice(0, 4),
         [rows]
       );
 
@@ -8053,20 +8094,33 @@
               Face Value <span style={{color: C.gold}}>Scarcity</span>
             </div>
             <p style={{fontSize: 15, color: C.textSecondary, lineHeight: 1.55, maxWidth: 720, margin: 0}}>
-              Real catalogue · weight × live LBMA = melt · ask vs melt = premium.
-              Dragons, pandas, lunars ranked by value — scarce + fair premium on top.
+              One spot: Perth Mint live AUD/oz. Melt = weight × that spot. Ask and prem% derive from it —
+              dealer link on every row so you can verify where to buy.
             </p>
             <div style={{
               marginTop: 14, fontSize: 13, color: C.textDark, fontVariantNumeric: 'tabular-nums',
-              display: 'flex', flexWrap: 'wrap', gap: '6px 18px',
+              display: 'flex', flexWrap: 'wrap', gap: '6px 18px', alignItems: 'center',
             }}>
-              <span>Au <strong>{auSpot != null ? fmtUsd(auSpot, 0) : '—'}</strong></span>
-              <span>Pt <strong>{ptSpot != null ? fmtUsd(ptSpot, 0) : '—'}</strong></span>
-              <span>AUD <strong>{fx ? (1 / fx).toFixed(4) : '—'}</strong> / USD</span>
-              {ptOffer != null && auOffer != null && (
-                <span style={{color: C.text}}>Perth 1oz · Au {fmtAud(auOffer)} · Pt {fmtAud(ptOffer)}</span>
+              <span>Perth Pt <strong>{spotAudPt != null ? fmtAud(spotAudPt) : '—'}</strong>/oz</span>
+              <span>Perth Au <strong>{spotAudAu != null ? fmtAud(spotAudAu) : '—'}</strong>/oz</span>
+              {perthUpdated && (
+                <span style={{color: C.text}}>Updated {new Date(perthUpdated).toLocaleString()}</span>
               )}
-              <span style={{color: C.text}}>{FACE_VALUE_COINS.length} coins in catalogue</span>
+              {perthEstimated && (
+                <span style={{color: '#B91C1C', fontWeight: 700}}>⚠ Perth feed estimated / degraded</span>
+              )}
+              {!spotReady && (
+                <span style={{color: '#B91C1C', fontWeight: 700}}>⚠ Perth Mint spot unavailable</span>
+              )}
+              {meltBrokenCount > 0 && (
+                <span style={{
+                  color: '#fff', background: '#B91C1C', fontWeight: 700, fontSize: 11,
+                  padding: '2px 8px', borderRadius: 4,
+                }}>
+                  Melt mismatch on {meltBrokenCount} row{meltBrokenCount === 1 ? '' : 's'}
+                </span>
+              )}
+              <span style={{color: C.text}}>{FACE_VALUE_COINS.length} coins</span>
             </div>
           </div>
 
@@ -8115,7 +8169,7 @@
                       <span>{b.name}</span>
                       <span style={{fontVariantNumeric: 'tabular-nums', color: C.text}}>
                         {fmtWt(b.weightOz)} · melt {b.meltAud != null ? fmtAud(b.meltAud) : '—'} ·
-                        {' '}{b.premiumPct != null ? `+${b.premiumPct.toFixed(0)}%` : '—'} · value {b.valueScore}
+                        {' '}{b.premiumPct != null ? `+${b.premiumPct.toFixed(0)}%` : '—'} · {b.dealer}
                       </span>
                     </div>
                   ))}
@@ -8145,52 +8199,62 @@
                   color: themeFilter === t ? C.gold : C.textDark,
                 }}>{t}</button>
             ))}
-            <span style={{fontSize: 11, color: C.text}}>Sorted best value first · scroll full list</span>
           </div>
 
           <div style={{
             margin: '0 12px 16px', maxHeight: 'min(70vh, 640px)', overflow: 'auto',
             border: `1px solid ${C.borderLight}`, borderRadius: 8,
           }}>
-            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 860}}>
+            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 980}}>
               <thead style={{position: 'sticky', top: 0, zIndex: 2, background: C.surface2}}>
                 <tr style={{color: C.text, textAlign: 'left'}}>
                   <th style={{padding: '10px 12px'}}>#</th>
                   <th style={{padding: '10px 12px'}}>Theme</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Coin', 'name')}</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Weight', 'weightOz')}</th>
-                  <th style={{padding: '10px 12px'}}>{thBtn('Spot', 'spotUsd')}</th>
-                  <th style={{padding: '10px 12px'}}>{thBtn('Melt', 'meltAud')}</th>
-                  <th style={{padding: '10px 12px'}}>{thBtn('Ask', 'askAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Spot (AUD)', 'spotAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Melt (AUD)', 'meltAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Ask (AUD)', 'askAud')}</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Prem %', 'premiumPct')}</th>
+                  <th style={{padding: '10px 12px'}}>Dealer / Buy</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Value', 'valueScore')}</th>
                   <th style={{padding: '10px 12px'}}>Qty</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((r, idx) => (
-                  <tr key={r.id} style={{borderTop: `1px solid ${C.borderLight}`, background: idx < 3 ? 'rgba(4,120,87,0.04)' : 'transparent'}}>
+                  <tr key={r.id} style={{
+                    borderTop: `1px solid ${C.borderLight}`,
+                    background: !r.meltOk && r.spotAud != null
+                      ? 'rgba(185,28,28,0.08)'
+                      : idx < 3 ? 'rgba(4,120,87,0.04)' : 'transparent',
+                  }}>
                     <td style={{padding: '10px 12px', color: C.text, fontVariantNumeric: 'tabular-nums'}}>{idx + 1}</td>
                     <td style={{padding: '10px 12px'}}>
                       <span style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: FACE_THEME_COLORS[r.theme] || C.text}}>
                         {r.theme}
                       </span>
                     </td>
-                    <td style={{padding: '10px 12px', verticalAlign: 'top', maxWidth: 240}}>
+                    <td style={{padding: '10px 12px', verticalAlign: 'top', maxWidth: 220}}>
                       <div style={{fontWeight: 600, color: C.textDark}}>{r.name}</div>
                       <div style={{fontSize: 10, color: C.text, marginTop: 2, lineHeight: 1.35}}>{r.scarcity}</div>
+                      {!r.meltOk && r.spotAud != null && (
+                        <div style={{fontSize: 10, fontWeight: 700, color: '#B91C1C', marginTop: 4}}>
+                          Melt ≠ weight × spot
+                        </div>
+                      )}
                     </td>
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: C.textDark}}>
                       {fmtWt(r.weightOz)}
                       <div style={{fontSize: 10, color: C.text, fontWeight: 400, textTransform: 'capitalize'}}>{r.metal}</div>
                     </td>
-                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.text}}>
-                      {r.spotUsd != null ? fmtUsd(r.spotUsd, 0) : '—'}
-                      <div style={{fontSize: 10}}>/oz</div>
+                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.textDark, fontWeight: 600}}>
+                      {r.spotAud != null ? fmtAud(r.spotAud) : '—'}
+                      <div style={{fontSize: 10, fontWeight: 400, color: C.text}}>/oz Perth</div>
                     </td>
-                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.text}}>
+                    <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.textDark, fontWeight: 600}}>
                       {r.meltAud != null ? fmtAud(r.meltAud) : '—'}
-                      <div style={{fontSize: 10}}>{fmtWt(r.weightOz)} × spot</div>
+                      <div style={{fontSize: 10, fontWeight: 400, color: C.text}}>{fmtWt(r.weightOz)} × spot</div>
                     </td>
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
                       <div style={{fontWeight: 600}}>{r.askAud != null ? fmtAud(r.askAud) : '—'}</div>
@@ -8201,9 +8265,16 @@
                       color: r.premiumPct == null ? C.text : r.premiumPct > 40 ? '#B45309' : r.premiumPct > 12 ? '#047857' : C.textDark,
                     }}>
                       {r.premiumPct != null ? `${r.premiumPct >= 0 ? '+' : ''}${r.premiumPct.toFixed(1)}%` : '—'}
-                      <div style={{fontSize: 9, fontWeight: 500, color: C.text}}>
-                        {r.askBasis === 'indicative' ? 'set %' : r.askBasis === 'perth' ? 'vs Perth' : r.askBasis === 'firm' ? 'vs firm ask' : ''}
-                      </div>
+                    </td>
+                    <td style={{padding: '10px 12px', maxWidth: 140}}>
+                      {r.buyUrl ? (
+                        <a href={r.buyUrl} target="_blank" rel="noopener noreferrer"
+                          style={{color: C.plat, fontWeight: 600, textDecoration: 'underline'}}>
+                          {r.dealer}
+                        </a>
+                      ) : (
+                        <span style={{fontWeight: 600, color: C.textDark}}>{r.dealer}</span>
+                      )}
                     </td>
                     <td style={{padding: '10px 12px', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: C.textDark}}>
                       {r.valueScore}
@@ -8224,13 +8295,13 @@
             </table>
           </div>
           <div style={{fontSize: 11, color: C.text, padding: '0 18px 10px'}}>
-            Showing {filtered.length} of {rows.length} · melt = weight × LBMA ÷ AUD · every 1oz Pt shares the same melt · ½oz = half
+            Showing {filtered.length} of {rows.length} · Spot & Melt from Perth Mint AUD only · melt must equal weight × spot
           </div>
 
           {chartData.length > 0 && (
             <div style={{padding: '4px 18px 16px'}}>
               <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.textDark, marginBottom: 6}}>
-                Premium over melt · best value at top
+                Premium over Perth melt (AUD) · best value at top
               </div>
               <ResponsiveContainer width="100%" height={Math.max(200, chartData.length * 30)}>
                 <BarChart layout="vertical" data={chartData} margin={{top: 4, right: 24, left: 8, bottom: 4}}>
@@ -8254,11 +8325,11 @@
           {cartRows.length > 0 && (
             <div style={{padding: '0 18px 16px'}}>
               <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textDark, marginBottom: 8}}>
-                Holdings · {fmtAud(cartTotal)}
+                Holdings (AUD) · {fmtAud(cartTotal)}
               </div>
               {cartRows.map((r) => (
                 <div key={r.id} style={{fontSize: 12, display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: `1px solid ${C.borderLight}`}}>
-                  <span>{r.qty}× {r.name}</span>
+                  <span>{r.qty}× {r.name} · {r.dealer}</span>
                   <strong style={{fontVariantNumeric: 'tabular-nums'}}>{r.positionAud ? fmtAud(r.positionAud) : '—'}</strong>
                 </div>
               ))}
@@ -8266,9 +8337,8 @@
           )}
 
           <div style={{padding: '4px 18px 20px', fontSize: 11, color: C.text, lineHeight: 1.55, maxWidth: 760}}>
-            Melt = weight × LBMA spot ÷ AUDUSD — same metal + same weight ⇒ same melt.
-            Watchlist asks use melt + a set % so premiums don&apos;t drift when spot moves.
-            Firm cart quotes (½oz Eagle / 1812) keep locked AUD asks — their % moves with spot. Not advice.
+            Spot = Perth Mint live AUD/oz (bullion-slots). Melt = weight × Spot — if those ever diverge, the row turns red.
+            Firm cart asks keep locked AUD; watchlist uses melt + set %. Click Dealer to verify. Not advice.
           </div>
         </div>
       );
@@ -8961,17 +9031,17 @@
               <MoveContextPanel events={showEvents ? eventsInRange : []} timeframe={metalTimeframe} />
             )}
             {tab === 'perth' && (
-              <div style={{fontSize:11, color:'#92400E', padding:'10px 14px', margin:'0 18px 12px',
-                background:'rgba(217,119,6,0.08)', border:'1px solid rgba(217,119,6,0.2)', borderRadius:6, lineHeight:1.5}}>
-                ⚠ Estimate only — Perth Mint has no public price API. These figures are derived from spot gold/platinum
-                converted to AUD with a synthetic retail spread, not real Perth Mint bid/offer prices.
-                For actual retail pricing, see <a href="https://www.perthmint.com/invest/information-for-investors/metal-prices/"
-                  target="_blank" rel="noopener noreferrer" style={{color:'#92400E', textDecoration:'underline'}}>perthmint.com</a> directly.
+              <div style={{fontSize:11, color:C.text, padding:'10px 14px', margin:'0 18px 12px',
+                background:'rgba(107,127,150,0.08)', border:`1px solid ${C.borderLight}`, borderRadius:6, lineHeight:1.5}}>
+                Spot from Perth Mint live AUD feed (<code>bullion-slots</code>) · history from Perth Mint retail price history.
+                Face Value Scarcity uses the same AUD/oz number for Spot and Melt (melt = weight × spot).
+                {' '}<a href="https://www.perthmint.com/invest/information-for-investors/metal-prices/"
+                  target="_blank" rel="noopener noreferrer" style={{color:C.plat, textDecoration:'underline'}}>perthmint.com</a>
               </div>
             )}
             <div style={{fontSize:10, color:C.text, padding:'0 18px 12px', lineHeight:1.5}}>
               {tab === 'perth'
-                ? 'Separate charts for gold and platinum 1oz coins (AUD, estimated). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
+                ? 'Separate charts for gold and platinum 1oz coins (AUD · Perth Mint live). Enable IDX-107 for platinum technical structure — support/resistance, breakouts, inverted cup markers.'
                 : tab === 'producers'
                   ? 'Top 4 global platinum mine producers by output — JSE-listed, primarily South Africa Bushveld. Share price (AUD) and volume (shares) on the same chart for 24h–1m; longer windows are price-only daily history.'
                   : 'Separate charts for precious metals and cryptocurrency — each with its own price scale so no curve is flattened. Toggle Technical structure for support/resistance, breakouts, and chart patterns on the same history.'}
