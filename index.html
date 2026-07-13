@@ -1265,11 +1265,18 @@
         scarcityScore: 68,
         mintage: null,
         mintageNote: 'Limited thematic · max TBA',
-        indicativePremiumPct: 10,
-        status: 'watch',
+        askAud: 2535.11,
+        status: 'cart',
         dealer: 'Perth Mint',
         buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
-        notes: 'Melt + 10% thematic · verify live product ask',
+        notes: 'Perth Mint order unit · Wonders of Australia Outback Pt',
+        ocrAliases: [
+          'wonders of australia the outback',
+          'wonders of the outback',
+          'outback 1oz',
+          'outback 1oz 99.95% pt',
+          '26o58cax',
+        ],
       },
       {
         id: 'us-eagle-half-pt',
@@ -1378,6 +1385,7 @@
         dealer: 'Perth Mint',
         buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
         notes: 'Melt + 18% lunar',
+        ocrAliases: ['lunar series', 'perth mint lunar', 'lunar platinum'],
       },
       {
         id: 'ca-maple-1oz-pt',
@@ -1468,6 +1476,63 @@
         dealer: 'Perth Mint',
         buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Platinum',
         notes: '0.5 × Perth Pt AUD + 16%',
+      },
+      {
+        id: 'au-lunar-dragon-2024-pt',
+        name: '2024 Australian Year of the Dragon 1oz Platinum',
+        theme: 'Lunar',
+        metal: 'platinum',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'AUD',
+        scarcity: 'Lunar sell-out year · mintage ~5,000',
+        scarcityScore: 78,
+        mintage: 5000,
+        mintageNote: '2024 · ~5,000 (dealer note)',
+        askAud: 3103.53,
+        status: 'cart',
+        dealer: 'KJC',
+        buyUrl: 'https://www.kjc.com.au/',
+        notes: 'KJC invoice ask · Year of the Dragon Pt',
+        ocrAliases: ['year of the dragon platinum', '2024 australian year of the dragon', 'dragon platinum coin'],
+      },
+      {
+        id: 'pm-phoenix-1oz-au-2026',
+        name: '2026 Perth Mint Double Phoenix 1oz Gold',
+        theme: 'Thematic',
+        metal: 'gold',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'AUD',
+        scarcity: 'M&L Double Phoenix · thematic gold',
+        scarcityScore: 55,
+        mintage: null,
+        mintageNote: '2026 thematic',
+        askAud: 6077.25,
+        status: 'cart',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Gold',
+        notes: 'Perth Mint order unit price',
+        ocrAliases: ['double phoenix', 'm&l double phoenix', 'phoenix 1oz'],
+      },
+      {
+        id: 'pm-dragon-rect-1oz-au-2026',
+        name: '2026 Perth Mint Dragon 1oz Gold Rectangular',
+        theme: 'Dragon',
+        metal: 'gold',
+        weightOz: 1,
+        faceValue: 100,
+        faceCurrency: 'AUD',
+        scarcity: 'Rectangular dragon bullion · thematic gold',
+        scarcityScore: 52,
+        mintage: null,
+        mintageNote: '2026 rectangular bullion',
+        askAud: 6077.25,
+        status: 'cart',
+        dealer: 'Perth Mint',
+        buyUrl: 'https://www.perthmint.com/shop/bullion/?p_metal=Gold',
+        notes: 'Perth Mint order unit price · not Tudor Beast',
+        ocrAliases: ['dragon 1oz 99.99% au', 'dragon rectangular', 'bullion rectangular coin', 'dragon 1oz gold rectangular'],
       },
     ];
 
@@ -1566,7 +1631,7 @@
         sovereign: true,
         thematic: true,
         theme: 'Dragon',
-        aliases: ['tudor', 'royal dragon', 'tudor beast', 'dragon'],
+        aliases: ['tudor', 'royal dragon', 'tudor beast', 'tudor beast royal dragon'],
       },
       'Chinese Panda 30g Gold': {
         rarity: 'medium',
@@ -2271,39 +2336,55 @@
     }
 
     function matchOcrRowToCatalogueId(row) {
-      const hay = `${row.coin || ''} ${row.name || ''} ${row.rarityKey || ''} ${row.sourceLine || ''}`.toLowerCase();
+      const hay = `${row.coin || ''} ${row.name || ''} ${row.rarityKey || ''} ${row.sourceLine || ''}`.toLowerCase().replace(/\s+/g, ' ').trim();
       if (!hay.trim()) return null;
+
+      // Hard disambiguation for invoice wording (before fuzzy alias scoring)
+      if (/tudor|royal\s*beast/.test(hay)) return 'uk-tudor-dragon-1oz-2024';
+      if (/year of the dragon/.test(hay) && /platinum|\bpt\b/.test(hay)) return 'au-lunar-dragon-2024-pt';
+      if (/(wonders of australia|wonders of the outback|\boutback\b)/.test(hay) && /platinum|\bpt\b|99\.95%/.test(hay)) {
+        return 'pm-outback-pt-2026';
+      }
+      if (/double\s*phoenix|m\s*&\s*l\s*double\s*phoenix/.test(hay)) return 'pm-phoenix-1oz-au-2026';
+      if (/dragon/.test(hay) && /rectangular|99\.99%\s*au|au\s*bullion/.test(hay) && !/tudor|platinum|\bpt\b/.test(hay)) {
+        return 'pm-dragon-rect-1oz-au-2026';
+      }
+
       let best = null;
       let bestScore = 0;
       for (const coin of FACE_VALUE_COINS) {
         const aliases = [
           coin.name,
           coin.id,
-          coin.theme,
+          ...(coin.ocrAliases || []),
           ...(coin.notes ? [coin.notes] : []),
         ].map((s) => String(s || '').toLowerCase()).filter(Boolean);
-        // common short tokens
-        if (coin.id.includes('eagle')) aliases.push('american eagle', 'platinum eagle', 'age');
-        if (coin.id.includes('panda')) aliases.push('panda');
-        if (coin.id.includes('lunar')) aliases.push('lunar');
-        if (coin.id.includes('maple')) aliases.push('maple');
+        if (coin.id.includes('eagle')) aliases.push('american eagle', 'platinum eagle');
+        if (coin.id.includes('panda') && coin.metal === 'platinum') aliases.push('platinum panda', 'panda platinum');
+        if (coin.id.includes('panda') && coin.metal === 'gold') aliases.push('chinese panda', '30g gold');
+        if (coin.id === 'au-lunar-1oz-pt') aliases.push('lunar series platinum');
+        if (coin.id.includes('maple')) aliases.push('maple leaf');
         if (coin.id.includes('britannia')) aliases.push('britannia');
         if (coin.id.includes('koala')) aliases.push('koala');
-        if (coin.id.includes('outback')) aliases.push('outback');
-        if (coin.id.includes('platypus') || coin.id.includes('kangaroo')) aliases.push('kangaroo', 'platypus');
+        if (coin.id.includes('outback')) aliases.push('outback', 'wonders of the outback');
+        if (coin.id.includes('platypus') || (coin.id.includes('kangaroo') && coin.metal === 'platinum')) {
+          aliases.push('platinum kangaroo', 'platypus');
+        }
         if (coin.id.includes('1812')) aliases.push('1812', 'war of 1812');
-        if (coin.id.includes('tudor') || coin.id.includes('dragon')) aliases.push('tudor', 'dragon', 'tudor beast');
+        if (coin.id.includes('tudor')) aliases.push('tudor beast', 'royal dragon', 'tudor');
+        // Do NOT alias bare "dragon" onto Tudor — Perth/KJC lunar & Au dragon collide
         for (const a of aliases) {
-          if (a.length < 3) continue;
-          if (hay.includes(a) || a.includes(hay.slice(0, Math.min(hay.length, a.length)))) {
+          if (a.length < 4) continue;
+          if (hay.includes(a)) {
             let score = a.length;
-            if (coin.metal && row.metal && coin.metal === row.metal) score += 8;
+            if (coin.metal && row.metal && coin.metal === row.metal) score += 12;
+            if (coin.metal && row.metal && coin.metal !== row.metal) score -= 30;
             if (coin.weightOz && row.weightOz && Math.abs(Number(coin.weightOz) - Number(row.weightOz)) < 0.05) score += 10;
             if (score > bestScore) { bestScore = score; best = coin.id; }
           }
         }
       }
-      return bestScore >= 6 ? best : null;
+      return bestScore >= 8 ? best : null;
     }
 
 
@@ -2413,88 +2494,118 @@
 
     /**
      * Invoice / order OCR → portfolio line items (preview only until confirmed).
-     * Checkout pages expected. Prefer unit prices in a plausible band; never keep cart totals.
+     * Tuned for Perth Mint order PDFs + KJC tax invoices (clean screenshots).
      */
+    function inferInvoiceMetal(text) {
+      const t = String(text || '').toLowerCase();
+      if (/\bsilver\b/.test(t) && !/\bplatinum\b|\bgold\b|\bpt\b|\bau\b/.test(t)) return 'silver';
+      if (/\bplatinum\b|99\.95%\s*pt/.test(t)) return 'platinum';
+      if (/\bgold\b|99\.99%\s*au|\bau\s*bullion/.test(t)) return 'gold';
+      if (/(?:^|[^a-z])pt(?:[^a-z]|$)/.test(t)) return 'platinum';
+      if (/(?:^|[^a-z])au(?:[^a-z]|$)/.test(t)) return 'gold';
+      return null;
+    }
+
+    function inferInvoiceWeightOz(text) {
+      const t = String(text || '').toLowerCase();
+      if (/\b1\/2\b|½|\bhalf\b/.test(t)) return 0.5;
+      if (/\b2\s*oz\b|\b2oz\b/.test(t)) return 2;
+      if (/\b30\s*g\b|\b30g\b/.test(t)) return 30 / 31.1034768;
+      if (/\b1\s*oz\b|\b1oz\b|one\s*ounce/.test(t)) return 1;
+      return null;
+    }
+
+    function parseMoneyTokens(line) {
+      const out = [];
+      const re = /\$?\s*([\d,]+\.\d{2,3})\b/g;
+      let m;
+      while ((m = re.exec(line)) != null) {
+        const raw = m[1];
+        const n = Number(raw.replace(/,/g, ''));
+        if (!Number.isFinite(n)) continue;
+        const decimals = (raw.split('.')[1] || '').length;
+        out.push({ value: n, decimals, index: m.index, raw });
+      }
+      return out;
+    }
+
+    function parseQtyToken(line) {
+      // Perth Mint: 17.00000 / 2.00000 ; KJC: lone 1 in qty column
+      const dec = line.match(/\b(\d{1,3})\.0{2,5}\b/);
+      if (dec) return Math.max(1, Math.min(500, Number(dec[1])));
+      const qtyLabel = line.match(/(?:qty|quantity|units)[:\s]*(\d{1,3})\b/i);
+      if (qtyLabel) return Math.max(1, Math.min(500, Number(qtyLabel[1])));
+      return null;
+    }
+
+    function isInvoiceNoiseLine(line) {
+      const t = String(line || '').toLowerCase();
+      if (!t) return true;
+      if (/\b(freight|shipping charge|balance due|deposit paid|total gst|total incl|subtotal|bill to|ship\s*\/\s*deliver|order no|order date|tax invoice|metal price)\b/.test(t)) return true;
+      if (/gold:\s*\$[\d,]+/.test(t) && /silver:\s*\$/.test(t)) return true; // KJC spot strip
+      if (/^\s*(qty|quantity|code|description|price|amount|item number|item name)\b/.test(t)) return true;
+      return false;
+    }
+
+    function looksLikeInvoiceProductLine(line) {
+      const t = String(line || '');
+      if (t.length < 12) return false;
+      if (isInvoiceNoiseLine(t)) return false;
+      if (/\bsilver\b/i.test(t) && !/\bplatinum\b|\bgold\b|\bpt\b|\bau\b/i.test(t)) return false;
+      return /(coin|bullion|oz\b|ozt|platinum|gold|\bpt\b|\bau\b|outback|phoenix|dragon|lunar|kangaroo|panda|eagle|maple|britannia|koala)/i.test(t);
+    }
+
     function parseInvoicePortfolioItems(text) {
       const clean = String(text || '').replace(/\r/g, '');
-      const lineMap = buildOcrLineMap(clean);
-      const lines = lineMap.map((l) => l.text);
-      const prices = parseAudPricesFromText(clean);
-      if (!prices.length) return [];
-
-      const TOTAL_RE = /\b(subtotal|sub\s*total|order\s*total|grand\s*total|amount\s*due|total\s*due|balance\s*due|amount\s*paid|payment\s*total|cart\s*total|invoice\s*total|you\s*paid|total\s*aud|total\s*payable)\b/i;
-      const SKIP_RE = /\b(shipping|postage|courier|delivery|gst|tax|bsb|bank\s*transfer|payment\s*method|account\s*number|phone|mobile|email|address)\b/i;
-
+      const lines = clean.split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const seller = inferDealerSeller(clean, '');
       const candidates = [];
-      for (const p of prices) {
-        if (p.priceAud < 200 || p.priceAud > 25000) continue;
-        const lineIdx = lineIndexAtChar(lineMap, p.index);
-        const priceLine = lines[lineIdx] || '';
-        const windowLines = [];
-        for (let j = Math.max(0, lineIdx - 3); j <= Math.min(lines.length - 1, lineIdx + 1); j++) {
-          if (lines[j]) windowLines.push(lines[j]);
-        }
-        const blob = windowLines.join(' · ');
-        const blobLow = blob.toLowerCase();
-        const priceLineLow = priceLine.toLowerCase();
 
-        if (TOTAL_RE.test(blobLow) || TOTAL_RE.test(priceLineLow)) continue;
-        if (SKIP_RE.test(blobLow) && !looksLikeCoinProduct(blob)) continue;
-
-        // Prefer a nearby product-looking line (not a 5-line soup that matches half the catalogue)
-        let productLine = '';
-        for (let j = lineIdx; j >= Math.max(0, lineIdx - 3); j--) {
-          const L = lines[j];
-          if (!L) continue;
-          const cleaned = cleanOcrCoinName(L);
-          if (cleaned.length >= 8 && looksLikeCoinProduct(cleaned)) { productLine = cleaned; break; }
-        }
-        if (!productLine) continue;
-
-        const metal = /\bgold\b/i.test(productLine + ' ' + blob) ? 'gold'
-          : (/\bplatinum|plat\b/i.test(productLine + ' ' + blob) ? 'platinum' : null);
-        const weightOz = /\b1\/2\b|½|half/.test((productLine + blob).toLowerCase()) ? 0.5
-          : (/\b30\s*g|30g/.test((productLine + blob).toLowerCase()) ? 30 / 31.1034768
-          : (/\b1\s*oz|1oz|one\s*ounce/.test((productLine + blob).toLowerCase()) ? 1 : null));
-
+      const pushItem = (productLine, qty, unitAud, totalAud, scoreBoost = 0) => {
+        if (!productLine) return;
+        const metal = inferInvoiceMetal(productLine);
+        if (metal === 'silver') return; // portfolio catalogue is Au/Pt for now
+        const weightOz = inferInvoiceWeightOz(productLine);
         const coinId = matchOcrRowToCatalogueId({
           name: productLine,
           coin: productLine,
           metal,
           weightOz,
+          sourceLine: productLine,
         });
-        if (!coinId) continue;
-
+        if (!coinId) return;
         const coin = FACE_VALUE_COINS.find((c) => c.id === coinId);
-        if (!coin) continue;
+        if (!coin) return;
 
-        let qty = 1;
-        const qm = blob.match(/(?:qty[:\s]*|quantity[:\s]*|[x×]\s*)(\d{1,3})\b/i)
-          || blob.match(/\b(\d{1,3})\s*[x×]\b/i);
-        if (qm) qty = Math.max(1, Math.min(99, Number(qm[1]) || 1));
+        let q = Math.max(1, Math.floor(Number(qty) || 1));
+        let each = Number(unitAud);
+        let total = Number(totalAud);
 
-        let paidAudTotal = p.priceAud;
-        let paidAudEach = paidAudTotal / qty;
+        // Prefer unit price; derive from total/qty when needed
+        if (!Number.isFinite(each) && Number.isFinite(total) && q > 0) each = total / q;
+        if (!Number.isFinite(total) && Number.isFinite(each)) total = each * q;
 
-        // If OCR grabbed a multi-qty line total that fails unit band, try treating as unit price
-        if (!plausibleInvoiceUnitAud(coin, paidAudEach) && plausibleInvoiceUnitAud(coin, paidAudTotal)) {
-          qty = 1;
-          paidAudEach = paidAudTotal;
+        // If "unit" looks like a line total for multi-qty, fix it
+        if (Number.isFinite(each) && q === 1 && Number.isFinite(total) && total > each * 1.5) {
+          // ignore
         }
-        // If still too big, try dividing by qty tokens again / skip
-        if (!plausibleInvoiceUnitAud(coin, paidAudEach)) {
-          // Last resort: if price / N for N=2..10 lands in band, use that
-          let fixed = false;
-          for (let n = 2; n <= 10; n++) {
-            if (plausibleInvoiceUnitAud(coin, paidAudTotal / n)) {
-              qty = n;
-              paidAudEach = paidAudTotal / n;
-              fixed = true;
-              break;
-            }
+        if (Number.isFinite(total) && Number.isFinite(each) && q > 1) {
+          const implied = total / q;
+          if (Math.abs(implied - each) / each < 0.08) {
+            each = implied;
+            total = each * q;
           }
-          if (!fixed) continue;
         }
+
+        // Recover qty from total/unit (Perth Mint 17 × 2535 = 43096)
+        if (Number.isFinite(each) && Number.isFinite(total) && each > 0 && total > each * 1.5) {
+          const impliedQty = Math.round(total / each);
+          if (impliedQty >= 2 && impliedQty <= 500 && Math.abs(total - each * impliedQty) / total < 0.06) {
+            q = impliedQty;
+          }
+        }
+
+        if (!plausibleInvoiceUnitAud(coin, each)) return;
 
         candidates.push({
           coinId,
@@ -2502,24 +2613,94 @@
           metal: coin.metal,
           weightOz: coin.weightOz,
           theme: coin.theme,
-          qty,
-          paidAudTotal: paidAudEach * qty,
-          paidAudEach,
-          seller: inferDealerSeller(clean, ''),
-          raw: productLine.slice(0, 120),
-          score: productLine.length + (metal && coin.metal === metal ? 20 : 0) + (weightOz && Math.abs(coin.weightOz - weightOz) < 0.05 ? 20 : 0),
+          qty: q,
+          paidAudTotal: each * q,
+          paidAudEach: each,
+          seller,
+          raw: productLine.slice(0, 140),
+          score: productLine.length + scoreBoost + (metal && coin.metal === metal ? 25 : 0),
         });
+      };
+
+      // Pass 1: product lines with Perth Mint / KJC numeric rows on same line
+      // (do NOT bleed following product rows — that turned 2× Phoenix into 7× via Outback total)
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!looksLikeInvoiceProductLine(line)) continue;
+        if (isInvoiceNoiseLine(line) && !/coin/i.test(line)) continue;
+
+        // Allow a numeric-only continuation line (OCR split), but stop before another product
+        let window = line;
+        const next = lines[i + 1] || '';
+        if (next && !looksLikeInvoiceProductLine(next) && /[\d,]+\.\d{2}/.test(next) && !isInvoiceNoiseLine(next)) {
+          window = `${line} ${next}`;
+        }
+        if (/metal price|gold:\s*\$/i.test(window) && /palladium|silver:/i.test(window)) continue;
+
+        const money = parseMoneyTokens(window);
+        const qty = parseQtyToken(window) || parseQtyToken(line) || 1;
+
+        const units3 = money.filter((m) => m.decimals === 3).map((m) => m.value);
+        const money2 = money.filter((m) => m.decimals === 2).map((m) => m.value);
+
+        let unitAud = null;
+        let totalAud = null;
+
+        if (units3.length) {
+          unitAud = units3.find((v) => v >= 800 && v <= 12000) || units3[0];
+        }
+        if (money2.length) {
+          const sorted = [...money2].sort((a, b) => a - b);
+          if (!unitAud) {
+            unitAud = sorted.find((v) => v >= 800 && v <= 12000) || sorted[0];
+          }
+          // Prefer line total closest to unit * qty when qty known
+          if (unitAud && qty > 0) {
+            const target = unitAud * qty;
+            totalAud = sorted.reduce((best, v) => (
+              Math.abs(v - target) < Math.abs(best - target) ? v : best
+            ), sorted[sorted.length - 1]);
+          } else {
+            totalAud = sorted[sorted.length - 1];
+          }
+          if (totalAud === unitAud) totalAud = unitAud * qty;
+        }
+
+        if ((!unitAud || unitAud > 15000) && totalAud && qty > 1) {
+          unitAud = totalAud / qty;
+        }
+
+        pushItem(line, qty, unitAud, totalAud, 40);
       }
 
-      // Collapse by coin: keep the candidate with best score, then nearest-to-melt unit price
+      // Pass 2: fallback — price tokens near product names (legacy)
+      if (!candidates.length) {
+        const lineMap = buildOcrLineMap(clean);
+        const mapLines = lineMap.map((l) => l.text);
+        const prices = parseAudPricesFromText(clean);
+        for (const p of prices) {
+          if (p.priceAud < 200 || p.priceAud > 25000) continue;
+          const lineIdx = lineIndexAtChar(lineMap, p.index);
+          let productLine = '';
+          for (let j = lineIdx; j >= Math.max(0, lineIdx - 3); j--) {
+            if (looksLikeInvoiceProductLine(mapLines[j])) { productLine = mapLines[j]; break; }
+          }
+          if (!productLine) continue;
+          const blob = [mapLines[lineIdx - 1], mapLines[lineIdx], mapLines[lineIdx + 1]].filter(Boolean).join(' ');
+          const qty = parseQtyToken(blob) || 1;
+          pushItem(productLine, qty, p.priceAud, p.priceAud * qty, 10);
+        }
+      }
+
       const byCoin = new Map();
       for (const it of candidates) {
         const prev = byCoin.get(it.coinId);
         if (!prev) { byCoin.set(it.coinId, it); continue; }
-        if (it.score > prev.score + 5) { byCoin.set(it.coinId, it); continue; }
-        if (it.score >= prev.score - 5 && it.paidAudEach < prev.paidAudEach) byCoin.set(it.coinId, it);
+        // Prefer higher qty match (invoice lines) over a stray unit duplicate
+        if (it.qty > prev.qty) { byCoin.set(it.coinId, it); continue; }
+        if (it.qty === prev.qty && it.score > prev.score) byCoin.set(it.coinId, it);
       }
-      return [...byCoin.values()].slice(0, 20);
+      return [...byCoin.values()].slice(0, 30);
     }
 
     function mergeInvoiceIntoHoldings(holdings, items, meta = {}) {
