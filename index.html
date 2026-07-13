@@ -926,18 +926,26 @@
           if (!data || !data.spot) throw new Error('no spot');
           const g = data.spot.gold;
           const p = data.spot.platinum;
+          const tag = (v, unit, src, dec) => {
+            if (v == null) return '—';
+            let n;
+            if (v >= 10000) n = '$' + Math.round(v).toLocaleString();
+            else if (v >= 1) n = '$' + v.toLocaleString(undefined, { maximumFractionDigits: dec || 0 });
+            else n = '$' + v.toFixed(4);
+            return n + ' ' + unit + ' · ' + src;
+          };
           const items = [
-            { sym: 'Gold',     price: g && g.price, chg: g && g.chg },
-            { sym: 'Platinum', price: p && p.price, chg: p && p.chg },
-            { sym: 'Bitcoin',  price: data.spot.btc && data.spot.btc.price, chg: data.spot.btc && data.spot.btc.chg },
-            { sym: 'Ethereum', price: data.spot.eth && data.spot.eth.price, chg: data.spot.eth && data.spot.eth.chg },
-            { sym: 'CFX',      price: data.spot.cfx && data.spot.cfx.price, chg: data.spot.cfx && data.spot.cfx.chg },
+            { sym: 'Gold',     price: tag(g && g.price, 'USD/oz', 'LBMA', 0), chg: g && g.chg },
+            { sym: 'Platinum', price: tag(p && p.price, 'USD/oz', 'LBMA', 0), chg: p && p.chg },
+            { sym: 'Bitcoin',  price: tag(data.spot.btc && data.spot.btc.price, 'USD', 'CoinGecko', 0), chg: data.spot.btc && data.spot.btc.chg },
+            { sym: 'Ethereum', price: tag(data.spot.eth && data.spot.eth.price, 'USD', 'CoinGecko', 0), chg: data.spot.eth && data.spot.eth.chg },
+            { sym: 'CFX',      price: tag(data.spot.cfx && data.spot.cfx.price, 'USD', 'CoinGecko', 4), chg: data.spot.cfx && data.spot.cfx.chg },
           ];
           const el = document.getElementById('ticker');
           if (!el) return;
           el.innerHTML = items.map(({ sym, price, chg }) =>
             '<div class="ticker-item"><span class="ticker-sym">' + sym + '</span>' +
-            '<span class="ticker-price">' + fmtUsd(price) + '</span>' +
+            '<span class="ticker-price">' + price + '</span>' +
             '<span class="ticker-chg ' + chgClass(chg) + '">' + fmtPct(chg) + '</span></div>'
           ).join('');
           const dot = document.getElementById('live-dot');
@@ -1857,6 +1865,45 @@
       if (v >= 0.01)    return `$${v.toFixed(4)}`;
       return `$${v.toFixed(6)}`;
     };
+
+    /** Short source chip for price labels — always pair with currency. */
+    function shortPriceSource(source) {
+      if (!source) return null;
+      const s = String(source);
+      if (/LBMA/i.test(s)) return 'LBMA';
+      if (/Perth/i.test(s)) return 'Perth Mint';
+      if (/CoinGecko/i.test(s)) return 'CoinGecko';
+      if (/Yahoo|JSE/i.test(s)) return 'JSE';
+      if (/dealer|Bullion|Ainslie|ABC/i.test(s)) return 'Dealer';
+      return s.length > 28 ? `${s.slice(0, 26)}…` : s;
+    }
+
+    /**
+     * Every visible price: number + currency (+ optional source).
+     * unit: 'USD/oz' | 'USD' | 'AUD' | 'AUD/oz' | 'ZAR'
+     */
+    function fmtTaggedPrice(v, unit, source, dec) {
+      if (v == null || isNaN(v)) return '—';
+      let core;
+      if (unit === 'AUD/oz') {
+        core = (Math.abs(v) >= 100
+          ? `$${Math.round(v).toLocaleString()} AUD/oz`
+          : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AUD/oz`);
+      } else if (unit === 'AUD') {
+        core = Math.abs(v) >= 100
+          ? `$${Math.round(v).toLocaleString()} AUD`
+          : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AUD`;
+      } else if (unit === 'USD/oz') {
+        core = `${fmtUsd(v, dec ?? 0)} USD/oz`;
+      } else if (unit === 'ZAR') {
+        core = fmtZar(v);
+      } else {
+        // USD and fallbacks
+        core = `${fmtUsd(v, dec)} USD`;
+      }
+      const tag = shortPriceSource(source);
+      return tag ? `${core} · ${tag}` : core;
+    }
 
     const fmtPct = (v) => {
       if (v == null || isNaN(v)) return '—';
@@ -4454,7 +4501,7 @@
             {d.recycling != null && <div style={{color: C.plat, marginBottom: 2}}>Recycling · {fmtVol(d.recycling)}</div>}
             {d.totalDemand != null && <div style={{color: '#B91C1C', marginBottom: 2, fontWeight: 600}}>Demand · {fmtVol(d.totalDemand)}</div>}
             {d.hydrogenDemand != null && <div style={{color: '#047857', marginBottom: 2}}>H₂ / tech · {fmtVol(d.hydrogenDemand)}</div>}
-            {d.price != null && <div style={{color: '#1E3A5F', marginBottom: 2, fontWeight: 600}}>Pt price · {fmtUsd(d.price, 0)}/oz</div>}
+            {d.price != null && <div style={{color: '#1E3A5F', marginBottom: 2, fontWeight: 600}}>Pt · {fmtTaggedPrice(d.price, 'USD/oz', 'LBMA', 0)}</div>}
             {d.cumDefAbs > 0 && (
               <div style={{color: '#B91C1C', fontWeight: 700, marginTop: 4}}>
                 Cumulative hole · {fmtVol(d.cumDefAbs)}
@@ -4502,8 +4549,8 @@
                 ['Cum. hole now', cumNow != null ? fmtVol(cumNow) : '—', 'Since 2022 · through 2026'],
                 ['Cum. hole → 2030f', cum2030 != null ? fmtVol(cum2030) : '—', 'Growing shortage (this scenario)'],
                 ['2025 spike → now', spikePrice != null && lastPrice?.price != null
-                  ? `${fmtUsd(spikePrice, 0)} → ${fmtUsd(lastPrice.price, 0)}`
-                  : '—', 'Price rose hard, then pulled back'],
+                  ? `${fmtTaggedPrice(spikePrice, 'USD/oz', 'LBMA', 0)} → ${fmtTaggedPrice(lastPrice.price, 'USD/oz', 'LBMA', 0)}`
+                  : '—', 'LBMA USD/oz · rose hard, then pulled back'],
                 ['Glance', 'Hole ↑ · price lags', 'Demand sloping up · supply flat'],
               ].map(([k, v, sub]) => (
                 <div key={k} style={{
@@ -5142,16 +5189,16 @@
       const mode = el.dataset.mode || 'index';
       if (mode === 'perth') return;
       const items = [
-        { sym:'Gold',     ...live.gold,     color: C.gold },
-        { sym:'Platinum', ...live.platinum, color: C.plat },
-        { sym:'Bitcoin',  ...live.btc,      color: C.btc },
-        { sym:'Ethereum', ...live.eth,      color: C.eth },
-        { sym:'Conflux',  ...live.cfx,      color: C.cfx },
+        { sym:'Gold',     ...live.gold,     unit:'USD/oz', src:'LBMA', dec:0 },
+        { sym:'Platinum', ...live.platinum, unit:'USD/oz', src:'LBMA', dec:0 },
+        { sym:'Bitcoin',  ...live.btc,      unit:'USD', src:'CoinGecko', dec:0 },
+        { sym:'Ethereum', ...live.eth,      unit:'USD', src:'CoinGecko', dec:0 },
+        { sym:'Conflux',  ...live.cfx,      unit:'USD', src:'CoinGecko', dec:4 },
       ];
-      el.innerHTML = items.map(({sym, price, chg}) => `
+      el.innerHTML = items.map(({sym, price, chg, unit, src, dec}) => `
         <div class="ticker-item">
           <span class="ticker-sym">${sym}</span>
-          <span class="ticker-price">${fmtUsd(price, sym==='Conflux'?4:0)}</span>
+          <span class="ticker-price">${fmtTaggedPrice(price, unit, src, dec)}</span>
           <span class="ticker-chg ${chgClass(chg)}">${fmtPct(chg)}</span>
         </div>
       `).join('');
@@ -5160,12 +5207,11 @@
     function updateTickerPerth({ ptOffer, ptBid, auOffer, fx }) {
       const el = document.getElementById('ticker');
       if (!el || el.dataset.mode !== 'perth') return;
-      const aud = v => v == null ? '—' : '$' + Math.round(v).toLocaleString() + ' AUD';
       const items = [
-        { sym:'Platinum Sell', price: aud(ptOffer), chg: null },
-        { sym:'Platinum Buy',  price: aud(ptBid), chg: null },
-        { sym:'Gold Sell',     price: aud(auOffer), chg: null },
-        { sym:'AUD/USD',       price: fx ? fx.toFixed(4) : '—', chg: null },
+        { sym:'Pt Sell', price: fmtTaggedPrice(ptOffer, 'AUD/oz', 'Perth Mint') },
+        { sym:'Pt Buy',  price: fmtTaggedPrice(ptBid, 'AUD/oz', 'Perth Mint') },
+        { sym:'Au Sell', price: fmtTaggedPrice(auOffer, 'AUD/oz', 'Perth Mint') },
+        { sym:'AUDUSD',  price: fx ? fx.toFixed(4) + ' FX' : '—' },
       ];
       el.innerHTML = items.map(({sym, price}) => `
         <div class="ticker-item">
@@ -5183,30 +5229,40 @@
       boxShadow: '0 1px 3px rgba(26,35,50,0.04), 0 4px 16px rgba(26,35,50,0.04)',
     };
 
-    const PriceCard = ({ label, sub, price, chg, color, loading, indexId, unit }) => (
-      <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 180px', minWidth:165}}>
-        <div style={{marginBottom:8}}>
-          <div style={{fontSize:12, fontWeight:600, color:C.textDark, lineHeight:1.35}}>{label}</div>
-          {indexId && <div style={{fontSize:9, color:C.text, marginTop:3, letterSpacing:'0.04em'}}>{indexId}</div>}
+    const PriceCard = ({ label, sub, price, chg, color, loading, indexId, unit, source }) => {
+      const meta = indexId ? CURVE_INDEX[indexId] : null;
+      const u = unit || meta?.unit || 'USD';
+      const src = source || meta?.source || null;
+      const dec = (u === 'USD' && (label?.includes('Conflux') || meta?.id === 'IDX-005')) ? 4 : (u === 'USD/oz' ? 0 : undefined);
+      const priceText = fmtTaggedPrice(price, u, null, dec); // currency on number
+      const srcTag = shortPriceSource(src);
+      return (
+        <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 180px', minWidth:165}}>
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:12, fontWeight:600, color:C.textDark, lineHeight:1.35}}>{label}</div>
+            <div style={{fontSize:9, color:C.text, marginTop:3, letterSpacing:'0.04em', textTransform:'uppercase'}}>
+              {[indexId, srcTag, u].filter(Boolean).join(' · ')}
+            </div>
+          </div>
+          <div style={{fontSize:20, fontWeight:600, color, fontVariantNumeric:'tabular-nums',
+            marginBottom:4, opacity: loading ? 0.4 : 1, lineHeight:1.25}}>
+            {loading ? <span className="skeleton" style={{display:'inline-block', minWidth:100, height:28}}>&nbsp;</span>
+              : priceText}
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+            {!loading && chg != null && !Number.isNaN(chg) && (
+              <span style={{
+                fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums',
+                color: chg >= 0 ? '#047857' : '#B91C1C',
+                background: chg >= 0 ? 'rgba(4,120,87,0.08)' : 'rgba(185,28,28,0.08)',
+                padding:'2px 7px', borderRadius:4,
+              }}>{fmtPct(chg)}</span>
+            )}
+            {sub && <span style={{fontSize:11, color:C.text}}>{sub}</span>}
+          </div>
         </div>
-        <div style={{fontSize:22, fontWeight:600, color, fontVariantNumeric:'tabular-nums',
-          marginBottom:4, opacity: loading ? 0.4 : 1}}>
-          {loading ? <span className="skeleton" style={{display:'inline-block', minWidth:100, height:28}}>&nbsp;</span>
-            : (unit === 'AUD' ? `$${Math.round(price||0).toLocaleString()} AUD` : fmtUsd(price, label?.includes('Conflux')?4:0))}
-        </div>
-        <div style={{display:'flex', alignItems:'center', gap:8}}>
-          {!loading && chg != null && !Number.isNaN(chg) && (
-            <span style={{
-              fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums',
-              color: chg >= 0 ? '#047857' : '#B91C1C',
-              background: chg >= 0 ? 'rgba(4,120,87,0.08)' : 'rgba(185,28,28,0.08)',
-              padding:'2px 7px', borderRadius:4,
-            }}>{fmtPct(chg)}</span>
-          )}
-          {sub && <span style={{fontSize:11, color:C.text}}>{sub}</span>}
-        </div>
-      </div>
-    );
+      );
+    };
 
     const CurveIndexLibrary = ({ tab }) => {
       const entries = Object.values(CURVE_INDEX).filter(c => c.tab === tab || (tab === 'all'));
@@ -5254,11 +5310,7 @@
             const meta = CURVE_INDEX[p.dataKey];
             if (!meta) return null;
             const u = tipUnit || meta.unit;
-            const val = u === 'AUD'
-              ? fmtAud(p.value)
-              : u === 'ZAR'
-                ? fmtZar(p.value)
-                : fmtUsd(p.value);
+            const val = fmtTaggedPrice(p.value, u, meta.source);
             return (
               <div key={p.dataKey} style={{color:meta.color, marginBottom:2}}>
                 {meta.label} · {val}
@@ -5411,8 +5463,8 @@
       return (
         <div style={tipStyle}>
           <div style={{color:C.text, marginBottom:4, fontSize:11, fontWeight:600}}>{d.y}</div>
-          <div style={{color:C.gold}}>Gold · ${d.g?.toLocaleString()}/oz</div>
-          <div style={{color:C.plat}}>Platinum · ${d.p?.toLocaleString()}/oz</div>
+          <div style={{color:C.gold}}>Gold · {fmtTaggedPrice(d.g, 'USD/oz', 'LBMA', 0)}</div>
+          <div style={{color:C.plat}}>Platinum · {fmtTaggedPrice(d.p, 'USD/oz', 'LBMA', 0)}</div>
         </div>
       );
     };
@@ -5423,9 +5475,9 @@
       return (
         <div style={tipStyle}>
           <div style={{color:C.text, marginBottom:4, fontSize:11, fontWeight:600}}>{d.y}</div>
-          {d.b != null && <div style={{color:C.btc}}>BTC · ${d.b.toLocaleString()}</div>}
-          {d.e != null && <div style={{color:C.eth}}>ETH · ${d.e.toLocaleString()}</div>}
-          {d.c != null && <div style={{color:C.cfx}}>CFX · ${d.c.toFixed(4)}</div>}
+          {d.b != null && <div style={{color:C.btc}}>BTC · {fmtTaggedPrice(d.b, 'USD', 'CoinGecko', 0)}</div>}
+          {d.e != null && <div style={{color:C.eth}}>ETH · {fmtTaggedPrice(d.e, 'USD', 'CoinGecko', 0)}</div>}
+          {d.c != null && <div style={{color:C.cfx}}>CFX · {fmtTaggedPrice(d.c, 'USD', 'CoinGecko', 4)}</div>}
         </div>
       );
     };
@@ -5464,7 +5516,7 @@
             <>
               <div style={{color:'#DC2626'}}>Annual balance · {fmtKoz(d.balance)}</div>
               <div style={{color:'#991B1B', fontWeight:600}}>Cumulative · {fmtKoz(d.cumBalance)}</div>
-              <div style={{color:C.plat}}>Pt price · ${d.price?.toLocaleString()}/oz</div>
+              <div style={{color:C.plat}}>Pt price · {fmtTaggedPrice(d.price, 'USD/oz', 'LBMA', 0)}</div>
               {d.priceChg != null && <div style={{color:C.text}}>YoY price · {fmtPct(d.priceChg)}</div>}
               {d.totalDemand != null && <div style={{color:C.text}}>Demand · {d.totalDemand?.toLocaleString()} koz</div>}
               {d.totalSupply != null && <div style={{color:C.text}}>Supply · {d.totalSupply?.toLocaleString()} koz</div>}
@@ -5473,7 +5525,7 @@
           {label === 'cover' && (
             <>
               <div style={{color:C.plat}}>Stock cover · {d.monthsCover} months</div>
-              <div style={{color:C.plat}}>Pt price · ${d.price?.toLocaleString()}/oz</div>
+              <div style={{color:C.plat}}>Pt price · {fmtTaggedPrice(d.price, 'USD/oz', 'LBMA', 0)}</div>
               <div style={{color:'#DC2626'}}>Balance · {fmtKoz(d.balance)}</div>
             </>
           )}
@@ -6138,7 +6190,7 @@
               curveId: 'IDX-005',
               label: 'Conflux Network · CFX (USD)',
               unit: 'USD',
-              sourceLabel: 'USD spot · live crypto feed',
+              sourceLabel: 'CoinGecko · USD spot',
               livePrice: liveSpot?.cfx?.price,
               liveChg: liveSpot?.cfx?.chg,
               rows: cfxRowsLive,
@@ -7533,14 +7585,14 @@
               flexWrap: 'wrap',
               gap: '6px 18px',
             }}>
-              <span>Pt <strong>{pt != null ? fmtUsd(pt, 0) : '—'}</strong>
+              <span>Pt <strong>{pt != null ? fmtTaggedPrice(pt, 'USD/oz', 'LBMA', 0) : '—'}</strong>
                 {live?.platinum?.chg != null && (
                   <span style={{color: live.platinum.chg >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
                     {fmtPct(live.platinum.chg)}
                   </span>
                 )}
               </span>
-              <span>CFX <strong>{cfx != null ? fmtUsd(cfx, 4) : '—'}</strong>
+              <span>CFX <strong>{cfx != null ? fmtTaggedPrice(cfx, 'USD', 'CoinGecko', 4) : '—'}</strong>
                 {live?.cfx?.chg != null && (
                   <span style={{color: live.cfx.chg >= 0 ? '#047857' : '#B91C1C', marginLeft: 6}}>
                     {fmtPct(live.cfx.chg)}
@@ -7739,7 +7791,7 @@
               </div>
             )}
             {d.price != null && (
-              <div style={{color: C.plat, marginBottom: 3}}>Pt price · {fmtUsd(d.price, 0)}/oz</div>
+              <div style={{color: C.plat, marginBottom: 3}}>Pt · {fmtTaggedPrice(d.price, 'USD/oz', 'LBMA', 0)}</div>
             )}
             {d.priceChg != null && (
               <div style={{color: C.text, marginBottom: 3}}>YoY price · {fmtPct(d.priceChg)}</div>
@@ -7794,7 +7846,7 @@
               flexWrap: 'wrap',
               gap: '6px 18px',
             }}>
-              <span>Live Pt <strong>{pt != null ? fmtUsd(pt, 0) : '—'}</strong></span>
+              <span>Live Pt <strong>{pt != null ? fmtTaggedPrice(pt, 'USD/oz', 'LBMA', 0) : '—'}</strong></span>
               <span>Pt/Au <strong>{ratio != null ? `${(ratio * 100).toFixed(1)}%` : '—'}</strong></span>
               <span style={{color: C.text}}>Red bars = deficit · green = surplus · slate line = Pt USD/oz</span>
             </div>
@@ -8182,8 +8234,8 @@
               marginTop: 14, fontSize: 13, color: C.textDark, fontVariantNumeric: 'tabular-nums',
               display: 'flex', flexWrap: 'wrap', gap: '6px 18px', alignItems: 'center',
             }}>
-              <span>Perth Pt <strong>{spotAudPt != null ? fmtAud(spotAudPt) : '—'}</strong>/oz</span>
-              <span>Perth Au <strong>{spotAudAu != null ? fmtAud(spotAudAu) : '—'}</strong>/oz</span>
+              <span>Perth Pt <strong>{spotAudPt != null ? fmtAud(spotAudPt) : '—'}</strong>/oz · Perth Mint</span>
+              <span>Perth Au <strong>{spotAudAu != null ? fmtAud(spotAudAu) : '—'}</strong>/oz · Perth Mint</span>
               {audUsd > 0 && (
                 <span>FX <strong>{Number(audUsd).toFixed(4)}</strong> AUDUSD</span>
               )}
@@ -8302,9 +8354,9 @@
                   <th style={{padding: '10px 12px'}}>Theme</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Coin', 'name')}</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Weight', 'weightOz')}</th>
-                  <th style={{padding: '10px 12px'}}>{thBtn('Spot (AUD)', 'spotAud')}</th>
-                  <th style={{padding: '10px 12px'}}>{thBtn('Melt (AUD)', 'meltAud')}</th>
-                  <th style={{padding: '10px 12px'}}>{thBtn('Ask (AUD)', 'askAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Spot AUD · Perth', 'spotAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Melt AUD · Perth', 'meltAud')}</th>
+                  <th style={{padding: '10px 12px'}}>{thBtn('Ask AUD', 'askAud')}</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Prem %', 'premiumPct')}</th>
                   <th style={{padding: '10px 12px'}}>Dealer / Buy</th>
                   <th style={{padding: '10px 12px'}}>{thBtn('Value', 'valueScore')}</th>
@@ -8340,15 +8392,21 @@
                     </td>
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.textDark, fontWeight: 600}}>
                       {r.spotAud != null ? fmtAud(r.spotAud) : '—'}
-                      <div style={{fontSize: 10, fontWeight: 400, color: C.text}}>/oz Perth</div>
+                      <div style={{fontSize: 10, fontWeight: 400, color: C.text}}>AUD/oz · Perth Mint</div>
                     </td>
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums', color: C.textDark, fontWeight: 600}}>
                       {r.meltAud != null ? fmtAud(r.meltAud) : '—'}
-                      <div style={{fontSize: 10, fontWeight: 400, color: C.text}}>{fmtWt(r.weightOz)} × spot</div>
+                      <div style={{fontSize: 10, fontWeight: 400, color: C.text}}>{fmtWt(r.weightOz)} × Perth AUD/oz</div>
                     </td>
                     <td style={{padding: '10px 12px', fontVariantNumeric: 'tabular-nums'}}>
                       <div style={{fontWeight: 600}}>{r.askAud != null ? fmtAud(r.askAud) : '—'}</div>
-                      <div style={{fontSize: 10, color: C.text}}>{r.askLabel}</div>
+                      <div style={{fontSize: 10, color: C.text}}>
+                        {r.askBasis === 'usd_fx' ? `USD ask÷FX · ${r.dealer}`
+                          : r.askBasis === 'firm' ? `Firm AUD · ${r.dealer}`
+                          : r.askBasis === 'perth' ? 'Perth Mint × wt'
+                          : r.askBasis === 'indicative' ? `${r.askLabel} · ${r.dealer}`
+                          : r.askLabel}
+                      </div>
                     </td>
                     <td style={{
                       padding: '10px 12px', fontWeight: 700, fontVariantNumeric: 'tabular-nums',
@@ -8750,7 +8808,9 @@
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8, marginBottom:6}}>
             <div>
               <div style={{fontSize:12, fontWeight:600, color:C.textDark, lineHeight:1.35}}>{m?.label || q.company}</div>
-              <div style={{fontSize:9, color:C.text, marginTop:3, letterSpacing:'0.04em'}}>{q.id || m?.id}</div>
+              <div style={{fontSize:9, color:C.text, marginTop:3, letterSpacing:'0.04em', textTransform:'uppercase'}}>
+            {(q.id || m?.id) || ''} · JSE · AUD (from ZAR)
+          </div>
             </div>
             <span style={{fontSize:10, fontWeight:600, padding:'2px 8px', borderRadius:4,
               background:C.surface2, color:C.textDark, whiteSpace:'nowrap'}}>{q.country || m?.country}</span>
@@ -8758,11 +8818,11 @@
           <div style={{fontSize:11, color:C.plat, fontWeight:600, marginBottom:8}}>
             {q.ticker || m?.ticker} · {q.exchange || m?.exchange || 'JSE'}
           </div>
-          <div style={{fontSize:22, fontWeight:600, color: m?.color || C.plat, fontVariantNumeric:'tabular-nums', marginBottom:4}}>
-            {aud != null ? fmtAud(aud) : '···'}
+          <div style={{fontSize:20, fontWeight:600, color: m?.color || C.plat, fontVariantNumeric:'tabular-nums', marginBottom:4}}>
+            {aud != null ? fmtTaggedPrice(aud, 'AUD', 'JSE') : '···'}
           </div>
           {q.priceZar != null && (
-            <div style={{fontSize:11, color:C.text, marginBottom:6}}>{fmtZar(q.priceZar)} JSE</div>
+            <div style={{fontSize:11, color:C.text, marginBottom:6}}>{fmtZar(q.priceZar)} ZAR · JSE native</div>
           )}
           <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
             {chg != null && (
@@ -8859,9 +8919,9 @@
           const el = document.getElementById('ticker');
           if (!el) return;
           el.innerHTML = `
-            <div class="ticker-item"><span class="ticker-sym">XPT</span><span class="ticker-price">${fmtUsd(live.platinum?.price, 0)}</span></div>
-            <div class="ticker-item"><span class="ticker-sym">CFX</span><span class="ticker-price">${fmtUsd(live.cfx?.price, 4)}</span></div>
-            <div class="ticker-item"><span class="ticker-sym">XAU</span><span class="ticker-price">${fmtUsd(live.gold?.price, 0)}</span></div>
+            <div class="ticker-item"><span class="ticker-sym">XPT</span><span class="ticker-price">${fmtTaggedPrice(live.platinum?.price, 'USD/oz', 'LBMA', 0)}</span></div>
+            <div class="ticker-item"><span class="ticker-sym">CFX</span><span class="ticker-price">${fmtTaggedPrice(live.cfx?.price, 'USD', 'CoinGecko', 4)}</span></div>
+            <div class="ticker-item"><span class="ticker-sym">XAU</span><span class="ticker-price">${fmtTaggedPrice(live.gold?.price, 'USD/oz', 'LBMA', 0)}</span></div>
           `;
         }
         if (tab === 'producers' && producerMeta?.quotes?.length) {
@@ -8870,7 +8930,7 @@
           el.innerHTML = producerMeta.quotes.map(q => `
             <div class="ticker-item">
               <span class="ticker-sym">${q.ticker}</span>
-              <span class="ticker-price">${fmtAud(zarToAud(q.priceZar, zarPerAud))}</span>
+              <span class="ticker-price">${fmtTaggedPrice(zarToAud(q.priceZar, zarPerAud), 'AUD', 'JSE')}</span>
               <span class="ticker-chg ${chgClass(q.changePct)}">${fmtPct(q.changePct)}</span>
             </div>
           `).join('');
@@ -8937,58 +8997,66 @@
                 price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
               <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="vs prior LBMA fix" color={C.plat}
                 price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
-              <PriceCard indexId="IDX-003" label={CURVE_INDEX['IDX-003'].label} sub="24 hour change" color={C.btc}
+              <PriceCard indexId="IDX-003" label={CURVE_INDEX['IDX-003'].label} sub="24h · CoinGecko USD" color={C.btc}
                 price={live?.btc?.price} chg={live?.btc?.chg} loading={loading} />
-              <PriceCard indexId="IDX-004" label={CURVE_INDEX['IDX-004'].label} sub="24 hour change" color={C.eth}
+              <PriceCard indexId="IDX-004" label={CURVE_INDEX['IDX-004'].label} sub="24h · CoinGecko USD" color={C.eth}
                 price={live?.eth?.price} chg={live?.eth?.chg} loading={loading} />
-              <PriceCard indexId="IDX-005" label={CURVE_INDEX['IDX-005'].label} sub="24 hour change" color={C.cfx}
+              <PriceCard indexId="IDX-005" label={CURVE_INDEX['IDX-005'].label} sub="24h · CoinGecko USD" color={C.cfx}
                 price={live?.cfx?.price} chg={live?.cfx?.chg} loading={loading} />
             </div>
           ) : tab === 'perth' ? (
             <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
-              <PriceCard indexId="IDX-103" label={CURVE_INDEX['IDX-103'].label} sub="Perth Mint retail offer" color={C.plat} unit="AUD"
+              <PriceCard indexId="IDX-103" label={CURVE_INDEX['IDX-103'].label} sub="Perth Mint retail offer · AUD/oz" color={C.plat} unit="AUD"
                 price={ptLast?.offer} loading={!ptLast} />
-              <PriceCard indexId="IDX-104" label={CURVE_INDEX['IDX-104'].label} sub="Perth Mint retail bid" color="#8B9CB3" unit="AUD"
+              <PriceCard indexId="IDX-104" label={CURVE_INDEX['IDX-104'].label} sub="Perth Mint retail bid · AUD/oz" color="#8B9CB3" unit="AUD"
                 price={ptLast?.bid} loading={!ptLast} />
-              <PriceCard indexId="IDX-101" label={CURVE_INDEX['IDX-101'].label} sub="Perth Mint retail offer" color="#C9A227" unit="AUD"
+              <PriceCard indexId="IDX-101" label={CURVE_INDEX['IDX-101'].label} sub="Perth Mint retail offer · AUD/oz" color="#C9A227" unit="AUD"
                 price={auLast?.offer} loading={!auLast} />
-              <PriceCard indexId="IDX-102" label={CURVE_INDEX['IDX-102'].label} sub="Perth Mint retail bid" color="#A8891A" unit="AUD"
+              <PriceCard indexId="IDX-102" label={CURVE_INDEX['IDX-102'].label} sub="Perth Mint retail bid · AUD/oz" color="#A8891A" unit="AUD"
                 price={auLast?.bid} loading={!auLast} />
               {ptPrem != null && (
                 <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 180px', minWidth:165}}>
-                  <div style={{fontSize:12, fontWeight:600, color:C.textDark, marginBottom:8}}>Platinum coin premium over spot</div>
+                  <div style={{fontSize:12, fontWeight:600, color:C.textDark, marginBottom:8}}>Platinum coin premium</div>
+                  <div style={{fontSize:9, color:C.text, marginTop:0, marginBottom:8, letterSpacing:'0.04em', textTransform:'uppercase'}}>
+                    Perth AUD vs LBMA USD
+                  </div>
                   <div style={{fontSize:22, fontWeight:600, color:'#047857', fontVariantNumeric:'tabular-nums'}}>+{ptPrem.toFixed(1)}%</div>
-                  <div style={{fontSize:11, color:C.text, marginTop:4}}>Perth Mint sell price vs LBMA spot (USD)</div>
+                  <div style={{fontSize:11, color:C.text, marginTop:4}}>Perth Mint sell (AUD) vs LBMA fix (USD), FX-adjusted</div>
                 </div>
               )}
             </div>
           ) : tab === 'bridge' ? (
             <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
-              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="LBMA spot" color={C.plat}
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="LBMA USD/oz benchmark" color={C.plat}
                 price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
-              <PriceCard indexId="IDX-005" label={CURVE_INDEX['IDX-005'].label} sub="24 hour change" color={C.cfx}
+              <PriceCard indexId="IDX-005" label={CURVE_INDEX['IDX-005'].label} sub="CoinGecko USD spot" color={C.cfx}
                 price={live?.cfx?.price} chg={live?.cfx?.chg} loading={loading} />
-              <PriceCard indexId="IDX-001" label="Gold — reference" sub="Pt/Au context" color={C.gold}
+              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label} sub="LBMA USD/oz · Pt/Au context" color={C.gold}
                 price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
             </div>
           ) : tab === 'wtf' ? (
             <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
-              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="Live spot vs the WTF curve" color={C.plat}
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="LBMA USD/oz · live vs WTF curve" color={C.plat}
                 price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
-              <PriceCard indexId="IDX-001" label="Gold — reference" sub="Discount context" color={C.gold}
+              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label} sub="LBMA USD/oz · discount context" color={C.gold}
                 price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
             </div>
           ) : tab === 'face' ? (
             <div style={{display:'flex', flexWrap:'wrap', gap:12, marginBottom:16}}>
-              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label} sub="Melt reference" color={C.gold}
+              <PriceCard indexId="IDX-001" label={CURVE_INDEX['IDX-001'].label}
+                sub="LBMA USD/oz · global fix — not Perth melt" color={C.gold}
                 price={live?.gold?.price} chg={live?.gold?.chg} loading={loading} />
-              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label} sub="Melt reference" color={C.plat}
+              <PriceCard indexId="IDX-002" label={CURVE_INDEX['IDX-002'].label}
+                sub="LBMA USD/oz · global fix — not Perth melt" color={C.plat}
                 price={live?.platinum?.price} chg={live?.platinum?.chg} loading={loading} />
               {ptPrem != null && (
                 <div style={{...cardStyle, padding:'18px 20px', flex:'1 1 180px', minWidth:165}}>
                   <div style={{fontSize:12, fontWeight:600, color:C.textDark, marginBottom:8}}>Perth Pt 1oz premium</div>
+                  <div style={{fontSize:9, color:C.text, marginBottom:8, letterSpacing:'0.04em', textTransform:'uppercase'}}>
+                    Perth AUD vs LBMA USD
+                  </div>
                   <div style={{fontSize:22, fontWeight:600, color:'#047857', fontVariantNumeric:'tabular-nums'}}>+{ptPrem.toFixed(1)}%</div>
-                  <div style={{fontSize:11, color:C.text, marginTop:4}}>Bullion benchmark vs LBMA</div>
+                  <div style={{fontSize:11, color:C.text, marginTop:4}}>Perth Mint retail (AUD) vs LBMA fix (USD), FX-adjusted</div>
                 </div>
               )}
             </div>
