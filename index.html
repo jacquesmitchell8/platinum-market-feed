@@ -1580,61 +1580,121 @@
     }
 
     function parseAudPricesFromText(text) {
-      const re = /(?:A\$|AU\$|AUD\s*\$?|\$)\s*([\d,]{2,6}(?:\.\d{1,2})?)/gi;
       const out = [];
-      let m;
-      while ((m = re.exec(text)) != null) {
-        const n = Number(String(m[1]).replace(/,/g, ''));
-        if (Number.isFinite(n) && n >= 80 && n <= 50000) {
-          out.push({ priceAud: n, index: m.index, raw: m[0] });
+      const seen = new Set();
+      const push = (rawNum, index, raw) => {
+        const n = Number(String(rawNum).replace(/,/g, ''));
+        if (!Number.isFinite(n) || n < 80 || n > 50000) return;
+        for (const existing of out) {
+          if (Math.abs(existing.priceAud - n) < 0.01 && Math.abs(existing.index - index) < 48) return;
+        }
+        const key = `${index}|${Math.round(n * 100)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ priceAud: n, index, raw: raw || String(rawNum) });
+      };
+
+      const patterns = [
+        /(?:A\$|AU\$|AUD\s*\$?|\$)\s*([\d,]{2,6}(?:\.\d{1,2})?)/gi,
+        /\bAUD\s*([\d,]{2,6}\.\d{2})\b/gi,
+        /\b([\d,]{2,6}\.\d{2})\s*AUD\b/gi,
+        /(?:^|[\s:])([\d]{1,2},[\d]{3}\.\d{2})(?:\s|$|[,.])/gm,
+      ];
+      for (const re of patterns) {
+        let m;
+        while ((m = re.exec(text)) != null) {
+          push(m[1], m.index, m[0]);
         }
       }
+      out.sort((a, b) => a.index - b.index);
       return out;
+    }
+
+    function buildOcrLineMap(text) {
+      const map = [];
+      let pos = 0;
+      for (const raw of String(text || '').split('\n')) {
+        const trimmed = raw.trim();
+        if (trimmed) {
+          const lead = raw.search(/\S/);
+          map.push({
+            text: trimmed,
+            start: pos + (lead >= 0 ? lead : 0),
+            end: pos + raw.length,
+          });
+        }
+        pos += raw.length + 1;
+      }
+      return map;
+    }
+
+    function lineIndexAtChar(lineMap, charIndex) {
+      for (let i = 0; i < lineMap.length; i++) {
+        if (charIndex >= lineMap[i].start && charIndex <= lineMap[i].end) return i;
+      }
+      let best = 0;
+      for (let i = 0; i < lineMap.length; i++) {
+        if (lineMap[i].start <= charIndex) best = i;
+      }
+      return best;
+    }
+
+    function cleanOcrCoinName(name) {
+      let s = String(name || '').replace(/\s+/g, ' ').trim();
+      s = s.replace(/\b(\w+)(?:\s+\1){2,}\b/gi, '$1');
+      s = s.replace(/^[^a-z0-9]*(?:u\.\.?|coins?\s*)+/i, '');
+      s = s.replace(/(?:A\$|AU\$|AUD\s*\$?|\$)\s*[\d,]+(?:\.\d{1,2})?/gi, '').trim();
+      if (s.length > 80) s = `${s.slice(0, 78)}…`;
+      return s;
+    }
+
+    function splitOcrUploadText(text) {
+      const chunks = [];
+      const re = /---\s*(.+?)\s*---\n([\s\S]*?)(?=\n\n---\s|$)/g;
+      let m;
+      while ((m = re.exec(String(text || ''))) != null) {
+        chunks.push({ fileName: m[1].trim(), text: m[2] });
+      }
+      if (!chunks.length) chunks.push({ fileName: 'pasted-text', text: String(text || '') });
+      return chunks;
     }
 
     /** Heuristic OCR → listing candidates (dealer pages are noisy — best-effort). */
     function parseDealerOcrText(text) {
       const clean = String(text || '').replace(/\r/g, '');
-      const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+      const lineMap = buildOcrLineMap(clean);
+      const lines = lineMap.map((l) => l.text);
       const prices = parseAudPricesFromText(clean);
       if (!prices.length) return [];
 
       const items = [];
       const seen = new Set();
       for (const p of prices) {
-        // Find line nearest this price occurrence
-        let pos = 0;
-        let lineIdx = 0;
-        for (let i = 0; i < lines.length; i++) {
-          const next = pos + lines[i].length + 1;
-          if (p.index >= pos && p.index < next) { lineIdx = i; break; }
-          pos = next;
-          lineIdx = i;
-        }
+        const lineIdx = lineIndexAtChar(lineMap, p.index);
         const nameParts = [];
-        for (let j = Math.max(0, lineIdx - 3); j <= lineIdx; j++) {
+        for (let j = Math.max(0, lineIdx - 4); j <= lineIdx; j++) {
           const L = lines[j];
           if (!L) continue;
-          if (/^(add|buy|cart|qty|quantity|in stock|sku|code)\b/i.test(L)) continue;
+          if (/^(add|buy|cart|qty|quantity|in stock|sku|code|sort|filter|page)\b/i.test(L)) continue;
           if (/^(A\$|AU\$|AUD|\$)\s*[\d,]/.test(L) && L.length < 18) continue;
-          if (L.length < 4 || L.length > 90) continue;
-          nameParts.push(L.replace(/(?:A\$|AU\$|AUD\s*\$?|\$)\s*[\d,]+(?:\.\d{1,2})?/gi, '').trim());
+          if (L.length < 3 || L.length > 120) continue;
+          const stripped = cleanOcrCoinName(L);
+          if (stripped.length >= 3) nameParts.push(stripped);
         }
-        let name = nameParts.filter(Boolean).slice(-2).join(' · ').replace(/\s+/g, ' ').trim();
-        if (!name || name.length < 4) name = `Listing @ ${p.raw}`;
-        const key = `${name.toLowerCase()}|${Math.round(p.priceAud)}`;
+        let name = cleanOcrCoinName(nameParts.filter(Boolean).slice(-2).join(' · '));
+        if (!name || name.length < 3) name = `Listing @ ${p.raw.trim()}`;
+        const key = `${p.index}|${Math.round(p.priceAud * 100)}`;
         if (seen.has(key)) continue;
         seen.add(key);
         items.push({
-          id: `ocr-${items.length}-${Math.round(p.priceAud)}`,
+          id: `ocr-${p.index}-${Math.round(p.priceAud * 100)}`,
           name,
           priceAud: p.priceAud,
           sourceLine: lines[lineIdx] || '',
         });
       }
-      // Prefer fewer high-signal rows (dealer pages print many small numbers)
       return items
-        .filter((it) => it.priceAud >= 400)
+        .filter((it) => it.priceAud >= 200)
         .slice(0, 200);
     }
 
@@ -1755,7 +1815,7 @@
         const seller = meta.seller || 'Dealer';
         const enriched = scored.map((row, i) => ({
           ...row,
-          id: `${batchId}-${i}-${Math.round(row.priceAud || 0)}`,
+          id: `${batchId}-${i}`,
           recordedAt,
           seller,
           coin: row.name,
@@ -1771,17 +1831,21 @@
       }, []);
 
       const runAnalysisOnText = useCallback(async (text, label, fileName) => {
-        const parsed = parseDealerOcrText(text);
+        const chunks = splitOcrUploadText(text);
         const db = loadFaceRarityDb();
         setRarityDb(db);
+        const parsed = [];
+        for (const chunk of chunks) {
+          parsed.push(...parseDealerOcrText(chunk.text));
+        }
         const scored = parsed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd }, db));
-        const seller = inferDealerSeller(text, fileName);
+        const seller = inferDealerSeller(text, fileName || chunks[0]?.fileName);
         const { enriched, remote } = await ingestScored(scored, { seller, sourceFile: fileName || label });
         setStatus(
           enriched.length
             ? `${label}: +${enriched.length} coin${enriched.length === 1 ? '' : 's'} · ${seller}`
               + (remote?.ok ? ' · saved to quote DB' : ' · saved locally')
-            : `${label}: no AUD prices found — try a clearer crop`
+            : `${label}: no AUD prices found — try a clearer crop or scroll-capture the full page`
         );
         return enriched;
       }, [auSpot, ptSpot, audUsd, ingestScored]);
@@ -1806,6 +1870,8 @@
             const file = files[i];
             setStatus(`Reading screenshot ${i + 1}/${files.length}: ${file.name}…`);
             const result = await Tesseract.recognize(file, 'eng', {
+              tessedit_pageseg_mode: '6',
+              preserve_interword_spaces: '1',
               logger: (m) => {
                 if (m.status === 'recognizing text' && m.progress != null) {
                   setStatus(`Screenshot ${i + 1}/${files.length}… ${Math.round(m.progress * 100)}%`);
@@ -1996,9 +2062,9 @@
                 fontSize: 13, color: C.textDark, lineHeight: 1.55}}>
                 <strong style={{color: C.plat}}>Portfolio read:</strong> {portfolioNote}
               </div>
-              <div style={{maxHeight: 420, overflow: 'auto', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
+              <div style={{maxHeight: 560, overflow: 'auto', border: `1px solid ${C.borderLight}`, borderRadius: 8}}>
                 <table style={{width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 880}}>
-                  <thead style={{position: 'sticky', top: 0, zIndex: 1}}>
+                  <thead style={{position: 'sticky', top: 0, zIndex: 1, background: C.surface2}}>
                     <tr style={{background: C.surface2, color: C.text, textAlign: 'left'}}>
                       <th style={{padding: '9px 10px'}}>Time</th>
                       <th style={{padding: '9px 10px'}}>Seller</th>
@@ -2017,8 +2083,11 @@
                           {fmtWhen(a.recordedAt)}
                         </td>
                         <td style={{padding: '9px 10px', fontWeight: 600, color: C.textDark}}>{a.seller || 'Dealer'}</td>
-                        <td style={{padding: '9px 10px'}}>
-                          <div style={{fontWeight: 600, color: C.textDark}}>{a.coin || a.name}</div>
+                        <td style={{padding: '9px 10px', maxWidth: 220}}>
+                          <div style={{fontWeight: 600, color: C.textDark, wordBreak: 'break-word', lineHeight: 1.35}}
+                            title={a.coin || a.name}>
+                            {(a.coin || a.name || '').length > 72 ? `${(a.coin || a.name).slice(0, 70)}…` : (a.coin || a.name)}
+                          </div>
                           <div style={{fontSize: 10, color: C.text, marginTop: 2}}>
                             {a.metal || '—'} · {a.weightOz != null ? (a.weightOz >= 0.99 ? `${Number(a.weightOz).toFixed(0)} oz` : `${Number(a.weightOz).toFixed(3)} oz`) : '—'}
                             {a.sourceFile ? ` · ${a.sourceFile}` : ''}
