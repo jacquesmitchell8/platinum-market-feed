@@ -54,19 +54,27 @@ function utcNoonTs(dateLike) {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
 }
 
-/** Drop bad rows; forward-fill isolated zero/NaN prints so charts stay continuous. */
+/** Drop bad rows; forward-fill isolated zero/NaN prints; collapse weekend duplicate closes. */
 function sanitizeMetalRows(rowsAsc) {
   let lastGood = null;
-  const out = [];
+  const filled = [];
   for (const r of rowsAsc) {
     const p = Number(r.price);
     const price = p > 0 && Number.isFinite(p) ? p : lastGood;
     if (price == null) continue;
     lastGood = price;
-    out.push({
+    filled.push({
       recorded_at: new Date(utcNoonTs(r.recorded_at)).toISOString(),
       price,
     });
+  }
+  const out = [];
+  for (let i = 0; i < filled.length; i++) {
+    const curr = filled[i];
+    const next = filled[i + 1];
+    if (i === filled.length - 1 || Math.abs(curr.price - next.price) > 1e-9) {
+      out.push(curr);
+    }
   }
   return out;
 }

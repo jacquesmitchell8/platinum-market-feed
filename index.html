@@ -1032,7 +1032,8 @@
     }
 
     async function fetchMetalHistoryFromSupabase(asset, days) {
-      return fetchAssetHistoryFromSupabase('metal_price_history', asset, days);
+      const pts = await fetchAssetHistoryFromSupabase('metal_price_history', asset, days);
+      return collapseFlatDailySeries(pts);
     }
 
     async function fetchCryptoHistoryFromSupabase(asset, days) {
@@ -2645,7 +2646,7 @@
       throw new Error('Perth Mint feed unavailable');
     }
 
-    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v18:';
+    const TIMELINE_LS_PREFIX = 'pm_metis_timeline_v19:';
 
     const FALLBACK_SPOT_CLIENT = (window.PM && window.PM.FALLBACK_SPOT) || {
       gold: { price: 4236, chg: 0, src: 'fallback' },
@@ -2705,6 +2706,21 @@
       if (days == null) return 'daily';
       if (days <= 20000) return 'daily';
       return 'monthly';
+    }
+
+    /** Daily LBMA/metals feeds repeat Fri close on Sat/Sun — keep one point per price leg. */
+    function collapseFlatDailySeries(pts) {
+      if (!pts?.length) return [];
+      const sorted = [...pts].sort((a, b) => a.ts - b.ts);
+      const out = [];
+      for (let i = 0; i < sorted.length; i++) {
+        const curr = sorted[i];
+        const next = sorted[i + 1];
+        if (i === sorted.length - 1 || Math.abs(curr.price - next.price) > 1e-9) {
+          out.push(curr);
+        }
+      }
+      return out;
     }
 
     /** One row per UTC calendar day at noon — gold/platinum share a ts so merged lines stay continuous. */
@@ -2876,7 +2892,7 @@
       if (metalIds.includes('IDX-001')) {
         try {
           goldPts = await fetchMetalChart('IDX-001', metalTf);
-          goldPts = bucketMetalPtsByUtcDay(filterByTimeframe(goldPts, metalTf));
+          goldPts = collapseFlatDailySeries(bucketMetalPtsByUtcDay(filterByTimeframe(goldPts, metalTf)));
           if (goldPts.length) metalSeries['IDX-001'] = downsample(goldPts, maxPtsFor(metalTf));
         } catch (_) {
           failures.push('IDX-001');
@@ -2886,7 +2902,7 @@
       if (metalIds.includes('IDX-002')) {
         try {
           let pts = await fetchMetalChart('IDX-002', metalTf, goldPts);
-          pts = bucketMetalPtsByUtcDay(filterByTimeframe(pts, metalTf));
+          pts = collapseFlatDailySeries(bucketMetalPtsByUtcDay(filterByTimeframe(pts, metalTf)));
           if (pts.length) metalSeries['IDX-002'] = downsample(pts, maxPtsFor(metalTf));
           else if (goldPts?.length) {
             metalSeries['IDX-002'] = downsample(derivePlatinumFromGold(goldPts), maxPtsFor(metalTf));
@@ -2905,7 +2921,7 @@
       for (const id of metalIds.filter((mid) => mid !== 'IDX-001' && mid !== 'IDX-002')) {
         try {
           let pts = await fetchMetalChart(id, metalTf);
-          pts = bucketMetalPtsByUtcDay(filterByTimeframe(pts, metalTf));
+          pts = collapseFlatDailySeries(bucketMetalPtsByUtcDay(filterByTimeframe(pts, metalTf)));
           if (pts.length) metalSeries[id] = downsample(pts, maxPtsFor(metalTf));
         } catch (_) {
           failures.push(id);
@@ -3672,9 +3688,14 @@
 
     /* ─── TECHNICAL ANALYSIS (timeline + Perth) ───────────────────── */
     function extractCurveSeries(rows, key, tfId = '3y') {
-      return rows
+      const raw = rows
         .filter((r) => r[key] != null && !isNaN(r[key]))
-        .map((r) => ({ ts: r.ts, label: r.label || fmtTs(r.ts, tfId), v: r[key] }));
+        .map((r) => ({ ts: r.ts, price: r[key], label: r.label || fmtTs(r.ts, tfId) }));
+      return collapseFlatDailySeries(raw).map((p) => ({
+        ts: p.ts,
+        label: p.label || fmtTs(p.ts, tfId),
+        v: p.price,
+      }));
     }
 
     function extractPtSeries(rows, key = 'IDX-103') {
@@ -4274,8 +4295,8 @@
                 <ReferenceLine y={ta.invertedCup.neckline} stroke="#7C3AED" strokeDasharray="3 3" strokeWidth={1.5}
                   label={{ value: `Rim ${fmtY(ta.invertedCup.neckline)}`, position: 'insideTopRight', fill: '#7C3AED', fontSize: 9 }}/>
               )}
-              <Line type="monotone" dataKey="price" name={curveId}
-                stroke={color || C.plat} strokeWidth={2.5} dot={TA_MARKER_DOT}
+              <Line type="linear" dataKey="price" name={curveId}
+                stroke={color || C.plat} strokeWidth={2.5} dot={TA_MARKER_DOT} connectNulls={false}
                 activeDot={{ r: 5, strokeWidth: 0, fill: color || C.plat }}/>
             </ComposedChart>
           </ResponsiveContainer>
@@ -4714,8 +4735,8 @@
       ).length;
       const minGood = ({
         '24h': 12,
-        '1w': 30,
-        '1m': 60,
+        '1w': 24,
+        '1m': 16,
         '3m': 40,
         '1y': 120,
         '3y': 80,
@@ -5634,6 +5655,11 @@
                     unit="USD" rows={metalChartRows} curveIds={metalIds} timeframe={metalTimeframe}
                     showEvents={showEvents} events={eventsForCurves(eventsInRange, metalIds)}
                     liveSpot={liveSpot} connectNulls={true} expectDense={false}/>
+                )}
+                {hasMetals && !technical && (
+                  <div style={{fontSize: 10, color: C.text, padding: '0 18px 10px', lineHeight: 1.45}}>
+                    Daily LBMA fix from Supabase · weekend carry duplicates collapsed so the curve reads as one continuous market line.
+                  </div>
                 )}
               </>
             )}
