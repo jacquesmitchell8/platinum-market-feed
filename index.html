@@ -1657,13 +1657,61 @@
     }
 
     function isOcrNavGarbage(text) {
-      const t = String(text || '').toLowerCase();
+      const t = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
       if (!t || t.length < 3) return true;
       if (/buy\s+gold|buy\s+silver|buy\s+platinum|refresh|add to (cart|bag)|sort by|filter|in stock/.test(t)) return true;
       if (/(ozt)\s*[»>]/.test(t)) return true;
       if (/^[\W\d\s]{0,8}$/.test(t)) return true;
+      // Dealer site chrome / metal picker / unit toggles
+      if (/\bgold\s+silver\s+platinum\b/.test(t)) return true;
+      if (/\b(oz|ozt|kg)\b.*\bgold\b.*\bsilver\b.*\bplatinum\b/.test(t)) return true;
+      if (/\border\s*#|\bsku\b|\bcheckout\b|\bwishlist\b|\blog\s*in\b|\bsign\s*in\b/.test(t)) return true;
+      if (/\b(qty|quantity|shipping|postage|gst|inc\.?\s*gst|ex\.?\s*gst)\b/.test(t)) return true;
+      // Live ticker / % moves mistaken for product titles
+      if (/\b(gold|silver|platinum|palladium)\b[^a-z0-9]{0,6}[+\-]?\d+(?:\.\d+)?\s*%/.test(t)) return true;
+      if ((t.match(/%/g) || []).length >= 2) return true;
+      // Symbol soup from icons / UI glyphs
       const letters = (t.match(/[a-z]/g) || []).length;
-      return letters < 4;
+      const junk = (t.match(/[^a-z0-9\s.\-'/½¼&,():]/gi) || []).length;
+      if (letters < 6) return true;
+      if (junk > Math.max(3, letters * 0.4)) return true;
+      return false;
+    }
+
+    /** Real product titles mention metal / weight / known series — not page chrome. */
+    function looksLikeCoinProduct(name) {
+      const t = String(name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!t || isOcrNavGarbage(t)) return false;
+      if (/^listing\s*[@·]/.test(t)) return false;
+      const letters = (t.match(/[a-z]/g) || []).length;
+      if (letters < 8) return false;
+      return /\b(gold|platinum|plat|silver|panda|eagle|maple|britannia|koala|kangaroo|platypus|lunar|dragon|tudor|outback|nugget|sovereign|perth|american|canada|canadian|chinese|britannia|oz|ounce|gram|30\s*g|30g|1\/2|½|buffalo|krugerrand|philharmonic|britannia)\b/.test(t);
+    }
+
+    function isOcrJunkRow(row) {
+      const name = `${row?.coin || ''} ${row?.name || ''}`.trim();
+      if (!name) return true;
+      if (isOcrNavGarbage(name)) return true;
+      if (row?.rarityKey) return false;
+      if (!looksLikeCoinProduct(name)) return true;
+      // Unmatched Other with absurd premium is almost always a mis-grab (spot chip, nav price)
+      if ((row.theme === 'Other' || !row.theme) && row.premiumPct != null && Math.abs(row.premiumPct) > 55) return true;
+      return false;
+    }
+
+    /** Drop ticker / nav / cart chrome lines before price pairing. */
+    function stripOcrChrome(text) {
+      return String(text || '')
+        .split('\n')
+        .filter((line) => {
+          const t = line.trim();
+          if (!t) return false;
+          if (isOcrNavGarbage(t)) return false;
+          if (/^\s*[\(\)\«\»\|·•\-–—\s]{2,}$/.test(t)) return false;
+          if (/^(home|shop|bullion|coins?|bars?|account|search)\b/i.test(t) && t.length < 28) return false;
+          return true;
+        })
+        .join('\n');
     }
 
     function displayFaceCoinName(row) {
@@ -1676,7 +1724,7 @@
         return [year, row.theme, metal, wt].filter(Boolean).join(' ');
       }
       const cleaned = cleanOcrCoinName(raw);
-      if (!cleaned || isOcrNavGarbage(cleaned) || cleaned.length > 64) {
+      if (!cleaned || isOcrNavGarbage(cleaned) || !looksLikeCoinProduct(cleaned) || cleaned.length > 64) {
         const price = row?.valueAud ?? row?.priceAud;
         return price != null ? `Listing · $${Math.round(Number(price)).toLocaleString()}` : 'Unparsed listing';
       }
@@ -1935,9 +1983,9 @@
       let s = String(name || '').replace(/\s+/g, ' ').trim();
       s = s.replace(/\b(\w+)(?:\s+\1){1,}\b/gi, '$1');
       s = s.replace(/^[^a-z0-9]*(?:u\.\.?|coins?\s*)+/i, '');
-      s = s.replace(/\b(?:buy|sell|cart|refresh|filter|sort|qty|quantity|ozt|oz\s*t)\b/gi, ' ');
+      s = s.replace(/\b(?:buy|sell|cart|refresh|filter|sort|qty|quantity|ozt|oz\s*t|order)\b/gi, ' ');
       s = s.replace(/(?:A\$|AU\$|AUD\s*\$?|\$)\s*[\d,]+(?:\.\d{1,2})?/gi, '').trim();
-      s = s.replace(/[»›<>^~|]+/g, ' ').replace(/\s+/g, ' ').trim();
+      s = s.replace(/[»›«<>^~|®©™•]+/g, ' ').replace(/\(\s*\)/g, ' ').replace(/\s+/g, ' ').trim();
       if (s.length > 64) s = `${s.slice(0, 62)}…`;
       return s;
     }
@@ -1953,35 +2001,40 @@
       return chunks;
     }
 
-    /** Heuristic OCR → listing candidates (dealer pages are noisy — best-effort). */
+    /** Heuristic OCR → listing candidates. Reject nav/ticker chrome hard. */
     function parseDealerOcrText(text) {
-      const clean = String(text || '').replace(/\r/g, '');
+      const clean = stripOcrChrome(String(text || '').replace(/\r/g, ''));
       const lineMap = buildOcrLineMap(clean);
       const lines = lineMap.map((l) => l.text);
       const prices = parseAudPricesFromText(clean);
       if (!prices.length) return [];
 
       const items = [];
-      const seen = new Set();
+      const seenPrice = new Set();
       for (const p of prices) {
         const lineIdx = lineIndexAtChar(lineMap, p.index);
         const nameParts = [];
-        for (let j = Math.max(0, lineIdx - 4); j <= lineIdx; j++) {
+        for (let j = Math.max(0, lineIdx - 5); j <= lineIdx; j++) {
           const L = lines[j];
           if (!L) continue;
-          if (/^(add|buy|cart|qty|quantity|in stock|sku|code|sort|filter|page)\b/i.test(L)) continue;
-          if (/^(A\$|AU\$|AUD|\$)\s*[\d,]/.test(L) && L.length < 18) continue;
-          if (L.length < 3 || L.length > 120) continue;
+          if (/^(add|buy|cart|qty|quantity|in stock|sku|code|sort|filter|page|order)\b/i.test(L)) continue;
+          if (/^(A\$|AU\$|AUD|\$)\s*[\d,]/.test(L) && L.length < 22) continue;
+          if (L.length < 6 || L.length > 120) continue;
+          if (isOcrNavGarbage(L)) continue;
           const stripped = cleanOcrCoinName(L);
-          if (stripped.length >= 3) nameParts.push(stripped);
+          if (stripped.length >= 6 && looksLikeCoinProduct(stripped)) nameParts.push(stripped);
         }
-        let name = cleanOcrCoinName(nameParts.filter(Boolean).slice(-2).join(' · '));
-        if (!name || name.length < 3 || isOcrNavGarbage(name)) {
-          name = `Listing @ ${p.raw.trim()}`;
-        }
-        const key = `${p.index}|${Math.round(p.priceAud * 100)}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        // Prefer the nearest product-looking line above the price
+        let name = cleanOcrCoinName(nameParts.filter(Boolean).slice(-1)[0] || '');
+        if (!name || !looksLikeCoinProduct(name)) continue; // skip orphan prices (spot chips, cart totals)
+
+        // Dedupe repeated chrome prices (same AUD grabbed many times)
+        const priceKey = Math.round(p.priceAud);
+        const nameKey = name.toLowerCase().slice(0, 40);
+        const dedupe = `${priceKey}|${nameKey}`;
+        if (seenPrice.has(dedupe)) continue;
+        seenPrice.add(dedupe);
+
         items.push({
           id: `ocr-${p.index}-${Math.round(p.priceAud * 100)}`,
           name,
@@ -1990,9 +2043,9 @@
         });
       }
       return items
-        .filter((it) => it.priceAud >= 200)
-        .filter((it) => !isOcrNavGarbage(it.name) || /^Listing @/.test(it.name))
-        .slice(0, 200);
+        .filter((it) => it.priceAud >= 250 && it.priceAud <= 40000)
+        .filter((it) => looksLikeCoinProduct(it.name))
+        .slice(0, 120);
     }
 
     function analyzeFaceListing(item, { auSpot, ptSpot, audUsd, perthSpotAudAu, perthSpotAudPt }, rarityDb) {
@@ -2143,6 +2196,7 @@
       const out = {};
       const now = Date.now();
       const rows = (historyRows || [])
+        .filter((r) => !isOcrJunkRow(r))
         .filter((r) => faceQuoteWithinActiveWindow(r, now))
         .slice()
         .sort((a, b) => new Date(b.recordedAt || 0) - new Date(a.recordedAt || 0));
@@ -2205,7 +2259,14 @@
       const [previews, setPreviews] = useState([]);
       const [rawOcr, setRawOcr] = useState('');
       const [rarityDb, setRarityDb] = useState(() => loadFaceRarityDb());
-      const [history, setHistory] = useState(() => loadFaceQuoteHistory());
+      const [history, setHistory] = useState(() => {
+        try {
+          const raw = loadFaceQuoteHistory();
+          const cleaned = raw.filter((r) => !isOcrJunkRow(r));
+          if (cleaned.length !== raw.length) saveFaceQuoteHistory(cleaned);
+          return cleaned;
+        } catch { return []; }
+      });
       const [clearedIds, setClearedIds] = useState(() => loadFaceClearedIds());
       const [viewMode, setViewMode] = useState('active');
       const [showRarityEdit, setShowRarityEdit] = useState(false);
@@ -2241,6 +2302,7 @@
         const now = Date.now();
         return normalizedHistory.filter((r) => {
           if (clearedIds.has(r.id)) return false;
+          if (isOcrJunkRow(r)) return false;
           if (viewMode === 'all') return true;
           return faceQuoteWithinActiveWindow(r, now);
         });
@@ -2296,7 +2358,9 @@
           parsed.push(...parseDealerOcrText(chunk.text));
         }
         const scored = finalizeFaceListingScores(
-          parsed.map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd, perthSpotAudAu, perthSpotAudPt }, db))
+          parsed
+            .map((item) => analyzeFaceListing(item, { auSpot, ptSpot, audUsd, perthSpotAudAu, perthSpotAudPt }, db))
+            .filter((row) => !isOcrJunkRow(row))
         );
         const seller = inferDealerSeller(text, fileName || chunks[0]?.fileName);
         const { enriched, remote } = await ingestScored(scored, { seller, sourceFile: fileName || label });
@@ -2304,7 +2368,7 @@
           enriched.length
             ? `${label}: +${enriched.length} coin${enriched.length === 1 ? '' : 's'} · ${seller}`
               + (remote?.ok ? ' · saved to quote DB' : ' · saved locally')
-            : `${label}: no AUD prices found — try a clearer crop or scroll-capture the full page`
+            : `${label}: no clean coin listings found — crop product rows (avoid nav / spot tickers)`
         );
         return enriched;
       }, [auSpot, ptSpot, audUsd, perthSpotAudAu, perthSpotAudPt, ingestScored]);
@@ -2329,7 +2393,8 @@
             const file = files[i];
             setStatus(`Reading screenshot ${i + 1}/${files.length}: ${file.name}…`);
             const result = await Tesseract.recognize(file, 'eng', {
-              tessedit_pageseg_mode: '6',
+              // Single column of product text beats sparse UI chrome for dealer grids
+              tessedit_pageseg_mode: '4',
               preserve_interword_spaces: '1',
               logger: (m) => {
                 if (m.status === 'recognizing text' && m.progress != null) {
@@ -2343,7 +2408,15 @@
             total += rows.length;
           }
           setRawOcr(ocrChunks.join('\n\n'));
-          setStatus(`Done: ${files.length} screenshot${files.length === 1 ? '' : 's'} · ${total} coins scored · scroll table · history kept`);
+          // Purge prior chrome junk from local history so the table doesn't stay polluted
+          const cleanedHist = loadFaceQuoteHistory().filter((r) => !isOcrJunkRow(r));
+          saveFaceQuoteHistory(cleanedHist);
+          setHistory(cleanedHist);
+          if (typeof onQuotes === 'function') onQuotes(cleanedHist);
+          setStatus(
+            `Done: ${files.length} screenshot${files.length === 1 ? '' : 's'} · ${total} clean coin${total === 1 ? '' : 's'}`
+              + ` · junk chrome filtered · ${cleanedHist.length} quotes kept`
+          );
           setViewMode('active');
         } catch (e) {
           setStatus(e.message || 'OCR failed');
