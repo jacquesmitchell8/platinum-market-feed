@@ -45,27 +45,38 @@ const ASSET_PROFILES = {
     queries: [
       'Conflux Network OR CFX crypto when:30d',
       'Conflux eSpace OR partnership OR listing when:30d',
-      'CFX token unlock OR China blockchain when:30d',
+      'CFX token unlock OR Conflux Foundation when:30d',
+      // China + Tree-Graph institute / settlement-rail mechanism
+      'Conflux China OR Shanghai Tree-Graph OR Tree-Graph Blockchain Research when:30d',
+      'Conflux AxCNY OR digital RMB OR e-CNY OR BRI blockchain when:30d',
+      'China blockchain regulatory OR CBDC Conflux OR cross-border settlement when:30d',
     ],
     entities: [
       { label: 'Conflux / CFX', re: /\bconflux\b|\bcfx\b/i },
+      { label: 'Tree-Graph institute', re: /\btree[- ]?graph\b|\bresearch\s+(center|centre|institute)\b|\bshanghai\s+tree/i },
+      { label: 'Conflux Foundation', re: /\bfoundation\b/i },
       { label: 'eSpace / TVM', re: /\bespace\b|\btvm\b/i },
-      { label: 'China / regulatory', re: /\bchina\b|\bchinese\b|\bregulatory\b/i },
+      { label: 'China / policy', re: /\bchina\b|\bchinese\b|\bbeijing\b|\bshanghai\b|\bregulatory\b/i },
+      { label: 'RMB / AxCNY / CBDC', re: /\baxcny\b|\brmb\b|\byuan\b|\be-?cny\b|\bcbdc\b|\bdigital\s*(yuan|rmb)\b/i },
+      { label: 'BRI / cross-border', re: /\bbri\b|\bbelt\s+and\s+road\b|\bcross[- ]border\b|\bsettlement\b/i },
       { label: 'Partnership / listing', re: /\bpartnership\b|\blisting\b|\bintegration\b/i },
       { label: 'DeFi / ecosystem', re: /\bdefi\b|\becosystem\b|\bdapp\b/i },
       { label: 'Token unlock / supply', re: /\bunlock\b|\btokenomics\b|\bsupply\b/i },
-      { label: 'Layer-1 / altcoin', re: /\blayer.?1\b|\baltcoin\b|\bl1\b/i },
     ],
     bullish: [
       'rally', 'surge', 'partnership', 'listing', 'adoption', 'upgrade', 'ecosystem',
-      'integration', 'growth', 'bullish', 'break', 'volume surge',
+      'integration', 'growth', 'bullish', 'break', 'volume surge', 'pilot', 'settlement',
+      'approval', 'launch', 'corridor',
     ],
     bearish: [
       'hack', 'exploit', 'unlock', 'dump', 'delist', 'ban', 'regulatory crackdown',
-      'slump', 'crash', 'selloff', 'outflow', 'bearish',
+      'slump', 'crash', 'selloff', 'outflow', 'bearish', 'crackdown', 'restriction',
     ],
   },
 };
+
+const CFX_CHINA_RE = /\bchina\b|\bchinese\b|\bbeijing\b|\bshanghai\b|\brmb\b|\byuan\b|\bbri\b|\baxcny\b|\be-?cny\b|\bcbdc\b|\bdigital\s*(yuan|rmb)\b|\bcross[- ]border\b|\bbelt\s+and\s+road\b/i;
+const CFX_INSTITUTE_RE = /\btree[- ]?graph\b|\bresearch\s+(center|centre|institute)\b|\bconflux\s+foundation\b|\bshanghai\s+tree\b|\binstitute\s+of\s+software\b/i;
 
 function scoreHeadline(text, profile) {
   const t = text.toLowerCase();
@@ -126,12 +137,15 @@ export async function researchAssetIntel(assetKey, opts = {}) {
 
   let netScore = 0;
   const headlines = unique.map((item) => {
-    const s = scoreHeadline(`${item.title} ${item.description || ''}`, profile);
+    const blob = `${item.title} ${item.description || ''}`;
+    const s = scoreHeadline(blob, profile);
     netScore += s;
     const enriched = analyzeStory({
       title: item.title,
       topic: assetKey === 'platinum' ? 'platinum' : 'crypto',
     });
+    const chinaRelated = assetKey === 'cfx' && CFX_CHINA_RE.test(blob);
+    const instituteRelated = assetKey === 'cfx' && CFX_INSTITUTE_RE.test(blob);
     return {
       headline: item.title,
       url: item.url,
@@ -141,12 +155,16 @@ export async function researchAssetIntel(assetKey, opts = {}) {
       direction: s > 0 ? 'bullish' : s < 0 ? 'bearish' : 'neutral',
       impact: s,
       themes: enriched.themeLabels || [],
+      chinaRelated: !!chinaRelated,
+      instituteRelated: !!instituteRelated,
     };
   });
 
   const mentions = extractAssetMentions(unique, profile);
   const bullishN = headlines.filter((h) => h.direction === 'bullish').length;
   const bearishN = headlines.filter((h) => h.direction === 'bearish').length;
+  const chinaHeadlines = headlines.filter((h) => h.chinaRelated || h.instituteRelated);
+  const instituteHeadlines = headlines.filter((h) => h.instituteRelated);
 
   let newsBias = 'neutral';
   if (netScore >= 3 || bullishN >= bearishN + 3) newsBias = 'bullish';
@@ -154,7 +172,10 @@ export async function researchAssetIntel(assetKey, opts = {}) {
   else if (netScore !== 0) newsBias = 'mixed';
 
   const recent = headlines.slice(-8);
-  const narrative = buildAssetNarrative(profile, headlines, mentions, newsBias, netScore);
+  const narrative = buildAssetNarrative(profile, headlines, mentions, newsBias, netScore, {
+    chinaN: chinaHeadlines.length,
+    instituteN: instituteHeadlines.length,
+  });
 
   return {
     asset: profile.id,
@@ -166,8 +187,12 @@ export async function researchAssetIntel(assetKey, opts = {}) {
     articleCount: headlines.length,
     bullishCount: bullishN,
     bearishCount: bearishN,
+    chinaArticleCount: chinaHeadlines.length,
+    instituteArticleCount: instituteHeadlines.length,
     mentions,
     headlines: headlines.slice().reverse().slice(0, 12),
+    chinaHeadlines: chinaHeadlines.slice().reverse().slice(0, 10),
+    instituteHeadlines: instituteHeadlines.slice().reverse().slice(0, 8),
     recentHeadlines: recent.slice().reverse(),
     narrative,
     researchedAt: new Date().toISOString(),
@@ -175,12 +200,15 @@ export async function researchAssetIntel(assetKey, opts = {}) {
   };
 }
 
-function buildAssetNarrative(profile, headlines, mentions, newsBias, netScore) {
+function buildAssetNarrative(profile, headlines, mentions, newsBias, netScore, extra = {}) {
   if (!headlines.length) {
     return `Thin web coverage for ${profile.label} in the last month — lean harder on price structure and known fundamentals.`;
   }
   const topMentions = mentions.slice(0, 4).map((m) => m.label).join(', ');
   let n = `Scanned ${headlines.length} unique ${profile.label} articles across the open web. `;
+  if (profile.id === 'cfx' && (extra.chinaN > 0 || extra.instituteN > 0)) {
+    n += `China / policy desk: ${extra.chinaN || 0} · Tree-Graph / institute: ${extra.instituteN || 0}. `;
+  }
   if (newsBias === 'bullish') {
     n += `Coverage leans supportive (score ${netScore > 0 ? '+' : ''}${netScore}) — supply, demand, or ecosystem catalysts dominate. `;
   } else if (newsBias === 'bearish') {
@@ -201,7 +229,10 @@ export async function researchBuyAssets(assetKeys = ['platinum', 'cfx']) {
   const assets = {};
   for (const key of assetKeys) {
     try {
-      assets[key] = await researchAssetIntel(key, { perQuery: 8, maxArticles: 14 });
+      const opts = key === 'cfx'
+        ? { perQuery: 8, maxArticles: 22 }
+        : { perQuery: 8, maxArticles: 14 };
+      assets[key] = await researchAssetIntel(key, opts);
     } catch (err) {
       assets[key] = { asset: key, error: err.message || 'Research failed', articleCount: 0 };
     }

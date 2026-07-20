@@ -7834,7 +7834,24 @@
       return [];
     }
 
-    async function fetchBuyDiveIntel() {
+    async function fetchBuyDiveIntel(force = false) {
+      // On Refresh — live Google News sweep via asset-deep-dive (also upserts buy-intel).
+      if (force) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 24000);
+          const res = await fetch('/.netlify/functions/asset-deep-dive?assets=platinum,cfx', {
+            cache: 'no-store',
+            signal: ctrl.signal,
+          });
+          clearTimeout(t);
+          const data = await res.json();
+          if (data?.ok && data.assets && buyIntelUsable(data.assets)) {
+            return { intel: data.assets, fromCache: false, updatedAt: data.researchedAt || new Date().toISOString(), live: true };
+          }
+        } catch (_) { /* fall through to Supabase */ }
+      }
+
       try {
         const row = await fetchSupabaseMarketSnapshot('buy-intel');
         if (row?.payload?.assets && buyIntelUsable(row.payload.assets)) {
@@ -7859,7 +7876,38 @@
       };
     }
 
+    function renderIntelHeadline(h, i) {
+      return (
+        <div key={i} className="news-timeline-item">
+          <span style={{
+            fontWeight: 600, marginRight: 6,
+            color: h.direction === 'bullish' ? '#047857' : h.direction === 'bearish' ? '#B91C1C' : C.text,
+          }}>
+            {h.direction === 'bullish' ? '▲' : h.direction === 'bearish' ? '▼' : '·'}
+          </span>
+          <a href={h.url} target="_blank" rel="noopener noreferrer"
+            style={{ color: C.textDark, textDecoration: 'none', fontWeight: 500 }}>
+            {h.headline}
+          </a>
+          <span style={{ color: C.text, marginLeft: 6 }}>· {h.source}</span>
+          {(h.chinaRelated || h.instituteRelated) && (
+            <span style={{
+              marginLeft: 6, fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
+              textTransform: 'uppercase', color: C.cfx,
+            }}>
+              {h.instituteRelated ? 'institute' : 'china'}
+            </span>
+          )}
+        </div>
+      );
+    }
+
     function BuyAssetCard({ decision, intel, color, audUsd, perthSpotAud }) {
+      const isCfx = decision?.curveId === 'IDX-005' || /conflux/i.test(decision?.label || '');
+      const chinaLines = intel?.chinaHeadlines?.length
+        ? intel.chinaHeadlines
+        : (intel?.headlines || []).filter((h) => h.chinaRelated || h.instituteRelated);
+      const instituteLines = intel?.instituteHeadlines || [];
       const verdictColor = {
         BUY: '#047857',
         ACCUMULATE: '#0F766E',
@@ -7969,10 +8017,39 @@
               ))}
             </div>
 
+            {isCfx && (
+              <div style={{
+                marginBottom: 12, padding: '10px 12px', borderRadius: 8,
+                border: `1px solid ${C.borderLight}`,
+                background: 'linear-gradient(135deg, #F5FAFC 0%, #EEF5F9 100%)',
+              }}>
+                <div style={{fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.cfx, marginBottom: 6}}>
+                  China · Tree-Graph mechanism
+                </div>
+                <p style={{fontSize: 11, color: C.textSecondary, lineHeight: 1.5, margin: '0 0 8px'}}>
+                  Tree-Graph research origin + China settlement / RMB digitisation desk — refreshed hourly and on Refresh.
+                </p>
+                {chinaLines.length > 0 ? (
+                  <div>{chinaLines.slice(0, 6).map(renderIntelHeadline)}</div>
+                ) : (
+                  <div style={{fontSize: 11, color: C.text}}>
+                    No fresh China / institute hits in the last scan — hit Refresh to re-sweep Google News.
+                  </div>
+                )}
+                {instituteLines.length > 0 && chinaLines.every((h) => !h.instituteRelated) && (
+                  <div style={{marginTop: 8}}>
+                    <div style={{fontSize: 10, fontWeight: 700, color: C.cfx, marginBottom: 4}}>Institute / Tree-Graph</div>
+                    {instituteLines.slice(0, 4).map(renderIntelHeadline)}
+                  </div>
+                )}
+              </div>
+            )}
+
             {intel && !intel.error && intel.articleCount > 0 && (
               <div className="news-research-box" style={{marginTop:0}}>
                 <div style={{fontSize:10, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:C.plat, marginBottom:6}}>
                   Web · {intel.articleCount} articles · {intel.newsBias}
+                  {isCfx && intel.chinaArticleCount > 0 ? ` · China ${intel.chinaArticleCount}` : ''}
                 </div>
                 <p style={{fontSize:12, color:C.textSecondary, lineHeight:1.55, margin:'0 0 8px'}}>
                   {intel.narrative}
@@ -7992,21 +8069,7 @@
                       Headlines ({intel.headlines.length})
                     </summary>
                     <div style={{marginTop:6}}>
-                      {intel.headlines.slice(0, 8).map((h, i) => (
-                        <div key={i} className="news-timeline-item">
-                          <span style={{
-                            fontWeight:600, marginRight:6,
-                            color: h.direction === 'bullish' ? '#047857' : h.direction === 'bearish' ? '#B91C1C' : C.text,
-                          }}>
-                            {h.direction === 'bullish' ? '▲' : h.direction === 'bearish' ? '▼' : '·'}
-                          </span>
-                          <a href={h.url} target="_blank" rel="noopener noreferrer"
-                            style={{color:C.textDark, textDecoration:'none', fontWeight:500}}>
-                            {h.headline}
-                          </a>
-                          <span style={{color:C.text, marginLeft:6}}>· {h.source}</span>
-                        </div>
-                      ))}
+                      {intel.headlines.slice(0, 8).map(renderIntelHeadline)}
                     </div>
                   </details>
                 )}
@@ -8118,7 +8181,7 @@
 
           // Web intel second — optional; never blocks the cards.
           setIntelLoading(true);
-          const { intel } = await fetchBuyDiveIntel();
+          const { intel } = await fetchBuyDiveIntel(!!force);
           setIntelMap(intel);
           const withIntel = buildDecisions(ptRows, cfxRows, intel, liveRef.current);
           setDecisions(withIntel.decisions);
@@ -8184,7 +8247,7 @@
                 Buy deep dive
               </div>
               <div style={{fontSize:11, color:C.text, marginTop:3}}>
-                Platinum LBMA (USD) & Conflux · structure, breakouts, fundamentals
+                Platinum LBMA (USD) & Conflux · China / Tree-Graph news on the CFX card
                 {intelLoading ? ' · scanning web…' : ''}
                 {updatedAt && !intelLoading && (
                   <span> · {new Date(updatedAt).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</span>
@@ -9389,6 +9452,22 @@
       const [ptPts, setPtPts] = useState([]);
       const [cfxPts, setCfxPts] = useState([]);
       const [loadErr, setLoadErr] = useState(null);
+      const [cfxIntel, setCfxIntel] = useState(null);
+      const [intelBusy, setIntelBusy] = useState(false);
+      const [intelAt, setIntelAt] = useState(null);
+
+      const loadCfxChinaNews = useCallback(async (force = false) => {
+        setIntelBusy(true);
+        try {
+          const { intel, updatedAt } = await fetchBuyDiveIntel(force);
+          setCfxIntel(intel?.cfx || null);
+          setIntelAt(updatedAt || Date.now());
+        } catch (_) {
+          setCfxIntel(null);
+        } finally {
+          setIntelBusy(false);
+        }
+      }, []);
 
       useEffect(() => {
         let cancelled = false;
@@ -9407,6 +9486,14 @@
         })();
         return () => { cancelled = true; };
       }, []);
+
+      useEffect(() => {
+        loadCfxChinaNews(false);
+      }, [loadCfxChinaNews]);
+
+      const chinaLines = cfxIntel?.chinaHeadlines?.length
+        ? cfxIntel.chinaHeadlines
+        : (cfxIntel?.headlines || []).filter((h) => h.chinaRelated || h.instituteRelated);
 
       const pt = live?.platinum?.price;
       const au = live?.gold?.price;
@@ -9568,6 +9655,53 @@
               policy-sensitive, not a substitute for ounces — a complementary exposure to the same
               East-facing macro that matters for platinum fabrication and yuan metals trade.
             </p>
+
+            <div style={{
+              marginBottom: 14, padding: '12px 14px', borderRadius: 8,
+              border: `1px solid ${C.border}`, background: C.surface,
+            }}>
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between', marginBottom: 8}}>
+                <div>
+                  <div style={{fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.cfx}}>
+                    China &amp; Tree-Graph institute · live desk
+                  </div>
+                  <div style={{fontSize: 11, color: C.text, marginTop: 3}}>
+                    Shanghai Tree-Graph research lineage · Conflux Foundation · RMB / AxCNY / BRI rails
+                    {intelBusy ? ' · scanning…' : ''}
+                    {intelAt && !intelBusy && (
+                      <span> · {new Date(intelAt).toLocaleString()}</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={intelBusy}
+                  onClick={() => loadCfxChinaNews(true)}
+                  style={{
+                    fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+                    padding: '6px 12px', borderRadius: 6, cursor: intelBusy ? 'wait' : 'pointer',
+                    border: `1px solid ${C.cfx}`, background: intelBusy ? C.surface2 : C.cfx, color: intelBusy ? C.text : '#fff',
+                  }}
+                >
+                  {intelBusy ? 'Scanning…' : 'Search news'}
+                </button>
+              </div>
+              {chinaLines.length > 0 ? (
+                <div>{chinaLines.slice(0, 8).map(renderIntelHeadline)}</div>
+              ) : (
+                <div style={{fontSize: 12, color: C.text}}>
+                  {cfxIntel?.error
+                    ? 'News cache empty — tap Search news to run a live Google sweep.'
+                    : 'No China / institute headlines in the latest scan — tap Search news.'}
+                </div>
+              )}
+              {cfxIntel?.narrative && (
+                <p style={{fontSize: 12, color: C.textSecondary, lineHeight: 1.5, margin: '10px 0 0'}}>
+                  {cfxIntel.narrative}
+                </p>
+              )}
+            </div>
+
             <div style={{fontSize: 12, color: C.text, lineHeight: 1.55, marginBottom: 12, maxWidth: 740}}>
               Watch: eSpace stablecoin / bridge volume, fee burn &amp; staking demand, listing liquidity,
               and official RMB digitisation tone. Chart below is spot history from Supabase (Binance ingest) —
